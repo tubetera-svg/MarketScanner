@@ -1,0 +1,171 @@
+# Strategy Information
+
+This file contains the exact conditions used by strategy runners in `all_strategy.py`.
+
+## Strategies
+
+### `inside_bar_pattern_daily_sweep`
+- Uses the latest 3 daily candles.
+- Bullish condition `_inside_bar_bullish()` requires:
+  - prior day 2 is bullish (`d2_open` < `d2_close`)
+  - prior day 2 body size > 60% of its full range
+  - current day 1 is fully inside day 2 range (`d1_high` <= `d2_high`, `d1_low` >= `d2_low`)
+  - current day low is below day 1 low
+  - current day high is below day 1 high
+  - current close is above day 1 low
+- Bearish condition `_inside_bar_bearish()` requires:
+  - prior day 2 is bearish (`d2_open` > `d2_close`)
+  - prior day 2 body size > 60% of its full range
+  - day 1 is inside day 2 range (`d1_high` < `d2_high`, `d1_low` > `d2_low`)
+  - current day high is above day 1 high
+  - current day low is above day 1 low
+  - current close is below day 1 high
+- Output: bullish or bearish inside-bar breakout matches.
+
+### `daily_fvg_sweep`
+- Uses the latest 4 daily candles.
+- Bullish condition `_daily_fvg_sweep_bullish()` requires:
+  - gap size (`d3_low - d1_high`) > 1% of current close
+  - `d3_low` > `d2_low` and `d2_low` > `d1_low`
+  - `d2_high` < `d3_high` and `d1_high` < `d2_high`
+  - current high > `d1_high`
+  - current close < `d1_high`
+  - current low > `d1_low`
+- Bearish condition `_daily_fvg_sweep_bearish()` requires:
+  - gap size (`d3_high - d1_low`) < 1% of current close
+  - `d3_high` < `d2_high` and `d3_high` < `d1_low`
+  - `d2_high` < `d1_high`
+  - `d2_low` > `d3_low` and `d1_low` > `d2_low`
+  - current low < `d1_low`
+  - current close > `d1_low`
+  - current high < `d1_high`
+- Output: fair value gap-based bullish or bearish sweep signals.
+
+### `ema5_sweep`
+- Uses the latest 6+ daily candles and computes a 5-period EMA on close prices.
+- Bullish condition `_ema5_sweep_bullish()` requires:
+  - current low > current EMA5
+  - previous low > previous EMA5
+  - current high > previous high
+  - current close < previous high
+- Bearish condition `_ema5_sweep_bearish()` requires:
+  - current high < current EMA5
+  - previous high < previous EMA5
+  - current low < previous low
+  - current close > previous low
+- Output: daily EMA momentum bias signals.
+
+### `ict_daily_bias_sweep`
+- Uses the latest 5 daily candles or available history for a short-term SMA.
+- Computes `sma5` from the last 5 closes if possible, otherwise all available closes.
+- Bullish condition `_ict_daily_bias_bullish()` requires:
+  - current close > SMA
+  - current close > prior close
+  - current low > prior low
+- Bearish condition `_ict_daily_bias_bearish()` requires:
+  - current close < SMA
+  - current close < prior close
+  - current high < prior high
+- Output: simple daily bias based on price relative to short-term moving average and prior candle structure.
+
+## Weekly Profile Strategies (6-profile weekly series)
+
+Six additional strategies in `all_strategy.py` model the weekly profile framework (Classic Expansion, Midweek Reversal, Consolidation Reversal, Intraweek Reversal, Thursday Counter, TGIF Setup). All of them:
+
+- Use only end-of-day NSE bhavcopy daily candles for the current calendar week (Mon=0..Fri=4 weekday tagging), so a mid-week scan evaluates the week in progress and a Friday/weekend anchor evaluates the completed week.
+- Approximate the videos' hourly "change in the state of delivery" confirmation with daily candle-two closures: a strong directional close (body >= 50% of the day range) through the prior day's range.
+- Share lookback 60 calendar days (`WEEKLY_PROFILE_LOOKBACK_DAYS`) to cover the pre-week swing/prior-week objective references.
+- Emit result columns `symbol`, `bullish_match`, `bearish_match`, `final_signal`, `status`, plus `profile` (human-readable label) and `note` (phase/detail string), keeping outputs clubbed per strategy in bull/bear/all files and in `main.py`'s combined `all_strategy_matches_*.csv`.
+
+### Flags
+- `WEEKLY_PROFILES_ENABLED = True` — master switch; when False none of the six appear in `strategy_registry()` and nothing runs.
+- `WEEKLY_PROFILE_FLAGS` — per-strategy dict (`classic_expansion_sweep`, `midweek_reversal_sweep`, `consolidation_reversal_sweep`, `intraweek_reversal_sweep`, `thursday_counter_sweep`, `tgif_setup_sweep`); set any entry False to exclude that single profile.
+
+### Web UI / API selection layer
+- The "Strategy profiles" panel in the web app shows every strategy as a toggle chip (Core group + Weekly profiles group). Clicking a chip flips that strategy ON/OFF; the choice is persisted in `strategy_flags.json` in the project root.
+- Endpoints served by `api/main.py` via `api/strategy_bridge.py`: `GET /api/strategies` (catalog + master-switch state), `PUT /api/strategies/{name}` (`{"enabled": true|false}`), `POST /api/strategy-scan` (`{"symbols": [...], "strategies": [...]?, "anchor_date": "YYYY-MM-DD"?}` — defaults to all enabled strategies over the selected watchlist symbols).
+- `POST /api/strategy-scan` returns results clubbed per strategy (`results[].bullish` / `results[].bearish` rows carry symbol, profile label, note, TradingView link) and also writes `strategy_outputs/api_strategy_matches_<date>.csv`.
+- Code-level flags remain hard gates: a weekly profile chip cannot be turned ON from the UI while `WEEKLY_PROFILES_ENABLED` or its `WEEKLY_PROFILE_FLAGS` entry is False in `all_strategy.py`.
+
+### Tunables
+- `CLASSIC_EXPANSION_MAX_EXPANSION_DAYS = 3` — stops looking for continuation after 2-3 expansion days.
+- `CONSOLIDATION_MAX_RANGE_PCT = 0.05` / `CONSOLIDATION_MAX_DRIFT_PCT = 0.02` — Mon-Wed range width and net-drift caps defining a genuine consolidation.
+- `INTRAWEEK_STALL_BODY_RATIO = 0.4` — Tuesday indecision body threshold.
+- `THURSDAY_COUNTER_BIAS_MIN_PCT = 0.01` — minimum Mon-open-to-Wed-close net move establishing the weekly bias.
+- `TGIF_EXPANSION_MIN_PCT = 0.01` — minimum expansion leg size off the weekly extreme before Friday may be faded.
+
+### `classic_expansion_sweep`
+- Bullish requires: week's lowest low made Mon/Tue and never broken after; 1-3 post-extreme sessions (stops after 2-3 expansion days); latest close displaced beyond the first post-extreme open; latest session is a candle-two closure up (close > prior high, bullish body >= 50%) or, on Friday, an upward close vs the prior close (slowing tolerated).
+- Bearish is the mirror image with the week's highest high made Mon/Tue.
+- Notes report e.g. `extreme_d1_expand2_candle_two_closure`; rejections explain (`weekly_extreme_late_d3`, `expansion_days=4`, `candle_two_pending`, ...).
+
+### `midweek_reversal_sweep`
+- Bullish requires: early-week decline (Tuesday closes below Monday's close and takes out Monday's low); Wednesday pivot reversal closure above Tuesday's high with a bullish close; every later session holds above the Wednesday pivot close. Matched already on Wednesday evening as `pivot_wed_await_thu_continuation`.
+- Bearish mirrors (early rally, Wednesday closes below Tuesday's low).
+- Wednesday is treated as THE pivot day per the source video.
+
+### `consolidation_reversal_sweep`
+- Mon-Wed must be a genuine consolidation: range width <= 5% of Wednesday's close AND net drift from Monday's open <= 2%.
+- Thursday must fake one side: trades beyond the consolidation high but closes back inside (bearish expectation), or below the low closing back inside (bullish expectation). Aggressive entry is signalled immediately on Thursday (`thursday_fake_break_aggressive_entry`).
+- If Friday exists it must expand opposite the fake break (close beyond Thursday's close) for `friday_expansion_confirmed`; a close back outside the range invalidates (`friday_invalidated`).
+
+### `intraweek_reversal_sweep`
+- Bullish requires: Monday directional expansion down (bearish body >= 50%); Tuesday stall (inside bar or body <= 40%); then a strong reversal closure (close beyond the prior day's high, bullish close, body >= 50%) on Wednesday or Thursday - Thursday fallback is allowed when Wednesday is not clean.
+- Later sessions must hold the reversal structure (no close beyond the pivot day's opposite extreme).
+- Bearish mirrors (Monday expansion up, stall, downside reversal closure).
+
+### `thursday_counter_sweep`
+- Requires an established directional week by Wednesday: |Wednesday close - Monday open| >= 1% of price, with Wednesday extending the extreme (high for up-weeks, low for down-weeks).
+- Thursday must sweep liquidity against nothing - i.e. in an up-week take out Wednesday's high then fail, closing below Wednesday's close (bearish counter); mirror for down-weeks (bullish counter).
+- Signal fires Thursday evening (`thursday_counter_set_friday_pending`); Friday confirms continuation (`friday_continuation_confirmed`) or fails it (`friday_continuation_failed`).
+
+### `tgif_setup_sweep`
+- Critical rule enforced: no expansion + no HTF objective reached = no TGIF signal.
+- Requires: weekly extreme formed Mon/Tue; expansion leg completing Wed or Thu with move >= 1% off the weekly extreme; objective actually reached (prior week high/low or the highest/lowest of the 10 sessions before the week); then Friday retracing into the weekly range without new extremes (Friday fade signal - bearish after bullish weeks, bullish after bearish weeks).
+- Scenario handling: if scanned on Thursday with no Friday bar, "Thursday already reversed" variant matches when Thursday closes against the leg without exceeding its extreme (`thursday_reversed_friday_continuation`).
+- Target reference: 20-30% retracement into the weekly range (informational; not part of the match logic).
+
+## ICT Scanner (`ict_scanner.py`)
+
+### Overview
+- Adaptive scanning framework implementing ICT (Inner Circle Trader) concepts for market structure analysis
+- Implements Section 19 (Adaptive Scanning Frequency), Section 20 (Stock Scanning Priority), and Section 21 (NSE Market-Day Rule)
+- Supports multiple market sessions: NSE (9:15 AM - 3:30 PM IST) and Forex 24x5 (Sunday 5:00 PM ET - Friday 5:00 PM ET)
+- Loads watchlist from file with auto-detected or manually specified session types
+
+### Adaptive Scanning States (Section 19)
+State machine with dynamic check intervals based on market structure proximity:
+- **FAR_FROM_POI** (Point of Interest): 15-minute check intervals for stocks far from key levels
+- **APPROACHING_POI**: 5-minute check intervals as price nears significant price levels
+- **LIQUIDITY_EVENT**: 1-minute check intervals during active liquidity sweeps
+- **CONFIRMED_TRADE**: 1-5 minute intervals (volatility dependent) after entry confirmation
+- **INVALIDATED**: 15-minute intervals when trade setup is invalidated, reverting to structure monitoring
+
+### Stock Scanning Priority Tiers (Section 20)
+Four-tier classification system for monitoring priority:
+- **Tier A** (High Priority): Near HTF (Higher Time Frame) POI + clear Direction of Liquidity (DOL) + strong daily bias → 5-minute active monitoring
+- **Tier B** (Medium Priority): Clear daily bias but distant from POI → 15-minute monitoring
+- **Tier C** (Low Priority): No clear bias or conflicting structure → not actively monitored
+- **Tier D** (Ignored): No meaningful liquidity or POI → entirely ignored
+
+Tier classification is computed based on four factors:
+- `near_poi`: proximity to higher timeframe points of interest
+- `has_dol`: presence of defined direction of liquidity
+- `strong_bias`: strength of daily price action bias
+- `clear_bias`: clarity of directional bias
+
+### NSE Market-Day Rule (Section 21)
+- Ensures fresh daily candle analysis at NSE market boundaries (no overnight bleed)
+- Triggers full re-scan once per trading day at market open (9:15 AM IST)
+- Detects weekends and market holidays automatically
+- Prevents false signals from after-market spillover data
+
+### Watchlist Format
+- Plain text file (e.g., `watchlist.txt`) with one symbol per line
+- Supports auto-detection via broker prefixes: `OANDA:`, `FOREXCOM:`, `CAPITALCOM:`, `FXCM:`, `PEPPERSTONE:`, `SAXO:`, etc. for Forex
+- NSE symbols default to NSE session unless prefixed with `NSE:` or suffixed with `|nse`
+- Forex symbols can be explicitly marked with `|forex` suffix
+- Example formats:
+  - `RELIANCE` → NSE session (default)
+  - `OANDA:XAUUSD` → Forex 24x5 (auto-detected)
+  - `NSE:RELIANCE` → NSE session (explicit)

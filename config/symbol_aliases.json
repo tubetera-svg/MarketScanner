@@ -1,0 +1,13 @@
+{
+  "OANDA:XAUUSD": [
+    "FOREXCOM:XAUUSD",
+    "CAPITALCOM:XAUUSD"
+  ],
+  "OANDA:XAGUSD": [
+    "FOREXCOM:XAGUSD",
+    "CAPITALCOM:XAGUSD"
+  ],
+  "NSE:BAJAJ_AUTO": [
+    "NSE:BAJAJ-AUTO"
+  ]
+}

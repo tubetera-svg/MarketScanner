@@ -1,0 +1,1673 @@
+[
+  {
+    "symbol": "OANDA:XAUUSD",
+    "source": "TRADINGVIEW",
+    "rows": 106,
+    "fetched_new": 85,
+    "notes": [
+      "Some dates had no upstream data (likely market holidays): 2026-04-03",
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "OANDA:XAGUSD",
+    "source": "TRADINGVIEW",
+    "rows": 106,
+    "fetched_new": 85,
+    "notes": [
+      "Some dates had no upstream data (likely market holidays): 2026-04-03",
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "CAPITALCOM:NATURALGAS",
+    "source": "TRADINGVIEW",
+    "rows": 106,
+    "fetched_new": 85,
+    "notes": [
+      "Some dates had no upstream data (likely market holidays): 2026-04-03",
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "FOREXCOM:UKOIL",
+    "source": "TRADINGVIEW",
+    "rows": 106,
+    "fetched_new": 85,
+    "notes": [
+      "Some dates had no upstream data (likely market holidays): 2026-04-03",
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "FOREXCOM:USOIL",
+    "source": "TRADINGVIEW",
+    "rows": 106,
+    "fetched_new": 85,
+    "notes": [
+      "Some dates had no upstream data (likely market holidays): 2026-04-03",
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:AARTIIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ABB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ABBOTINDIA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ACC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ADANIENT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ADANIPORTS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ABCAPITAL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ABFRL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ALKEM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:AMBUJACEM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:APOLLOHOSP",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:APOLLOTYRE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ASHOKLEY",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ASIANPAINT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ASTRAL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:AUBANK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:AUROPHARMA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:AXISBANK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BAJAJ_AUTO",
+    "source": "NSE",
+    "rows": 84,
+    "fetched_new": 80,
+    "notes": [
+      "Fetched via alias NSE:BAJAJ-AUTO (primary NSE:BAJAJ_AUTO returned no data).",
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BAJFINANCE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BAJAJFINSV",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BALKRISIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BALRAMCHIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BANDHANBNK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BANKBARODA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BATAINDIA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BERGEPAINT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BHARATFORG",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BHEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BPCL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BHARTIARTL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BIOCON",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BSOFT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BOSCHLTD",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:BRITANNIA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CANFINHOME",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CANBK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CHAMBLFERT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CHOLAFIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CIPLA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CUB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:COALINDIA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:COFORGE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:COLPAL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CONCOR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:COROMANDEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CROMPTON",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:CUMMINSIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DABUR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DALBHARAT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DEEPAKNTR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DELTACORP",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DIVISLAB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DIXON",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DLF",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LALPATHLAB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:DRREDDY",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:EICHERMOT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ESCORTS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:EXIDEIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GAIL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GLENMARK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GMRAIRPORT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GODREJCP",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GODREJPROP",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GRANULES",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GRASIM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:GNFC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HAVELLS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HCLTECH",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HDFCAMC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HDFCBANK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HDFCLIFE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HEROMOTOCO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HINDALCO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HAL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HINDCOPPER",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HINDPETRO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:HINDUNILVR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ICICIBANK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ICICIGI",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ICICIPRULI",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IDFCFIRSTB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INDIAMART",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IEX",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IOC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IRCTC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IGL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INDUSTOWER",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INDUSINDBK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:NAUKRI",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INFY",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INTELLECT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INDIGO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IPCALAB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ITC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:JINDALSTEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:JKCEMENT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:JSWSTEEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:JUBLFOOD",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:KOTAKBANK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LTF",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LTTS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LAURUSLABS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LICHSGFIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:LUPIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MGL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:M&MFIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:M&M",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MANAPPURAM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MARICO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MARUTI",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MFSL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:METROPOLIS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MOTHERSON",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MPHASIS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MCX",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:MUTHOOTFIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:NATIONALUM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:NAVINFLUOR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:NESTLEIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:NMDC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:NTPC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:OBEROIRLTY",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ONGC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:OFSS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PAGEIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PERSISTENT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PETRONET",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PIIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PIDILITIND",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:POLYCAB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PFC",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:POWERGRID",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PNB",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:PVRINOX",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:RAIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:RBLBANK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:RECLTD",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:RELIANCE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SBICARD",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SBILIFE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SHREECEM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SHRIRAMFIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SIEMENS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SRF",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SBIN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SAIL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SUNPHARMA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SUNTV",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:SYNGENE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TATACHEM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TATACOMM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TCS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TATACONSUM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TMCV",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TATAPOWER",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TATASTEEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TECHM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:FEDERALBNK",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INDIACEM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:INDHOTEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:RAMCOCEM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TITAN",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TORNTPHARM",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TRENT",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:TVSMOTOR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ULTRACEMCO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:UBL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:UNITDSPR",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:UPL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:VEDL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:IDEA",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:VOLTAS",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:WHIRLPOOL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:WIPRO",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ZEEL",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  },
+  {
+    "symbol": "NSE:ZYDUSLIFE",
+    "source": "NSE",
+    "rows": 101,
+    "fetched_new": 80,
+    "notes": [
+      "Synced up to the last completed session (market still open; today's bar will be backfilled after the exchange closes)."
+    ]
+  }
+]
