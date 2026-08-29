@@ -9,6 +9,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
@@ -208,15 +209,15 @@ def _fetch_strategy_daily(
             session = md.session_for_source(source)
         except Exception:
             session = None
-        market_open = False
+        bar_ready = False
         if session is not None:
             try:
                 import ict_scanner  # type: ignore
 
-                market_open = bool(ict_scanner.is_market_open(session))
+                bar_ready = bool(ict_scanner.is_daily_bar_ready(session))
             except Exception:
-                market_open = False
-        if market_open:
+                bar_ready = False
+        if bar_ready:
             try:
                 result = md.get_ohlc(source, symbol, today, today, auto_fetch=True)
                 rows.extend(result.rows)
@@ -725,39 +726,219 @@ def run_ema5_sweep(
     )
 
 
-def _ict_daily_bias_points(daily: pd.DataFrame) -> dict[str, float]:
-    latest = daily.iloc[-1]
-    prior = daily.iloc[-2]
-    sma5 = daily["Close"].tail(5).mean() if len(daily) >= 5 else daily["Close"].mean()
+# ---------------------------------------------------------------------------
+# Support / Resistance flip (S/R flip) — prior resistance becomes support, or
+# prior support becomes resistance, confirmed by a reversal close on the latest
+# daily bar. All inputs are point-in-time: pivots and the confirmation close use
+# only bars up to and including the as_of_date bar, so there is no look-ahead.
+# ---------------------------------------------------------------------------
+
+# Dynamic swing detection tunables. Instead of a fixed 3-bar left/right context
+# (which forces every swing to be exactly 3 candles wide regardless of volatility),
+# pivots are confirmed only once price reverses by an ATR-scaled amount from a
+# local extreme. This adapts the effective "swing length" to the instrument's
+# volatility: tight ranges need a smaller reversal to confirm, fast trends require
+# a larger move, and minor 1-2 bar jiggles no longer masquerade as structure.
+SR_FLIP_ATR_PERIOD = 14
+SR_FLIP_ATR_MULT = 1.5
+SR_FLIP_MIN_BARS = 3
+SR_FLIP_MAX_BARS = 60
+
+
+def _rolling_atr(highs: "np.ndarray", lows: "np.ndarray", closes: "np.ndarray", period: int) -> "np.ndarray":
+    """Wilder's ATR computed causally (bar i uses only data up to i)."""
+    n = len(closes)
+    tr = np.empty(n, dtype=float)
+    tr[0] = highs[0] - lows[0]
+    for i in range(1, n):
+        tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+    atr = np.full(n, np.nan, dtype=float)
+    if n >= period:
+        atr[period - 1] = float(np.mean(tr[:period]))
+        for i in range(period, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+    return atr
+
+
+def _sr_flip_pivots_dynamic(
+    daily: pd.DataFrame,
+    atr_period: int = SR_FLIP_ATR_PERIOD,
+    atr_mult: float = SR_FLIP_ATR_MULT,
+    min_bars: int = SR_FLIP_MIN_BARS,
+) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+    """Return (pivot_highs, pivot_lows) as (index, price) lists using a causal
+    ATR-scaled zigzag. A swing high is confirmed only when price drops by
+    `atr_mult * ATR` below a running high extreme; a swing low when price rises by
+    the same amount above a running low extreme. Pivots alternate and are always
+    in the past relative to their confirming bar, so there is no look-ahead and
+    the final `right` bars are not force-excluded."""
+    highs = daily["High"].to_numpy(dtype=float)
+    lows = daily["Low"].to_numpy(dtype=float)
+    closes = daily["Close"].to_numpy(dtype=float)
+    n = len(daily)
+    if n < atr_period + 2:
+        return [], []
+
+    atr = _rolling_atr(highs, lows, closes, atr_period)
+    atr_mean = float(np.nanmean(atr))
+    if not np.isfinite(atr_mean) or atr_mean <= 0:
+        atr_mean = closes[-1] * 0.02
+    atr = np.where(np.isnan(atr), atr_mean, atr)
+
+    pivot_highs: list[tuple[int, float]] = []
+    pivot_lows: list[tuple[int, float]] = []
+
+    ext_h = highs[0]
+    ext_h_i = 0
+    ext_l = lows[0]
+    ext_l_i = 0
+    trend = 0  # +1 up-leg (last pivot low), -1 down-leg (last pivot high), 0 unknown
+
+    for i in range(1, n):
+        thr = atr[i] * atr_mult
+        if highs[i] > ext_h:
+            ext_h, ext_h_i = highs[i], i
+        if lows[i] < ext_l:
+            ext_l, ext_l_i = lows[i], i
+
+        if trend >= 0 and lows[i] <= ext_h - thr:
+            if not pivot_highs or ext_h_i - pivot_highs[-1][0] >= min_bars:
+                pivot_highs.append((ext_h_i, float(ext_h)))
+            trend = -1
+            ext_l = lows[i]
+            ext_l_i = i
+        elif trend <= 0 and highs[i] >= ext_l + thr:
+            if not pivot_lows or ext_l_i - pivot_lows[-1][0] >= min_bars:
+                pivot_lows.append((ext_l_i, float(ext_l)))
+            trend = 1
+            ext_h = highs[i]
+            ext_h_i = i
+
+    return pivot_highs, pivot_lows
+
+
+def _sr_flip_pivots(daily: pd.DataFrame, left: int = 3, right: int = 3):
+    """Static fallback: (index, price) pivots with fixed `left`/`right` bar
+    context. Retained for reference; the S/R flip now uses `_sr_flip_pivots_dynamic`."""
+    highs = daily["High"].to_numpy()
+    lows = daily["Low"].to_numpy()
+    n = len(daily)
+    pivot_highs: list[tuple[int, float]] = []
+    pivot_lows: list[tuple[int, float]] = []
+    for i in range(left, n - right):
+        if highs[i] >= max(highs[i - left : i + right + 1]):
+            pivot_highs.append((i, float(highs[i])))
+        if lows[i] <= min(lows[i - left : i + right + 1]):
+            pivot_lows.append((i, float(lows[i])))
+    return pivot_highs, pivot_lows
+
+
+def _sr_flip_points(
+    daily: pd.DataFrame,
+    tol: float = 0.004,
+    dynamic: bool = True,
+    atr_period: int = SR_FLIP_ATR_PERIOD,
+    atr_mult: float = SR_FLIP_ATR_MULT,
+    min_bars: int = SR_FLIP_MIN_BARS,
+) -> dict[str, bool]:
+    """Detect a support/resistance flip on the latest bar.
+
+    Bullish flip: a prior swing HIGH (resistance) where price later dropped below
+    it (confirming it resisted), then the latest bar dips back to that level and
+    CLOSES back above it — the old resistance now acting as support.
+
+    Bearish flip: a prior swing LOW (support) where price later rose above it
+    (confirming it supported), then the latest bar rises back to that level and
+    CLOSES back below it — the old support now acting as resistance.
+
+    By default `dynamic=True` uses ATR-scaled swing pivots (`_sr_flip_pivots_dynamic`)
+    instead of the static 3-bar context. Pivots are confirmed by a genuine reversal
+    in the past, so unlike the static version there is no need to blindly skip the
+    final `right` bars — only pivots with at least one bar of post-pivot price
+    action (the `later` range) are eligible.
+    """
+    if dynamic:
+        pivot_highs, pivot_lows = _sr_flip_pivots_dynamic(
+            daily, atr_period=atr_period, atr_mult=atr_mult, min_bars=min_bars
+        )
+    else:
+        pivot_highs, pivot_lows = _sr_flip_pivots(daily)
+    last = daily.iloc[-1]
+    last_low = float(last["Low"])
+    last_high = float(last["High"])
+    last_close = float(last["Close"])
+
+    bullish = False
+    bearish = False
+    bullish_level = None
+    bearish_level = None
+    bullish_idx = None
+    bearish_idx = None
+
+    # Dynamic pivots are confirmed by a genuine reversal, so the only requirement
+    # is that at least one bar of post-pivot price action exists (`later` is
+    # non-empty). The static `idx >= n - 5` skip is no longer needed.
+    for idx, lvl in reversed(pivot_highs):
+        later = daily["Low"].iloc[idx + 1 : -1]
+        if later.empty or float(later.min()) >= lvl:
+            continue
+        if last_low <= lvl * (1 + tol) and last_close > lvl:
+            bullish = True
+            bullish_level = lvl
+            bullish_idx = idx
+            break
+
+    for idx, lvl in reversed(pivot_lows):
+        later = daily["High"].iloc[idx + 1 : -1]
+        if later.empty or float(later.max()) <= lvl:
+            continue
+        if last_high >= lvl * (1 - tol) and last_close < lvl:
+            bearish = True
+            bearish_level = lvl
+            bearish_idx = idx
+            break
+
+    # A single bar cannot be a clean flip in both directions. When both a prior
+    # resistance and a prior support near the close trigger on the same bar (choppy
+    # indecision), keep only the tighter-level flip and suppress the other so the
+    # symbol never appears in both the bullish and bearish lists.
+    if bullish and bearish:
+        d_bull = abs(last_close - bullish_level) if bullish_level is not None else float("inf")
+        d_bear = abs(last_close - bearish_level) if bearish_level is not None else float("inf")
+        if d_bear < d_bull:
+            bullish = False
+            bullish_level = None
+            bullish_idx = None
+        else:
+            bearish = False
+            bearish_level = None
+            bearish_idx = None
+
+    # Timestamps (point-in-time, no look-ahead):
+    #  - `detected_date`: the date of the bar on which the flip was detected
+    #    (the final/trigger bar).
+    #  - `level_date`: the date the original swing pivot (the resistance/support
+    #    that flipped) actually formed — i.e. when that S/R level was made.
+    detected_date = None
+    level_date = None
+    if isinstance(daily.index, pd.DatetimeIndex) and len(daily) > 0:
+        detected_date = str(daily.index[-1].date())
+        if bullish_idx is not None:
+            level_date = str(daily.index[bullish_idx].date())
+        elif bearish_idx is not None:
+            level_date = str(daily.index[bearish_idx].date())
+
     return {
-        "curr_open": latest["Open"],
-        "curr_high": latest["High"],
-        "curr_low": latest["Low"],
-        "curr_close": latest["Close"],
-        "prev_close": prior["Close"],
-        "prev_high": prior["High"],
-        "prev_low": prior["Low"],
-        "sma5": float(sma5),
+        "bullish": bullish,
+        "bearish": bearish,
+        "bullish_level": bullish_level,
+        "bearish_level": bearish_level,
+        "detected_date": detected_date,
+        "level_date": level_date,
     }
 
 
-def _ict_daily_bias_bullish(values: dict[str, float]) -> bool:
-    return (
-        values["curr_close"] > values["sma5"]
-        and values["curr_close"] > values["prev_close"]
-        and values["curr_low"] > values["prev_low"]
-    )
-
-
-def _ict_daily_bias_bearish(values: dict[str, float]) -> bool:
-    return (
-        values["curr_close"] < values["sma5"]
-        and values["curr_close"] < values["prev_close"]
-        and values["curr_high"] < values["prev_high"]
-    )
-
-
-def run_ict_daily_bias(
+def run_sr_flip(
     symbols: Sequence[str],
     as_of_date: date,
     verbose: bool = False,
@@ -772,39 +953,64 @@ def run_ict_daily_bias(
             "bearish_match": False,
             "final_signal": False,
             "status": "pending",
+            "flip_level": float("nan"),
+            "signal_date": "",
+            "level_date": "",
         }
     )
 
     for idx, symbol in enumerate(symbols):
         if daily_map is None:
-            daily = _fetch_daily_from_bhavcopy(symbol=symbol, as_of_date=as_of_date, max_lookback_days=40)
+            daily = _fetch_daily_from_bhavcopy(symbol=symbol, as_of_date=as_of_date, max_lookback_days=200)
         else:
             daily = daily_map.get(str(symbol).upper(), pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
 
-        if len(daily) < 5:
+        if len(daily) < 30:
             results.at[idx, "status"] = "no_data"
             if verbose:
                 print(f"{symbol}: SKIPPED (no_data)")
             continue
 
-        values = _ict_daily_bias_points(daily)
-        bullish = _ict_daily_bias_bullish(values)
-        bearish = _ict_daily_bias_bearish(values)
+        points = _sr_flip_points(daily)
+        bullish = points["bullish"]
+        bearish = points["bearish"]
 
         results.at[idx, "bullish_match"] = bullish
         results.at[idx, "bearish_match"] = bearish
         results.at[idx, "final_signal"] = bullish or bearish
         results.at[idx, "status"] = "complete"
+        signal_date = points.get("detected_date") or ""
+        level_date = points.get("level_date") or ""
+        if bullish and points["bullish_level"] is not None:
+            results.at[idx, "flip_level"] = points["bullish_level"]
+            results.at[idx, "signal_date"] = signal_date
+            results.at[idx, "level_date"] = level_date
+        elif bearish and points["bearish_level"] is not None:
+            results.at[idx, "flip_level"] = points["bearish_level"]
+            results.at[idx, "signal_date"] = signal_date
+            results.at[idx, "level_date"] = level_date
 
         if verbose:
-            print(f"{symbol}: bullish={bullish}, bearish={bearish}")
+            print(f"{symbol}: bullish={bullish}, bearish={bearish}, level={results.at[idx, 'flip_level']}, detected={signal_date}, level_date={level_date}")
 
-    bullish, bearish = _extract_signal_frames(results)
+    bullish_frame = (
+        results.loc[results["bullish_match"] == True, ["symbol", "flip_level", "signal_date", "level_date"]]
+        .sort_values("symbol")
+        .reset_index(drop=True)
+    )
+    bearish_frame = (
+        results.loc[results["bearish_match"] == True, ["symbol", "flip_level", "signal_date", "level_date"]]
+        .sort_values("symbol")
+        .reset_index(drop=True)
+    )
+    for frame in (bullish_frame, bearish_frame):
+        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
+
     return StrategyExecution(
-        name="ict_daily_bias_sweep",
+        name="sr_flip_sweep",
         results=results,
-        bullish=bullish,
-        bearish=bearish,
+        bullish=bullish_frame,
+        bearish=bearish_frame,
     )
 
 
@@ -1678,9 +1884,9 @@ def strategy_registry() -> Dict[str, StrategySpec]:
             name="ema5_sweep",
             runner=run_ema5_sweep,
         ),
-        "ict_daily_bias_sweep": StrategySpec(
-            name="ict_daily_bias_sweep",
-            runner=run_ict_daily_bias,
+        "sr_flip_sweep": StrategySpec(
+            name="sr_flip_sweep",
+            runner=run_sr_flip,
         ),
     }
 
@@ -1746,7 +1952,7 @@ def run_strategies(
         "inside_bar_pattern_daily_sweep": 160,
         "daily_fvg_sweep": 80,
         "ema5_sweep": 40,
-        "ict_daily_bias_sweep": 40,
+        "sr_flip_sweep": 200,
         "classic_expansion_sweep": 60,
         "midweek_reversal_sweep": 60,
         "consolidation_reversal_sweep": 60,

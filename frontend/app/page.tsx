@@ -48,6 +48,8 @@ type StrategyRow = {
   target?: number | null;
   rr?: number | null;
   track_mode?: string | null;
+  flip_level?: number | null;
+  signal_date?: string | null;
 };
 type TrackedEvent = { ts: string; date: string; state: string; note: string | null };
 type TrackedSetup = {
@@ -148,6 +150,82 @@ const formatCountdown = (totalSeconds: number) => {
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 };
 
+// Commodity inventory reports (EIA weekly releases) shown as a "news tile" with
+// the next release date/time converted to IST and a live countdown. Times are
+// the official ET release windows; DST is handled via the America/New_York
+// timezone offset so IST (UTC+5:30) is always correct.
+const INVENTORY_REPORTS: {
+  key: string;
+  label: string;
+  detail: string;
+  weekdayET: number; // 0=Sun..6=Sat
+  hourET: number;
+  minuteET: number;
+  url: string;
+}[] = [
+  {
+    key: "crude",
+    label: "Crude Oil Inventories",
+    detail: "EIA Petroleum Status Report",
+    weekdayET: 3, // Wednesday
+    hourET: 10,
+    minuteET: 30,
+    url: "https://in.investing.com/economic-calendar/crude-oil-inventories-75",
+  },
+  {
+    key: "natgas",
+    label: "Natural Gas Storage",
+    detail: "EIA Weekly Gas Storage Report",
+    weekdayET: 4, // Thursday
+    hourET: 10,
+    minuteET: 30,
+    url: "https://in.investing.com/economic-calendar/natural-gas-storage-386",
+  },
+];
+
+// Milliseconds that `timeZone` is ahead of UTC for a given instant (accounts for DST).
+const tzOffsetMs = (instant: Date, timeZone: string): number => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(instant);
+  const map: Record<string, number> = {};
+  for (const part of parts) if (part.type !== "literal") map[part.type] = Number(part.value);
+  const asUTC = Date.UTC(map.year, map.month - 1, map.day, map.hour === 24 ? 0 : map.hour, map.minute, map.second);
+  return asUTC - instant.getTime();
+};
+
+// Next UTC instant (Date) for a release that occurs at hourET:minuteET on weekdayET
+// in America/New_York, strictly after `now`.
+const nextReleaseInstantET = (now: Date, weekdayET: number, hourET: number, minuteET: number): Date => {
+  for (let i = 0; i < 14; i++) {
+    const candidate = new Date(now.getTime() + i * 86400000);
+    const etWall = new Date(candidate.getTime() - tzOffsetMs(candidate, "America/New_York"));
+    if (etWall.getUTCDay() !== weekdayET) continue;
+    const wallMs = Date.UTC(etWall.getUTCFullYear(), etWall.getUTCMonth(), etWall.getUTCDate(), hourET, minuteET, 0);
+    const instant = wallMs - tzOffsetMs(new Date(wallMs), "America/New_York");
+    if (instant > now.getTime()) return new Date(instant);
+  }
+  return new Date(now.getTime() + 7 * 86400000);
+};
+
+const formatIST = (instant: Date): string =>
+  new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(instant) + " IST";
+
 type AudioContextWindow = Window & { webkitAudioContext?: typeof AudioContext };
 let audioContext: AudioContext | null = null;
 
@@ -225,6 +303,7 @@ export default function Home() {
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
+  const [inventoryNow, setInventoryNow] = useState(() => Date.now());
 
   const loadTracker = async (symbols?: string[]) => {
     try {
@@ -401,6 +480,21 @@ export default function Home() {
   useEffect(() => {
     if (!trackerWatchlistOnly) loadTracker().catch(() => {});
   }, []);
+
+  // Tick every second so the commodity inventory-report countdown stays live.
+  useEffect(() => {
+    const id = window.setInterval(() => setInventoryNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const inventoryReports = INVENTORY_REPORTS.map((report) => {
+    const instant = nextReleaseInstantET(new Date(inventoryNow), report.weekdayET, report.hourET, report.minuteET);
+    const seconds = Math.max(0, Math.round((instant.getTime() - inventoryNow) / 1000));
+    // Highlight when the release is within 24h so it grabs attention.
+    const soon = seconds <= 24 * 3600;
+    const sameDay = instant.toDateString() === new Date(inventoryNow).toDateString();
+    return { ...report, ist: formatIST(instant), soon, sameDay };
+  });
 
   useEffect(() => {
     Promise.all([
@@ -639,7 +733,34 @@ export default function Home() {
         )}
       </div>
       </section>
-<section className="panel strategy-panel">
+      <section className="panel inventory-panel">
+        <div className="panel-heading">
+          <span>Commodity inventory reports</span>
+          <small className="auto-meta">Weekly · EIA · IST</small>
+        </div>
+        <div className="inventory-list">
+          {inventoryReports.map((report) => (
+            <a
+              key={report.key}
+              href={report.url}
+              target="_blank"
+              rel="noreferrer"
+              className={`inventory-row${report.soon ? " soon" : ""}`}
+              title={`Next ${report.label} release — ${report.url}`}
+            >
+              <div className="inventory-meta">
+                <strong>{report.label}</strong>
+                <small>{report.detail}</small>
+              </div>
+              <div className="inventory-time">
+                <span className="ist">{report.ist}</span>
+                {report.soon && <span className="publish-flag">{report.sameDay ? "TODAY" : "SOON"}</span>}
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+      <section className="panel strategy-panel">
         <div className="panel-heading">
           <span>Strategy profiles</span>
           <div className="panel-heading-actions">
@@ -741,6 +862,12 @@ export default function Home() {
                           </small>
                         )}
                         {row.entry == null && row.note && <small>{row.note}</small>}
+                        {(row.flip_level != null || row.signal_date) && (
+                          <small>
+                            {row.flip_level != null && `Lvl ${row.flip_level}`}
+                            {row.signal_date ? ` · ${row.signal_date}` : ""}
+                          </small>
+                        )}
                         {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
                       </a>
                     ))}
@@ -755,6 +882,12 @@ export default function Home() {
                           </small>
                         )}
                         {row.entry == null && row.note && <small>{row.note}</small>}
+                        {(row.flip_level != null || row.signal_date) && (
+                          <small>
+                            {row.flip_level != null && `Lvl ${row.flip_level}`}
+                            {row.signal_date ? ` · ${row.signal_date}` : ""}
+                          </small>
+                        )}
                         {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
                       </a>
                     ))}

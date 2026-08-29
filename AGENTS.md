@@ -24,6 +24,11 @@ Every agent/change must follow these rules:
    entry / stop / loss / target (TP/SL) logic.** Propose such changes and ask
    first before implementing.
 
+4. **Ask before long-running / time-consuming work.** If a task will take
+   significant time (large backtests, bulk data downloads, full test suites,
+   extended scans, long-running processes), confirm with the user before
+   starting rather than running it silently.
+
 General expectations:
 - Reference code locations as `path:line` so the human can navigate.
 - Verify changes compile / run relevant tests where a test command exists.

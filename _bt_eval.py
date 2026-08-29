@@ -7,7 +7,7 @@ from backtest import BacktestConfig, run_backtest
 wl = [l.strip() for l in open("config/watchlist.txt").read().splitlines() if l.strip()]
 print("watchlist symbols", len(wl))
 
-for strat in ["ict_daily_bias_sweep", "ema5_sweep", "inside_bar_pattern_daily_sweep", "daily_fvg_sweep"]:
+for strat in ["ema5_sweep", "inside_bar_pattern_daily_sweep", "daily_fvg_sweep"]:
     cfg = BacktestConfig(
         symbols=wl, strategies=[strat],
         start_date=date(2025, 2, 6), end_date=date(2026, 8, 27),

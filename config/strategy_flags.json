@@ -3,10 +3,10 @@
   "consolidation_reversal_sweep": true,
   "daily_fvg_sweep": false,
   "ema5_sweep": false,
-  "ict_daily_bias_sweep": false,
   "inside_bar_pattern_daily_sweep": false,
   "intraweek_reversal_sweep": true,
   "midweek_reversal_sweep": true,
+  "sr_flip_sweep": false,
   "tgif_setup_sweep": true,
   "thursday_counter_sweep": true
 }

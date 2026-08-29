@@ -213,8 +213,12 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .info-trigger:hover { color: var(--ink); }
 .day-marker { background: rgba(113, 128, 139, 0.15); border-radius: 3px; color: var(--ink); font-family: 'DM Mono', monospace; font-size: 9px; margin-left: 6px; padding: 0 4px; vertical-align: middle; }
 .filters button.active .day-marker { background: lightskyblue; color: black; }
-.info-tooltip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--ink); color: white; font: 11px/1.4 'Space Grotesk', sans-serif; padding: 8px 10px; border-radius: 4px; white-space: pre-line; width: max-content; max-width: 280px; z-index: 100; pointer-events: none; }
+.info-tooltip { display: none; position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--ink); color: white; font: 11px/1.4 'Space Grotesk', sans-serif; padding: 8px 10px; border-radius: 4px; white-space: pre-line; width: max-content; max-width: min(280px, calc(100vw - 24px)); max-height: 240px; overflow-y: auto; z-index: 100; pointer-events: auto; }
 .strategy-chip-wrap:hover .info-tooltip { display: block; }
+.info-tooltip:hover, .tracker-info:hover .info-tooltip { display: block; }
+/* Transparent bridge so moving the cursor from the trigger into the tooltip
+   (including the 6px gap) keeps it open long enough to scroll/select. */
+.info-tooltip::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
 .strategy-date { align-items: center; display: flex; gap: var(--gap-sm); }
 .strategy-date label { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
 .strategy-date input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 12px; min-height: 32px; padding: 6px 10px; border-radius: 4px; }
@@ -311,3 +315,19 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .grid-filter-row th { padding: 6px 8px; }
 .grid-filter-row input, .grid-filter-row select { background: white; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font-size: 11px; min-height: 26px; min-width: 72px; padding: 4px 6px; text-transform: none; width: 100%; }
 .grid-filter-row input::placeholder { color: var(--muted); }
+
+/* Commodity inventory report tile */
+.inventory-panel { margin-bottom: var(--gap-md); }
+.inventory-list { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.inventory-row { align-items: center; background: white; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 4px; display: flex; justify-content: space-between; gap: var(--gap-md); padding: 7px 10px; text-decoration: none; transition: border-color .15s ease, background .15s ease; }
+.inventory-row:hover { border-color: var(--ink); }
+.inventory-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.inventory-meta strong { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 12px; }
+.inventory-meta small { color: var(--muted); font: 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
+.inventory-time { align-items: flex-end; display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
+.inventory-time .ist { color: var(--teal); font: 11px 'DM Mono', monospace; }
+.inventory-time .publish-flag { color: #fff; background: var(--coral); border-radius: 3px; font: 9px 'DM Mono', monospace; letter-spacing: 1px; padding: 1px 5px; }
+.inventory-row.soon { background: #fdeee8; border-color: var(--coral); border-left-color: var(--coral); animation: inventory-pulse 1.8s ease-in-out infinite; }
+.inventory-row.soon .ist { color: var(--coral); font-weight: 500; }
+@keyframes inventory-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(214,90,58,0.0); } 50% { box-shadow: 0 0 0 3px rgba(214,90,58,0.18); } }
+
