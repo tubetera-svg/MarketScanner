@@ -318,15 +318,15 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 
 /* Commodity inventory report tile */
 .inventory-panel { margin-bottom: var(--gap-md); }
-.inventory-list { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
-.inventory-row { align-items: center; background: white; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 4px; display: flex; justify-content: space-between; gap: var(--gap-md); padding: 7px 10px; text-decoration: none; transition: border-color .15s ease, background .15s ease; }
+.inventory-list { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
+.inventory-row { align-items: baseline; background: white; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 4px; display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; text-decoration: none; transition: border-color .15s ease, background .15s ease; }
 .inventory-row:hover { border-color: var(--ink); }
-.inventory-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.inventory-meta strong { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 12px; }
+.inventory-meta { align-items: baseline; display: flex; flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
+.inventory-meta strong { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 11px; }
 .inventory-meta small { color: var(--muted); font: 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
-.inventory-time { align-items: flex-end; display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
-.inventory-time .ist { color: var(--teal); font: 11px 'DM Mono', monospace; }
-.inventory-time .publish-flag { color: #fff; background: var(--coral); border-radius: 3px; font: 9px 'DM Mono', monospace; letter-spacing: 1px; padding: 1px 5px; }
+.inventory-time { align-items: center; display: flex; flex-direction: row; gap: 6px; white-space: nowrap; }
+.inventory-time .ist { color: var(--teal); font: 10px 'DM Mono', monospace; }
+.inventory-time .publish-flag { color: #fff; background: var(--coral); border-radius: 3px; font: 8px 'DM Mono', monospace; letter-spacing: 1px; padding: 1px 4px; }
 .inventory-row.soon { background: #fdeee8; border-color: var(--coral); border-left-color: var(--coral); animation: inventory-pulse 1.8s ease-in-out infinite; }
 .inventory-row.soon .ist { color: var(--coral); font-weight: 500; }
 @keyframes inventory-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(214,90,58,0.0); } 50% { box-shadow: 0 0 0 3px rgba(214,90,58,0.18); } }
