@@ -1,17 +1,13 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowDownRight, ArrowUpRight, Database, Info, Plus, RefreshCw, SearchX, Target, Timer } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, Database, Info, Plus, RefreshCw, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex";
-type TierFilter = "A" | "B" | "C" | "D" | "All";
 type Setup = {
   symbol: string;
   session: string;
-  daily_bias: string;
-  weekly_bias: string;
-  bias_strength: string;
   state: string;
   tier: string;
   price: number;
@@ -84,7 +80,6 @@ type StrategyGroup = { strategy: string; label: string; total: number; bull_coun
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
-const number = (value: number | null) => value == null ? "-" : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 const niftyIndexes = ["NSE:NIFTY", "NSE:BANKNIFTY", "NSE:FINNIFTY", "NSE:MIDCPNIFTY", "NSE:NIFTYNXT50", "NSE:INDIAVIX"];
 const nifty50 = ["ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ_AUTO", "BAJFINANCE", "BAJAJFINSV", "BEL", "BHARTIARTL", "BPCL", "BRITANNIA", "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL", "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDUNILVR", "ICICIBANK", "INDUSINDBK", "INFY", "ITC", "JIOFIN", "JSWSTEEL", "KOTAKBANK", "LT", "M&M", "MARUTI", "MAXHEALTH", "NESTLEIND", "NTPC", "ONGC", "POWERGRID", "RELIANCE", "SBILIFE", "SBIN", "SHRIRAMFIN", "SUNPHARMA", "TATACONSUM", "TATAMOTORS", "TATASTEEL", "TCS", "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO"];
 const sectorSymbols: Record<Exclude<WatchScope, "All" | "Nifty indexes" | "Nifty 50" | "Commodities" | "Forex" | "F&O" | "Crypto">, string[]> = {
@@ -269,12 +264,8 @@ export default function Home() {
   const [scannedAt, setScannedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading watchlist...");
-  const [bias, setBias] = useState("All");
   const [watchScope, setWatchScope] = useState<WatchScope>("Commodities");
   const [watchQuery, setWatchQuery] = useState("");
-  const [resultScope, setResultScope] = useState<WatchScope>("All");
-  const [resultQuery, setResultQuery] = useState("");
-  const [tierFilter, setTierFilter] = useState<TierFilter>("A");
   const [newSymbol, setNewSymbol] = useState("");
   const [watchlistMessage, setWatchlistMessage] = useState("");
   const [showAddSymbol, setShowAddSymbol] = useState(false);
@@ -613,18 +604,8 @@ export default function Home() {
     }
   };
 
-  const visible = setups.filter((setup) => {
-    const matchesTier = tierFilter === "All" || setup.tier === tierFilter;
-    const matchesBias = bias === "All" || setup.daily_bias === bias;
-    const matchesScope = matchesScope_check(setup, resultScope);
-    const matchesQuery = setup.symbol.toLowerCase().includes(resultQuery.toLowerCase());
-    return matchesTier && matchesBias && matchesScope && matchesQuery;
-  });
   const filteredWatchlist = watchlist.filter((item) => matchesScope_check(item, watchScope) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase()));
   const allVisibleSelected = filteredWatchlist.length > 0 && filteredWatchlist.every((item) => selected.includes(item.symbol));
-  const bullish = setups.filter((setup) => setup.daily_bias === "Bullish").length;
-  const bearish = setups.filter((setup) => setup.daily_bias === "Bearish").length;
-  const confirmed = setups.filter((setup) => setup.trade_confirmed).length;
 
   const groupKeyOf = (setup: TrackedSetup): string => {
     if (trackerGroupBy === "symbol") return setup.symbol;
@@ -648,7 +629,11 @@ export default function Home() {
         bull: group.items.filter((item) => sentimentOf(item.direction) === "bull").length,
         bear: group.items.filter((item) => sentimentOf(item.direction) === "bear").length,
       }))
-      .sort((a, b) => a.key.localeCompare(b.key));
+      .sort((a, b) =>
+        trackerGroupBy === "week"
+          ? b.key.localeCompare(a.key)
+          : a.key.localeCompare(b.key),
+      );
   }, [trackerSetups, trackerGroupBy]);
 
   const renderTrackerRow = (setup: TrackedSetup) => {
@@ -685,6 +670,7 @@ export default function Home() {
         <div className="top-actions">
           <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
           <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
+
           {markets && (
             <>
               <span className={`market-chip ${markets.nse ? "open" : "closed"}`}>NSE {markets.nse ? "OPEN" : "CLOSED"}</span>
@@ -733,33 +719,6 @@ export default function Home() {
         )}
       </div>
       </section>
-      <section className="panel inventory-panel">
-        <div className="panel-heading">
-          <span>Commodity inventory reports</span>
-          <small className="auto-meta">Weekly · EIA · IST</small>
-        </div>
-        <div className="inventory-list">
-          {inventoryReports.map((report) => (
-            <a
-              key={report.key}
-              href={report.url}
-              target="_blank"
-              rel="noreferrer"
-              className={`inventory-row${report.soon ? " soon" : ""}`}
-              title={`Next ${report.label} release — ${report.url}`}
-            >
-              <div className="inventory-meta">
-                <strong>{report.label}</strong>
-                <small>{report.detail}</small>
-              </div>
-              <div className="inventory-time">
-                <span className="ist">{report.ist}</span>
-                {report.soon && <span className="publish-flag">{report.sameDay ? "TODAY" : "SOON"}</span>}
-              </div>
-            </a>
-          ))}
-        </div>
-      </section>
       <section className="panel strategy-panel">
         <div className="panel-heading">
           <span>Strategy profiles</span>
@@ -771,6 +730,23 @@ export default function Home() {
             </button>
           </div>
         </div>
+          <div className="inventory-horizontal">
+            {inventoryReports.map((report) => (
+              <a
+                key={report.key}
+                href={report.url}
+                target="_blank"
+                rel="noreferrer"
+                className={`inventory-chip${report.soon ? " soon" : ""}`}
+                title={`Next ${report.label} release — ${report.url}`}
+              >
+                <span className="inventory-label">{report.label}</span>
+                <span className="inventory-ist">{report.ist}</span>
+                {report.soon && <span className={`inventory-flag${report.sameDay ? " today" : ""}`}>{report.sameDay ? "TODAY" : "SOON"}</span>}
+              </a>
+            ))}
+          </div>
+
         {!weeklyMasterOn && <p className="date-note">WEEKLY_PROFILES_ENABLED is off in all_strategy.py — weekly profile chips stay locked until the master switch is turned on there.</p>}
         <div className="strategy-groups">
           <div className="strategy-group">
@@ -965,11 +941,6 @@ export default function Home() {
             ))
           )}
         </div>
-      </section>
-        <section className="results">
-          <div className="metrics"><div className="metric"><span>Total setups</span><strong>{setups.length}</strong><Activity size={18} /></div><div className="metric bullish"><span>Bullish bias</span><strong>{bullish}</strong><ArrowUpRight size={18} /></div><div className="metric bearish"><span>Bearish bias</span><strong>{bearish}</strong><ArrowDownRight size={18} /></div><div className="metric confirmed"><span>Confirmed</span><strong>{confirmed}</strong><Target size={18} /></div></div>
-            <div className="table-head"><div><p className="kicker">Current intelligence</p><h3>{tierFilter === "All" ? "All tier setups" : `Tier ${tierFilter} setups`}</h3></div><div className="result-filters"><span className="filter-label">Tier</span><select aria-label="Filter results by tier" value={tierFilter} onChange={(event) => setTierFilter(event.target.value as TierFilter)}><option value="A">Tier A</option><option value="B">Tier B</option><option value="C">Tier C</option><option value="D">Tier D</option><option value="All">All tiers</option></select><span className="filter-label">Market</span><select aria-label="Filter results by market" value={resultScope} onChange={(event) => setResultScope(event.target.value as WatchScope)}><option value="All">All markets</option><option>Nifty indexes</option><option>Nifty 50</option><option>Nifty Bank</option><option>Nifty IT</option><option>Nifty Auto</option><option>Nifty Pharma</option><option>F&amp;O</option><option>Crypto</option><option>Commodities</option><option>Forex</option></select><input aria-label="Search results" placeholder="Search results" value={resultQuery} onChange={(event) => setResultQuery(event.target.value)} /><span className="filter-label">Direction</span><div className="filters"><button className={bias === "All" ? "active" : ""} onClick={() => setBias("All")}>Any bias</button><button className={bias === "Bullish" ? "active" : ""} onClick={() => setBias("Bullish")}>Bullish</button><button className={bias === "Bearish" ? "active" : ""} onClick={() => setBias("Bearish")}>Bearish</button></div></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Symbol</th><th>Tier</th><th>Bias</th><th>State</th><th>Price</th><th>POI / Entry</th><th>Stop</th><th>Targets</th><th>RR</th><th>Confirm</th></tr></thead><tbody>{visible.map((setup) => <tr key={setup.symbol}><td><strong>{setup.symbol}</strong><small className={setup.session === "forex_24_5" ? "session-fx" : "session-nse"}>{setup.session === "forex_24_5" ? "FOREX" : "NSE"}</small></td><td><span className="badge">{setup.tier}</span></td><td><span className={`badge ${setup.daily_bias.toLowerCase()}`}>{setup.daily_bias}</span><small>{setup.weekly_bias} week</small></td><td><span className="state"><span className="state-dot" />{setup.state.replaceAll("_", " ")}</span><small>{setup.liquidity_swept ? `Sweep ${setup.liquidity_swept}` : "No sweep"}</small></td><td className="number">{number(setup.price)}</td><td className="number">{number(setup.poi_price)}<small>Entry {number(setup.entry)}</small></td><td className="number">{number(setup.stop_loss)}</td><td className="number">{number(setup.tp1)}<small>TP2 {number(setup.tp2)}</small></td><td className="number rr">{setup.risk_reward ? `${setup.risk_reward.toFixed(2)}R` : "-"}</td><td><span className={setup.trade_confirmed ? "confirmed" : "pending"}>{setup.trade_confirmed ? "YES" : "NO"}</span></td></tr>)}</tbody></table>{visible.length === 0 && <div className="empty"><SearchX size={20} /> No setups match this filter.</div>}</div>
         </section>
         </main>
       </div>

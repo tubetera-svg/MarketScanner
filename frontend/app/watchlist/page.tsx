@@ -88,6 +88,21 @@ export default function WatchlistPage() {
   const [editAliasesText, setEditAliasesText] = useState("");
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDetailsElement>(null);
+
+  // Native <details> doesn't close on outside click; do that here so the
+  // symbol picker doesn't feel "sticky" / stuck open.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pickerOpen]);
 
   // Mount: config-only read of the static watchlist symbols for the picker,
   // plus the symbol-alias fallback map used by the manager below.
@@ -441,8 +456,15 @@ export default function WatchlistPage() {
 
       <section className="auto-scan">
         <span className="auto-title"><Database size={14} /> Symbols</span>
-        <details className="symbol-picker">
-          <summary aria-label="Choose which watchlist symbols to load">
+        <details className="symbol-picker" open={pickerOpen} ref={pickerRef}>
+          <summary
+            aria-label="Choose which watchlist symbols to load"
+            aria-expanded={pickerOpen}
+            onClick={(event) => {
+              event.preventDefault();
+              setPickerOpen((current) => !current);
+            }}
+          >
             {selectedSymbols.size}/{allSymbols.length} symbols
           </summary>
           <div className="symbol-menu">

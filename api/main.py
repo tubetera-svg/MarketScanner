@@ -624,3 +624,5 @@ def get_markets() -> dict[str, Any]:
         "nse": bool(service.module.is_nse_market_open()),
         "forex_commodities": bool(service.module.is_forex_24_5_open()),
     }
+
+

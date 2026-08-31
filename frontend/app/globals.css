@@ -12,6 +12,15 @@ button, input { font: inherit; }
 .top-title h1 { font-size: 24px; letter-spacing: -0.5px; margin: 0; }
 .kicker { color: var(--coral); font: 500 10px 'DM Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 2px; }
 .top-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.inventory-horizontal { align-items: center; display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.inventory-chip { align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 4px; display: inline-flex; gap: 6px; padding: 3px 8px; text-decoration: none; font-size: 10px; white-space: nowrap; transition: border-color .15s ease; }
+.inventory-chip:hover { border-color: var(--ink); }
+.inventory-label { font: 500 10px 'DM Mono', monospace; color: var(--ink); }
+.inventory-ist { color: var(--teal); font: 9px 'DM Mono', monospace; }
+.inventory-flag { color: #fff; background: var(--coral); border-radius: 3px; font: 7px 'DM Mono', monospace; letter-spacing: .5px; padding: 1px 5px; }
+.inventory-flag.today { background: var(--amber); }
+.inventory-chip.soon { border-color: var(--coral); background: #fdeee8; }
+.inventory-chip.soon .inventory-ist { color: var(--coral); font-weight: 500; }
 .status { border: 1px solid var(--line); background: #fff; border-radius: 20px; color: var(--muted); font: 11px 'DM Mono', monospace; padding: 8px 12px; }
 .pulse { display: inline-block; width: 6px; height: 6px; background: var(--teal); border-radius: 50%; margin-right: 6px; }
 .market-chip { border: 1px solid var(--line); border-radius: 20px; font: 11px 'DM Mono', monospace; padding: 5px 12px; letter-spacing: .5px; white-space: nowrap; }
@@ -318,14 +327,14 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 
 /* Commodity inventory report tile */
 .inventory-panel { margin-bottom: var(--gap-md); }
-.inventory-list { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
-.inventory-row { align-items: baseline; background: white; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 4px; display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; text-decoration: none; transition: border-color .15s ease, background .15s ease; }
+.inventory-list { display: flex; flex-direction: column; gap: 1px; padding: 4px; }
+.inventory-row { align-items: baseline; background: white; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 4px; display: flex; justify-content: space-between; gap: 8px; padding: 2px 7px; text-decoration: none; transition: border-color .15s ease, background .15s ease; }
 .inventory-row:hover { border-color: var(--ink); }
-.inventory-meta { align-items: baseline; display: flex; flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
-.inventory-meta strong { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 11px; }
-.inventory-meta small { color: var(--muted); font: 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
+.inventory-meta { align-items: baseline; display: flex; flex-wrap: wrap; gap: 1px 6px; min-width: 0; }
+.inventory-meta strong { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 10.5px; }
+.inventory-meta small { color: var(--muted); font: 8.5px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
 .inventory-time { align-items: center; display: flex; flex-direction: row; gap: 6px; white-space: nowrap; }
-.inventory-time .ist { color: var(--teal); font: 10px 'DM Mono', monospace; }
+.inventory-time .ist { color: var(--teal); font: 9.5px 'DM Mono', monospace; }
 .inventory-time .publish-flag { color: #fff; background: var(--coral); border-radius: 3px; font: 8px 'DM Mono', monospace; letter-spacing: 1px; padding: 1px 4px; }
 .inventory-row.soon { background: #fdeee8; border-color: var(--coral); border-left-color: var(--coral); animation: inventory-pulse 1.8s ease-in-out infinite; }
 .inventory-row.soon .ist { color: var(--coral); font-weight: 500; }
