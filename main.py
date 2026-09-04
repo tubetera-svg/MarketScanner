@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
         default="",
         help=(
             "Comma-separated strategy names. Defaults to all from all_strategy.py. "
-            "Example: inside_bar_pattern_daily_sweep,daily_fvg_sweep,ema5_sweep,sr_flip_sweep"
+            "Example: inside_bar_pattern_daily_sweep,daily_fvg_sweep,ema5_sweep"
         ),
     )
     parser.add_argument(

@@ -30,7 +30,6 @@ CORE_STRATEGIES = [
     ("inside_bar_pattern_daily_sweep", "Inside Bar Pattern"),
     ("daily_fvg_sweep", "Daily FVG Sweep"),
     ("ema5_sweep", "EMA5 Sweep"),
-    ("sr_flip_sweep", "S/R Flip"),
     ("multi_timeframe_bias", "Multi-Timeframe Bias"),
 ]
 

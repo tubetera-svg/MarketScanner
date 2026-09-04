@@ -47,11 +47,11 @@ paper-trading, parameter optimization / walk-forward.
 
 ---
 
-## 3. Strategies In Scope (all 11)
+## 3. Strategies In Scope (all 10)
 
 From `strategy_registry()` (`src/all_strategy.py:1663`) + `WEEKLY_PROFILE_FLAGS`:
 
-- Core (no built-in SL/target): `weekly_vs_daily_sweep` (420d), `inside_bar_pattern_daily_sweep` (160d), `daily_fvg_sweep` (80d), `ema5_sweep` (40d), `sr_flip_sweep` (200d).
+- Core (no built-in SL/target): `weekly_vs_daily_sweep` (420d), `inside_bar_pattern_daily_sweep` (160d), `daily_fvg_sweep` (80d), `ema5_sweep` (40d).
 - Weekly profiles (carry `entry/sl/target/rr`): `classic_expansion_sweep`, `midweek_reversal_sweep`, `consolidation_reversal_sweep`, `intraweek_reversal_sweep`, `thursday_counter_sweep`, `tgif_setup_sweep` (all 60d).
 
 The per-strategy required lookback is already centralized in `run_strategies`'s

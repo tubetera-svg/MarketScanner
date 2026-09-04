@@ -55,13 +55,6 @@ This file contains the exact conditions used by strategy runners in `all_strateg
   - current close > previous low
 - Output: daily EMA momentum bias signals.
 
-### `sr_flip_sweep`
-- Uses the latest 200 daily candles. Detects swing pivots with a dynamic, volatility-adaptive (ATR-scaled zigzag) swing detector instead of a static 3-bar left/right context — a swing high/low is confirmed only once price reverses by `SR_FLIP_ATR_MULT * ATR(SR_FLIP_ATR_PERIOD)` from a local extreme, so the effective swing length adapts to the instrument (defaults: ATR period 14, multiplier 1.5, min 3 bars between pivots). This locates prior resistance (swing highs) and support (swing lows) without forcing every swing to be exactly 3 candles wide.
-- A prior level is treated as a genuine S/R zone only if price later moved away from it (resistance: later low dropped below it; support: later high rose above it).
-- Bullish flip `_sr_flip_points()` requires: the latest bar's low dips back to within 0.4% of a prior swing HIGH (tag) and the latest bar CLOSES back above that level — old resistance now acting as support.
-- Bearish flip requires: the latest bar's high rises back to within 0.4% of a prior swing LOW and the latest bar CLOSES back below that level — old support now acting as resistance.
-- Output: bullish or bearish support/resistance flip matches. Point-in-time only (no look-ahead): pivots and the confirmation close use bars up to and including the signal bar. Each match carries `flip_level` (the prior resistance/support price that flipped) and `signal_date` (the date of the triggering bar).
-
 ## Weekly Profile Strategies (6-profile weekly series)
 
 Six additional strategies in `all_strategy.py` model the weekly profile framework (Classic Expansion, Midweek Reversal, Consolidation Reversal, Intraweek Reversal, Thursday Counter, TGIF Setup). All of them:
