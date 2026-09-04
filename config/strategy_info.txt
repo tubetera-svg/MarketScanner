@@ -119,6 +119,17 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - Scenario handling: if scanned on Thursday with no Friday bar, "Thursday already reversed" variant matches when Thursday closes against the leg without exceeding its extreme (`thursday_reversed_friday_continuation`).
 - Target reference: 20-30% retracement into the weekly range (informational; not part of the match logic).
 
+### `multi_timeframe_bias`
+- Replicates the ICT daily bias logic across daily, weekly, and monthly timeframes for backtesting and historical analysis.
+- Daily bias: compares current close to previous day's high/low, accounting for intraday range sweeps and body reclaim (same rules as `ict_scanner.py`).
+- Weekly bias: compares current close to previous completed week's high/low (W-FRI anchored).
+- Monthly bias: compares current close to previous completed month's high/low (month-end anchored).
+- Confluence scoring: Strong (3/3 aligned), Medium (2/3 aligned), Weak (1/3 aligned). Signals fire only when all non-neutral biases agree and confluence meets the active profile's threshold.
+- Strategy Profiles (from `config/strategy_profiles.json`) constrain the analysis to specific date ranges and set the minimum confluence required.
+- Asset selection: evaluates all provided symbols but only emits signals for those with sufficient daily/weekly/monthly history; insufficient-data symbols are marked `no_data`.
+- Output columns: `daily_bias`, `weekly_bias`, `monthly_bias`, `confluence`, `direction`, `entry`, `sl`, `target`, `rr`.
+- SL is previous day's low (bullish) or high (bearish). Target is the furthest higher-timeframe high/low available (weekly or monthly).
+
 ## ICT Scanner (`ict_scanner.py`)
 
 ### Overview

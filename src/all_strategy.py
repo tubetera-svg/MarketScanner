@@ -248,6 +248,9 @@ def _build_daily_map_for_symbols(
     start = as_of_date - timedelta(days=max(int(max_lookback_days), 1))
     hist_end = as_of_date if as_of_date < today else today - timedelta(days=1)
 
+    md = _get_md_service()
+    md.database.init_db()
+
     # Group symbols by upstream source so the historical window can be fetched
     # in one batched query per source instead of one round-trip per symbol.
     by_source: Dict[str, list[str]] = {}
@@ -498,13 +501,14 @@ def _build_tradingview_link(symbol: str) -> str:
 
 
 def _extract_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    extra_cols = [c for c in ("daily_bias", "weekly_bias", "monthly_bias", "confluence", "note") if c in results.columns]
     bullish = (
-        results.loc[results["bullish_match"] == True, ["symbol"]]
+        results.loc[results["bullish_match"] == True, ["symbol"] + extra_cols]
         .sort_values("symbol")
         .reset_index(drop=True)
     )
     bearish = (
-        results.loc[results["bearish_match"] == True, ["symbol"]]
+        results.loc[results["bearish_match"] == True, ["symbol"] + extra_cols]
         .sort_values("symbol")
         .reset_index(drop=True)
     )
@@ -1008,6 +1012,306 @@ def run_sr_flip(
 
     return StrategyExecution(
         name="sr_flip_sweep",
+        results=results,
+        bullish=bullish_frame,
+        bearish=bearish_frame,
+    )
+
+
+def _load_bias_profile() -> dict:
+    from pathlib import Path
+    import json
+
+    path = Path(__file__).resolve().parent.parent / "config" / "strategy_profiles.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "active_profile": "default",
+            "profiles": {
+                "default": {
+                    "start_date": None,
+                    "end_date": None,
+                    "min_confluence": 2,
+                    "description": "No date range constraint; analyze all available history.",
+                }
+            },
+        }
+    if not isinstance(data, dict):
+        return {
+            "active_profile": "default",
+            "profiles": {
+                "default": {
+                    "start_date": None,
+                    "end_date": None,
+                    "min_confluence": 2,
+                    "description": "No date range constraint; analyze all available history.",
+                }
+            },
+        }
+    return data
+
+
+def _compute_multi_timeframe_bias(daily: pd.DataFrame, price: float) -> dict:
+    if daily is None or daily.empty or len(daily) < 2:
+        return {
+            "daily_bias": "Neutral",
+            "weekly_bias": "Neutral",
+            "monthly_bias": "Neutral",
+            "confluence": 0,
+            "direction": 0,
+            "pd_h": None,
+            "pd_l": None,
+            "pw_h": None,
+            "pw_l": None,
+            "pm_h": None,
+            "pm_l": None,
+        }
+
+    curr = daily.iloc[-1]
+    pd_ = daily.iloc[-2]
+
+    pd_o = float(pd_["Open"])
+    pd_h = float(pd_["High"])
+    pd_l = float(pd_["Low"])
+    pd_c = float(pd_["Close"])
+    pd_body_hi = max(pd_o, pd_c)
+    pd_body_lo = min(pd_o, pd_c)
+
+    today_high = float(curr["High"])
+    today_low = float(curr["Low"])
+
+    daily_bias = "Neutral"
+    if price > pd_h or (today_low < pd_l and price >= pd_body_lo):
+        daily_bias = "Bullish"
+    if price < pd_l or (today_high > pd_h and price <= pd_body_hi):
+        daily_bias = "Bearish"
+
+    weekly_bias = "Neutral"
+    pw_h = None
+    pw_l = None
+    weekly = (
+        daily.resample("W-FRI")
+        .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+        .dropna(subset=["Open", "High", "Low", "Close"])
+    )
+    if len(weekly) >= 2:
+        pw = weekly.iloc[-2]
+        pw_h = float(pw["High"])
+        pw_l = float(pw["Low"])
+        if price > pw_h:
+            weekly_bias = "Bullish"
+        elif price < pw_l:
+            weekly_bias = "Bearish"
+
+    monthly_bias = "Neutral"
+    pm_h = None
+    pm_l = None
+    monthly = (
+        daily.resample("ME")
+        .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+        .dropna(subset=["Open", "High", "Low", "Close"])
+    )
+    if len(monthly) >= 2:
+        pm = monthly.iloc[-2]
+        pm_h = float(pm["High"])
+        pm_l = float(pm["Low"])
+        if price > pm_h:
+            monthly_bias = "Bullish"
+        elif price < pm_l:
+            monthly_bias = "Bearish"
+
+    biases = [daily_bias, weekly_bias, monthly_bias]
+    non_neutral = [b for b in biases if b != "Neutral"]
+    confluence = len(non_neutral)
+
+    if confluence == 0:
+        direction = 0
+    elif len(set(non_neutral)) == 1:
+        direction = 1 if non_neutral[0] == "Bullish" else -1
+    else:
+        direction = 0
+
+    return {
+        "daily_bias": daily_bias,
+        "weekly_bias": weekly_bias,
+        "monthly_bias": monthly_bias,
+        "confluence": confluence,
+        "direction": direction,
+        "pd_h": pd_h,
+        "pd_l": pd_l,
+        "pw_h": pw_h,
+        "pw_l": pw_l,
+        "pm_h": pm_h,
+        "pm_l": pm_l,
+    }
+
+
+def run_multi_timeframe_bias(
+    symbols: Sequence[str],
+    as_of_date: date,
+    verbose: bool = False,
+    print_values: bool = False,
+    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+) -> StrategyExecution:
+    profile = _load_bias_profile()
+    active = profile.get("active_profile", "default")
+    profiles = profile.get("profiles", {})
+    active_profile = profiles.get(active, profiles.get("default", {}))
+
+    start_date = active_profile.get("start_date")
+    end_date = active_profile.get("end_date")
+    if start_date:
+        sd = date.fromisoformat(start_date)
+        if as_of_date < sd:
+            return _empty_mtf_bias_results(symbols, "profile_date_skipped")
+    if end_date:
+        ed = date.fromisoformat(end_date)
+        if as_of_date > ed:
+            return _empty_mtf_bias_results(symbols, "profile_date_skipped")
+
+    min_confluence = int(active_profile.get("min_confluence", 2))
+
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols),
+            "bullish_match": False,
+            "bearish_match": False,
+            "final_signal": False,
+            "status": "pending",
+            "daily_bias": "Neutral",
+            "weekly_bias": "Neutral",
+            "monthly_bias": "Neutral",
+            "confluence": 0,
+            "direction": 0,
+            "entry": None,
+            "sl": None,
+            "target": None,
+            "rr": None,
+            "note": "",
+        }
+    )
+
+    for idx, symbol in enumerate(symbols):
+        symbol_upper = str(symbol).upper()
+        if daily_map is None:
+            daily = _fetch_daily_from_bhavcopy(
+                symbol=symbol_upper, as_of_date=as_of_date, max_lookback_days=600
+            )
+        else:
+            daily = daily_map.get(
+                symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+            )
+
+        if daily is None or daily.empty or len(daily) < 2:
+            results.at[idx, "status"] = "no_data"
+            if verbose:
+                print(f"{symbol_upper}: SKIPPED (no_data)")
+            continue
+
+        price = float(daily.iloc[-1]["Close"])
+        bias = _compute_multi_timeframe_bias(daily, price)
+
+        if bias["confluence"] < min_confluence or bias["direction"] == 0:
+            results.at[idx, "status"] = "no_confluence"
+            if verbose:
+                print(
+                    f"{symbol_upper}: d={bias['daily_bias']} w={bias['weekly_bias']} m={bias['monthly_bias']} "
+                    f"confluence={bias['confluence']} -> no signal"
+                )
+            continue
+
+        direction = bias["direction"]
+        bullish = direction == 1
+        bearish = direction == -1
+
+        entry = price
+        sl = None
+        target = None
+        rr = None
+
+        if bullish:
+            sl = bias["pd_l"]
+            highs = [h for h in (bias["pw_h"], bias["pm_h"]) if h is not None]
+            if highs:
+                candidate = max(highs)
+                if candidate > entry:
+                    target = candidate
+        elif bearish:
+            sl = bias["pd_h"]
+            lows = [l for l in (bias["pw_l"], bias["pm_l"]) if l is not None]
+            if lows:
+                candidate = min(lows)
+                if candidate < entry:
+                    target = candidate
+
+        if sl is not None and target is not None and entry is not None:
+            risk = abs(entry - sl)
+            reward = abs(target - entry)
+            if risk > 0:
+                rr = reward / risk
+
+        note = f"d={bias['daily_bias']} w={bias['weekly_bias']} m={bias['monthly_bias']} confluence={bias['confluence']}"
+
+        results.at[idx, "daily_bias"] = bias["daily_bias"]
+        results.at[idx, "weekly_bias"] = bias["weekly_bias"]
+        results.at[idx, "monthly_bias"] = bias["monthly_bias"]
+        results.at[idx, "confluence"] = bias["confluence"]
+        results.at[idx, "bullish_match"] = bullish
+        results.at[idx, "bearish_match"] = bearish
+        results.at[idx, "final_signal"] = True
+        results.at[idx, "status"] = "complete"
+        results.at[idx, "direction"] = direction
+        results.at[idx, "entry"] = entry
+        results.at[idx, "sl"] = sl
+        results.at[idx, "target"] = target
+        results.at[idx, "rr"] = rr
+        results.at[idx, "note"] = note
+
+        if verbose:
+            rr_str = f"{rr:.2f}" if rr is not None else "None"
+            print(
+                f"{symbol_upper}: {note} -> {'BULL' if bullish else 'BEAR'} "
+                f"entry={entry:.2f} sl={sl} target={target} rr={rr_str}"
+            )
+
+    bullish_frame, bearish_frame = _extract_signal_frames(results)
+    for frame in (bullish_frame, bearish_frame):
+        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
+
+    return StrategyExecution(
+        name="multi_timeframe_bias",
+        results=results,
+        bullish=bullish_frame,
+        bearish=bearish_frame,
+    )
+
+
+def _empty_mtf_bias_results(symbols: Sequence[str], status: str) -> StrategyExecution:
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols),
+            "bullish_match": False,
+            "bearish_match": False,
+            "final_signal": False,
+            "status": status,
+            "daily_bias": "Neutral",
+            "weekly_bias": "Neutral",
+            "monthly_bias": "Neutral",
+            "confluence": 0,
+            "direction": 0,
+            "entry": None,
+            "sl": None,
+            "target": None,
+            "rr": None,
+            "note": "",
+        }
+    )
+    bullish_frame, bearish_frame = _extract_signal_frames(results)
+    for frame in (bullish_frame, bearish_frame):
+        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
+    return StrategyExecution(
+        name="multi_timeframe_bias",
         results=results,
         bullish=bullish_frame,
         bearish=bearish_frame,
@@ -1888,6 +2192,10 @@ def strategy_registry() -> Dict[str, StrategySpec]:
             name="sr_flip_sweep",
             runner=run_sr_flip,
         ),
+        "multi_timeframe_bias": StrategySpec(
+            name="multi_timeframe_bias",
+            runner=run_multi_timeframe_bias,
+        ),
     }
 
     if WEEKLY_PROFILES_ENABLED:
@@ -1953,6 +2261,7 @@ def run_strategies(
         "daily_fvg_sweep": 80,
         "ema5_sweep": 40,
         "sr_flip_sweep": 200,
+        "multi_timeframe_bias": 600,
         "classic_expansion_sweep": 60,
         "midweek_reversal_sweep": 60,
         "consolidation_reversal_sweep": 60,

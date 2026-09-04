@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowDownRight, ArrowUpRight, Database, Info, Plus, RefreshCw, SearchX, Timer } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, Info, Plus, RefreshCw, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex";
@@ -46,6 +46,9 @@ type StrategyRow = {
   track_mode?: string | null;
   flip_level?: number | null;
   signal_date?: string | null;
+  daily_bias?: string | null;
+  weekly_bias?: string | null;
+  monthly_bias?: string | null;
 };
 type TrackedEvent = { ts: string; date: string; state: string; note: string | null };
 type TrackedSetup = {
@@ -122,6 +125,13 @@ const monthLabel = (ym: string) => {
   const [year, month] = ym.split("-").map(Number);
   if (!year || !month) return ym;
   return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+};
+
+const biasBadge = (bias: string | null | undefined, label: string) => {
+  if (!bias || bias === "Neutral") return <span className="bias-badge bias-neutral">{label}</span>;
+  if (bias === "Bullish") return <span className="bias-badge bias-bull">{label}</span>;
+  if (bias === "Bearish") return <span className="bias-badge bias-bear">{label}</span>;
+  return <span className="bias-badge bias-neutral">{label}</span>;
 };
 
 const intervalOptions = [
@@ -445,6 +455,8 @@ export default function Home() {
       if (!response.ok) throw new Error(data.detail ?? "Strategy scan failed");
       const groups: StrategyGroup[] = data.results ?? [];
       setStrategyGroups(groups);
+      const resolvedDate: string | undefined = data.resolved_date;
+      if (resolvedDate) setStrategyAnchorDate(resolvedDate);
       const bulls = groups.reduce((sum, group) => sum + group.bull_count, 0);
       const bears = groups.reduce((sum, group) => sum + group.bear_count, 0);
       const alerts: TrackerAlert[] = data.tracker_alerts ?? [];
@@ -459,6 +471,16 @@ export default function Home() {
     } finally {
       setStrategyScanning(false);
     }
+  };
+
+  const shiftStrategyDate = (days: number) => {
+    if (strategyScanning) return;
+    const current = new Date(strategyAnchorDate);
+    if (Number.isNaN(current.getTime())) return;
+    current.setUTCDate(current.getUTCDate() + days);
+    const next = current.toISOString().slice(0, 10);
+    setStrategyAnchorDate(next);
+    setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
   };
 
   useEffect(() => {
@@ -818,7 +840,28 @@ export default function Home() {
           </div>
         </div>
         <small className="auto-meta">Click a chip to turn that strategy ON/OFF (saved to strategy_flags.json). Runs over {selected.length} selected watchlist symbols.</small>
-        <div className="strategy-date"><label htmlFor="strategy-date">Testing date</label><input id="strategy-date" type="date" value={strategyAnchorDate} onChange={(event) => setStrategyAnchorDate(event.target.value)} /></div>
+        <div className="strategy-date">
+          <label htmlFor="strategy-date">Testing date</label>
+          <button
+            className="date-arrow"
+            type="button"
+            aria-label="Previous day"
+            onClick={() => shiftStrategyDate(-1)}
+            disabled={strategyScanning}
+          >
+            <ArrowLeft size={14} />
+          </button>
+          <input id="strategy-date" type="date" value={strategyAnchorDate} onChange={(event) => setStrategyAnchorDate(event.target.value)} />
+          <button
+            className="date-arrow"
+            type="button"
+            aria-label="Next day"
+            onClick={() => shiftStrategyDate(1)}
+            disabled={strategyScanning}
+          >
+            <ArrowRight size={14} />
+          </button>
+        </div>
         {strategyDateNote && <p className="date-note">{strategyDateNote}</p>}
         {strategyGroups.length > 0 && (
           <div className="strategy-results">
@@ -831,6 +874,13 @@ export default function Home() {
                       <a key={`bull-${row.symbol}`} href={row.tradingview_link ?? "#"} target="_blank" rel="noreferrer" className="signal-chip bull">
                         <ArrowUpRight size={12} />
                         <strong>{row.symbol}</strong>
+                        {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
+                          <span className="bias-badges">
+                            {biasBadge(row.monthly_bias, "M")}
+                            {biasBadge(row.weekly_bias, "W")}
+                            {biasBadge(row.daily_bias, "D")}
+                          </span>
+                        )}
                         {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
                         {row.entry != null && (
                           <small>
@@ -851,6 +901,13 @@ export default function Home() {
                       <a key={`bear-${row.symbol}`} href={row.tradingview_link ?? "#"} target="_blank" rel="noreferrer" className="signal-chip bear">
                         <ArrowDownRight size={12} />
                         <strong>{row.symbol}</strong>
+                        {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
+                          <span className="bias-badges">
+                            {biasBadge(row.monthly_bias, "M")}
+                            {biasBadge(row.weekly_bias, "W")}
+                            {biasBadge(row.daily_bias, "D")}
+                          </span>
+                        )}
                         {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
                         {row.entry != null && (
                           <small>

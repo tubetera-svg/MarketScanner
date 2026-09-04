@@ -1,0 +1,40 @@
+{
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "name": "Default",
+      "start_date": null,
+      "end_date": null,
+      "min_confluence": 2,
+      "description": "No date range constraint; analyze all available history."
+    },
+    "strict_all": {
+      "name": "Strict All",
+      "start_date": null,
+      "end_date": null,
+      "min_confluence": 3,
+      "description": "All history; require strong confluence (3/3 aligned)."
+    },
+    "q1_2024_bull": {
+      "name": "Q1 2024 Bull",
+      "start_date": "2024-01-01",
+      "end_date": "2024-03-31",
+      "min_confluence": 2,
+      "description": "Constrained to Q1 2024."
+    },
+    "q2_2024_bear": {
+      "name": "Q2 2024 Bear",
+      "start_date": "2024-04-01",
+      "end_date": "2024-06-30",
+      "min_confluence": 2,
+      "description": "Constrained to Q2 2024."
+    },
+    "h2_2024_full": {
+      "name": "H2 2024",
+      "start_date": "2024-07-01",
+      "end_date": "2024-12-31",
+      "min_confluence": 2,
+      "description": "Constrained to H2 2024."
+    }
+  }
+}

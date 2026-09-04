@@ -231,6 +231,9 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .strategy-date { align-items: center; display: flex; gap: var(--gap-sm); }
 .strategy-date label { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
 .strategy-date input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 12px; min-height: 32px; padding: 6px 10px; border-radius: 4px; }
+.date-arrow { align-items: center; background: white; border: 1px solid var(--line); color: var(--ink); cursor: pointer; display: inline-flex; height: 32px; justify-content: center; padding: 0 8px; border-radius: 4px; }
+.date-arrow:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
+.date-arrow:disabled { cursor: not-allowed; opacity: .5; }
 .strategy-results { display: grid; gap: var(--gap-md); grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .strategy-result { background: #fdfdfc; border: 1px solid var(--line); border-radius: 6px; padding: var(--gap-md); }
 .strategy-result summary { cursor: pointer; font-weight: 600; font-size: 13px; letter-spacing: -0.2px; list-style: none; display: flex; align-items: center; justify-content: space-between; }
@@ -246,6 +249,11 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .signal-chip small { color: var(--muted); font: 9px 'DM Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signal-chip.bull { border-left: 3px solid var(--teal); }
 .signal-chip.bear { border-left: 3px solid var(--coral); }
+.bias-badges { display: inline-flex; gap: 3px; margin-left: 6px; flex-shrink: 0; }
+.bias-badge { display: inline-block; font: 600 9px 'DM Mono', monospace; padding: 2px 5px; border-radius: 3px; letter-spacing: 0.05em; }
+.bias-badge.bias-bull { background: #dcefe8; color: #206c63; }
+.bias-badge.bias-bear { background: #fae2db; color: #a3402e; }
+.bias-badge.bias-neutral { background: #e8edf2; color: #5a6b7b; }
 .small-empty { font-size: 11px; padding: 10px; }
 
 /* Setup lifecycle states (shared by strategy chips + tracker rows) */

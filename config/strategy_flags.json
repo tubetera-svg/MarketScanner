@@ -1,12 +1,13 @@
 {
   "classic_expansion_sweep": false,
-  "consolidation_reversal_sweep": false,
+  "consolidation_reversal_sweep": true,
   "daily_fvg_sweep": false,
   "ema5_sweep": false,
   "inside_bar_pattern_daily_sweep": false,
   "intraweek_reversal_sweep": false,
   "midweek_reversal_sweep": false,
+  "multi_timeframe_bias": false,
   "sr_flip_sweep": false,
-  "tgif_setup_sweep": false,
-  "thursday_counter_sweep": false
+  "tgif_setup_sweep": true,
+  "thursday_counter_sweep": true
 }

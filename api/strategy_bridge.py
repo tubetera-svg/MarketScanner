@@ -31,6 +31,7 @@ CORE_STRATEGIES = [
     ("daily_fvg_sweep", "Daily FVG Sweep"),
     ("ema5_sweep", "EMA5 Sweep"),
     ("sr_flip_sweep", "S/R Flip"),
+    ("multi_timeframe_bias", "Multi-Timeframe Bias"),
 ]
 
 WEEKLY_STRATEGIES = [
