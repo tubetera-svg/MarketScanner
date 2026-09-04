@@ -500,8 +500,43 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, []);
 
+  // Compute the next release instant for a report, preferring a cached value
+  // from localStorage when it is still valid for the current calendar day. The
+  // cache is keyed by report key and stores {iso, dayKey}; we trust it for the
+  // rest of the UTC day it was computed, then recompute the next day. This
+  // avoids re-running the timezone math on every page reload while keeping the
+  // result fresh (the value changes weekly anyway).
+  const cachedReleaseInstant = (report: typeof INVENTORY_REPORTS[number]): Date => {
+    if (typeof window === "undefined") return nextReleaseInstantET(new Date(), report.weekdayET, report.hourET, report.minuteET);
+    const now = new Date();
+    const todayKey = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}`;
+    try {
+      const raw = window.localStorage.getItem("inventoryReleaseCache");
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, { iso: string; dayKey: string }>;
+        const entry = parsed[report.key];
+        if (entry && entry.dayKey === todayKey) {
+          const ts = Date.parse(entry.iso);
+          if (!Number.isNaN(ts) && ts > now.getTime()) return new Date(ts);
+        }
+      }
+    } catch {
+      // ignore cache read errors (private mode, quota, malformed JSON)
+    }
+    const fresh = nextReleaseInstantET(now, report.weekdayET, report.hourET, report.minuteET);
+    try {
+      const existing = window.localStorage.getItem("inventoryReleaseCache");
+      const store: Record<string, { iso: string; dayKey: string }> = existing ? JSON.parse(existing) : {};
+      store[report.key] = { iso: fresh.toISOString(), dayKey: todayKey };
+      window.localStorage.setItem("inventoryReleaseCache", JSON.stringify(store));
+    } catch {
+      // ignore cache write errors
+    }
+    return fresh;
+  };
+
   const inventoryReports = INVENTORY_REPORTS.map((report) => {
-    const instant = nextReleaseInstantET(new Date(inventoryNow), report.weekdayET, report.hourET, report.minuteET);
+    const instant = cachedReleaseInstant(report);
     const seconds = Math.max(0, Math.round((instant.getTime() - inventoryNow) / 1000));
     // Highlight when the release is within 24h so it grabs attention.
     const soon = seconds <= 24 * 3600;
