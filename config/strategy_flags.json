@@ -6,7 +6,7 @@
   "inside_bar_pattern_daily_sweep": false,
   "intraweek_reversal_sweep": false,
   "midweek_reversal_sweep": false,
-  "multi_timeframe_bias": false,
-  "tgif_setup_sweep": true,
+  "multi_timeframe_bias": true,
+  "tgif_setup_sweep": false,
   "thursday_counter_sweep": false
 }

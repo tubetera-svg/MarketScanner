@@ -922,7 +922,12 @@ export default function Home() {
                             E {row.entry}{row.sl != null ? ` · SL ${row.sl}` : ""}{row.target != null ? ` · T ${row.target}` : ""}{row.rr != null ? ` · R:R ${row.rr}` : ""}
                           </small>
                         )}
-                        {row.entry == null && row.note && <small>{row.note}</small>}
+                        {row.entry == null && row.note && (
+                          <span className="note-tooltip-wrap">
+                            <span className="note-tooltip-text">{row.note}</span>
+                            <span className="note-tooltip-content">{row.note}</span>
+                          </span>
+                        )}
                         {(row.flip_level != null || row.signal_date) && (
                           <small>
                             {row.flip_level != null && `Lvl ${row.flip_level}`}
@@ -949,7 +954,12 @@ export default function Home() {
                             E {row.entry}{row.sl != null ? ` · SL ${row.sl}` : ""}{row.target != null ? ` · T ${row.target}` : ""}{row.rr != null ? ` · R:R ${row.rr}` : ""}
                           </small>
                         )}
-                        {row.entry == null && row.note && <small>{row.note}</small>}
+                        {row.entry == null && row.note && (
+                          <span className="note-tooltip-wrap">
+                            <span className="note-tooltip-text">{row.note}</span>
+                            <span className="note-tooltip-content">{row.note}</span>
+                          </span>
+                        )}
                         {(row.flip_level != null || row.signal_date) && (
                           <small>
                             {row.flip_level != null && `Lvl ${row.flip_level}`}

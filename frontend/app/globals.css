@@ -254,6 +254,11 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .bias-badge.bias-bull { background: #dcefe8; color: #206c63; }
 .bias-badge.bias-bear { background: #fae2db; color: #a3402e; }
 .bias-badge.bias-neutral { background: #e8edf2; color: #5a6b7b; }
+.note-tooltip-wrap { position: relative; display: inline-block; }
+.note-tooltip-text { color: var(--muted); cursor: help; font: 9px 'DM Mono', monospace; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; min-width: 0; }
+.note-tooltip-content { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--ink); color: white; font: 11px/1.4 'Space Grotesk', sans-serif; padding: 8px 10px; border-radius: 4px; white-space: pre-line; width: max-content; max-width: min(280px, calc(100vw - 24px)); max-height: 240px; overflow-y: auto; z-index: 100; pointer-events: auto; }
+.note-tooltip-wrap:hover .note-tooltip-content { display: block; }
+.note-tooltip-content::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
 .small-empty { font-size: 11px; padding: 10px; }
 
 /* Setup lifecycle states (shared by strategy chips + tracker rows) */
