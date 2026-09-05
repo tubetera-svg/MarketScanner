@@ -1,37 +1,43 @@
 # AGENTS.md — Operating Rules for This Project
 
-You are acting as a senior developer maintaining a multi-strategy market
-scanner (ICT-style scanner, `src/`, `api/`, `market_data/`, `frontend/`).
+You are a senior developer maintaining a multi-strategy market scanner
+(ICT-style scanner: `src/`, `api/`, `market_data/`, `frontend/`).
 
-Every agent/change must follow these rules:
+Rules for every agent/change:
 
-1. **Do what was asked.** Implement exactly the requested task; don't add
-   unrelated changes or "improvements" outside the scope unless asked.
+1. **Do what was asked.** Implement exactly the requested task — no
+   unrelated changes or "improvements" outside scope unless asked.
 
-2. **Flag bugs, inconsistencies, and repainting / look-ahead issues.**
-   - Repainting: any signal/value that uses data not available at the
-     bar/timestamp it is claimed for (future bars, same-bar close after the
-     decision, look-ahead in backtests).
-   - Look-ahead: historical tests or daily-bar logic that peek at data from a
-     later session than the one being evaluated.
-   - Inconsistencies: mismatched timezones (IST vs NY/ET), session gating
-     (NSE vs FOREX_24_5), source flags, cached vs live data, or anything that
-     could make results differ between live and backtest.
-   Surface these clearly with file:line references. Do not silently "fix" them
-   unless they are part of the requested task.
+2. **Flag bugs, repainting, and look-ahead issues.**
+   - Repainting: signal/value using data not available at its bar/timestamp
+     (future bars, same-bar close after the decision, look-ahead in backtests).
+   - Look-ahead: historical/daily-bar logic peeking at a later session than
+     the one being evaluated.
+   - Inconsistencies: timezone mismatches (IST vs NY/ET), session gating
+     (NSE vs FOREX_24_5), source flags, cached vs live data — anything that
+     could make live vs backtest results differ.
+   Report with file:line refs. Don't silently fix unless it's the task.
 
-3. **Suggest efficiency / accuracy improvements — but do NOT silently change
-   entry / stop / loss / target (TP/SL) logic.** Propose such changes and ask
-   first before implementing.
+3. **Suggest efficiency/accuracy improvements, but never silently change
+   entry/SL/TP logic.** Propose first, ask before implementing.
 
-4. **Ask before long-running / time-consuming work.** If a task will take
-   significant time (large backtests, bulk data downloads, full test suites,
-   extended scans, long-running processes), confirm with the user before
-   starting rather than running it silently.
+4. **Ask before long-running work** (large backtests, bulk downloads, full
+   test suites, extended scans) instead of running it silently.
 
-General expectations:
-- Reference code locations as `path:line` so the human can navigate.
-- Verify changes compile / run relevant tests where a test command exists.
+5. **Be token-efficient and narrowly scoped.**
+   - Vague request → narrow to the smallest reasonable interpretation, state
+     the assumption in one line. Don't expand scope to cover every reading.
+   - Only read/search files the specific task needs; don't re-read unchanged
+     files already seen this session.
+   - No exploratory searches/scans "to be thorough" if not required.
+   - Prefer targeted edits over full-file rewrites when only part changes.
+   - If output gets truncated by a length limit, resume from where you
+     stopped next turn (note file/line) — don't restart from scratch.
+   - For genuinely large tasks, chunk the work and confirm the plan first.
+
+General:
+- Reference locations as `path:line`.
+- Verify changes compile / run relevant tests where available.
 - Keep explanations concise and direct.
 
-(Note: this file supersedes ad-hoc instructions. Follow it on every task.)
+(This file supersedes ad-hoc instructions — follow it on every task.)

@@ -11,6 +11,15 @@ from urllib.request import Request, urlopen
 
 import numpy as np
 import pandas as pd
+from protected_swings import (
+    PROTECTED_SWINGS_LOOKBACK_DAYS as _PS_LOOKBACK,
+    STATE_ANTICIPATED,
+    STATE_CONFIRMED,
+    STATE_INVALIDATED,
+    STATE_NONE,
+    ProtectedSwingAnalysis,
+    evaluate_protected_swings,
+)
 
 log = logging.getLogger(__name__)
 
@@ -727,6 +736,145 @@ def run_ema5_sweep(
         results=results,
         bullish=bullish,
         bearish=bearish,
+    )
+
+
+PROTECTED_SWINGS_LOOKBACK_DAYS = _PS_LOOKBACK
+
+
+def run_protected_swings(
+    symbols: Sequence[str],
+    as_of_date: date,
+    verbose: bool = False,
+    print_values: bool = False,
+    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+) -> StrategyExecution:
+    """Protected Swings strategy.
+
+    A protected swing is a swing high/low that has been swept (or entered via an
+    FVG) and then *confirmed* by a candle closing beyond the high/low of the
+    same-direction candle series that created it. The most recent confirmed,
+    non-invalidated swing sets the live bias (protected low -> bullish, protected
+    high -> bearish) and becomes the active "stepping-stone" level.
+
+    Output mirrors the weekly-profile conventions (``entry/sl/target/rr/state``
+    plus ``bullish_match/bearish_match/final_signal``) so it flows through the
+    same scan, backtest and UI plumbing unchanged. A signal (``final_signal``)
+    is emitted only while a swing is *confirmed* — an anticipated (swept but
+    unconfirmed) swing never fires a trade, matching the rule that protection is
+    only real once the qualifying close lands.
+    """
+    _ = print_values
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols),
+            "bullish_match": False,
+            "bearish_match": False,
+            "final_signal": False,
+            "status": "pending",
+            "profile": "Protected Swings",
+            "note": "",
+            "state": STATE_NONE,
+            "direction": 0,
+            "entry": None,
+            "sl": None,
+            "target": None,
+            "rr": None,
+            "atr": None,
+            "track_mode": "",
+            "swing_level": None,
+            "protected_level": None,
+            "tag": "",
+        }
+    )
+
+    for idx, symbol in enumerate(symbols):
+        symbol_upper = str(symbol).upper()
+        if daily_map is None:
+            daily = _fetch_daily_from_bhavcopy(
+                symbol=symbol_upper, as_of_date=as_of_date, max_lookback_days=_PS_LOOKBACK
+            )
+        else:
+            daily = daily_map.get(
+                symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+            )
+
+        if _track_mode_for(symbol_upper) == "eod_confirm":
+            daily = _trim_in_progress_daily(daily)
+
+        if daily is None or daily.empty or len(daily) < 6:
+            results.at[idx, "status"] = "no_data"
+            results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+            if verbose:
+                print(f"{symbol_upper}: SKIPPED (no_data)")
+            continue
+
+        analysis: ProtectedSwingAnalysis = evaluate_protected_swings(daily)
+        active = analysis.active
+        anticip = analysis.anticipated
+        swing = active if active is not None else anticip
+        track_mode = _track_mode_for(symbol_upper)
+
+        direction = swing.direction if swing is not None else 0
+        bullish = direction > 0
+        bearish = direction < 0
+        has_confirmed = active is not None
+
+        results.at[idx, "direction"] = direction
+        results.at[idx, "note"] = str(analysis.note)
+        results.at[idx, "track_mode"] = track_mode
+        results.at[idx, "status"] = "complete"
+
+        if swing is not None:
+            results.at[idx, "state"] = STATE_CONFIRMED if has_confirmed else STATE_ANTICIPATED
+            results.at[idx, "protected_level"] = round(float(swing.protected_level), 4)
+            results.at[idx, "swing_level"] = round(float(swing.swing_level), 4)
+            results.at[idx, "tag"] = swing.tag
+            # The protected level is the reference for a confirmed bias; an
+            # anticipated swing is reported for awareness but does not fire.
+            results.at[idx, "final_signal"] = has_confirmed
+            results.at[idx, "bullish_match"] = bool(bullish and has_confirmed)
+            results.at[idx, "bearish_match"] = bool(bearish and has_confirmed)
+
+            current_close = float(daily.iloc[-1]["Close"])
+            outcome = {
+                "bullish": bool(bullish and has_confirmed),
+                "bearish": bool(bearish and has_confirmed),
+                "sl_level": float(swing.swing_level),
+                "entry_ref": current_close,
+            }
+            context = {"prior_weeks": [], "swing": {}}
+            plan = _build_trade_plan(outcome, context, _daily_atr(daily))
+            results.at[idx, "entry"] = plan["entry"]
+            results.at[idx, "sl"] = plan["sl"]
+            results.at[idx, "target"] = plan["target"]
+            results.at[idx, "rr"] = plan["rr"]
+            results.at[idx, "atr"] = plan["atr"]
+
+            state_label = "confirmed" if has_confirmed else "anticipated"
+            via = swing.mode
+            results.at[idx, "note"] = (
+                f"{analysis.note} | protected {via} swing "
+                f"{'low' if direction > 0 else 'high'} "
+                f"protect={swing.protected_level:.2f} swing={swing.swing_level:.2f} "
+                f"status={state_label}"
+            )
+        else:
+            results.at[idx, "state"] = STATE_NONE
+            results.at[idx, "note"] = str(analysis.note)
+
+        if verbose:
+            print(
+                f"{symbol_upper}: protected_swings direction={direction} "
+                f"state={results.at[idx, 'state']} {analysis.note}"
+            )
+
+    bullish_frame, bearish_frame = _extract_weekly_profile_signal_frames(results)
+    return StrategyExecution(
+        name="protected_swings",
+        results=results,
+        bullish=bullish_frame,
+        bearish=bearish_frame,
     )
 
 
@@ -1904,6 +2052,10 @@ def strategy_registry() -> Dict[str, StrategySpec]:
             name="multi_timeframe_bias",
             runner=run_multi_timeframe_bias,
         ),
+        "protected_swings": StrategySpec(
+            name="protected_swings",
+            runner=run_protected_swings,
+        ),
     }
 
     if WEEKLY_PROFILES_ENABLED:
@@ -1974,8 +2126,9 @@ def run_strategies(
         "consolidation_reversal_sweep": 60,
         "intraweek_reversal_sweep": 60,
         "thursday_counter_sweep": 60,
-        "tgif_setup_sweep": 60,
-    }
+         "tgif_setup_sweep": 60,
+         "protected_swings": PROTECTED_SWINGS_LOOKBACK_DAYS,
+     }
     max_lookback = max(lookback_by_strategy.get(name, 60) for name in strategy_names) if strategy_names else 60
     daily_map = _build_daily_map_for_symbols(symbols=symbols, as_of_date=as_of_date, max_lookback_days=max_lookback)
 
