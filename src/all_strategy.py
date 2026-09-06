@@ -742,20 +742,6 @@ def run_ema5_sweep(
 PROTECTED_SWINGS_LOOKBACK_DAYS = _PS_LOOKBACK
 
 
-def _as_date(value: object) -> Optional[date]:
-    """Coerce a pandas index label (Timestamp / date / str) to a ``date``,
-    or ``None`` when unset. Used to decide whether a protected swing's
-    confirmation happened *on* ``as_of_date`` (its single-day event)."""
-    if value is None:
-        return None
-    if isinstance(value, date) and not isinstance(value, pd.Timestamp):
-        return value
-    try:
-        return pd.Timestamp(value).date()
-    except Exception:
-        return None
-
-
 def run_protected_swings(
     symbols: Sequence[str],
     as_of_date: date,
@@ -766,8 +752,8 @@ def run_protected_swings(
     """Protected Swings strategy.
 
     A protected swing is a swing high/low that has been swept (or entered via an
-    FVG) and then *confirmed* by a candle closing beyond the high/low of the
-    same-direction candle series that created it. The most recent confirmed,
+    FVG) and then *confirmed* by a candle closing beyond the body (the relevant
+    open) of the same-direction candle series that created it. The most recent confirmed,
     non-invalidated swing sets the live bias (protected low -> bullish, protected
     high -> bearish) and becomes the active "stepping-stone" level.
 
@@ -798,6 +784,7 @@ def run_protected_swings(
             "track_mode": "",
             "swing_level": None,
             "protected_level": None,
+            "confirmation_price": None,
             "tag": "",
         }
     )
@@ -833,20 +820,13 @@ def run_protected_swings(
         bullish = direction > 0
         bearish = direction < 0
         has_confirmed = active is not None
-        # Single-day event: a protected swing is reported (and a trade plan is
-        # produced) only on the session it is *confirmed* — the close that
-        # breaches the protecting series. A swing confirmed on an earlier
-        # session that merely persists is not re-listed, preventing the same
-        # pattern from reappearing every day.
-        # The "session we just observed" is the last available close in the
-        # (already possibly trimmed) daily frame — compare against that rather
-        # than `as_of_date` (which can be an in-progress session while the live
-        # frame was trimmed to the last *complete* day).
-        scan_date = _as_date(daily.index[-1]) if not daily.empty else None
-        confirmed_today = (
+        # A protected swing is reported (and a trade plan is produced) on the
+        # confirmation session and the immediately following available session.
+        # A swing confirmed earlier that merely persists is not re-listed.
+        confirmed_window = (
             has_confirmed
-            and scan_date is not None
-            and _as_date(active.confirm_date) == scan_date
+            and active.confirm_idx is not None
+            and active.confirm_idx >= len(daily) - 2
         )
 
         results.at[idx, "direction"] = direction
@@ -858,18 +838,23 @@ def run_protected_swings(
             results.at[idx, "state"] = STATE_CONFIRMED if has_confirmed else STATE_ANTICIPATED
             results.at[idx, "protected_level"] = round(float(swing.protected_level), 4)
             results.at[idx, "swing_level"] = round(float(swing.swing_level), 4)
+            results.at[idx, "confirmation_price"] = (
+                round(float(swing.confirmation_price), 4)
+                if swing.confirmation_price is not None
+                else None
+            )
             results.at[idx, "tag"] = swing.tag
             # The protected level is the reference for a confirmed bias; an
             # anticipated swing is reported for awareness but does not fire.
-            results.at[idx, "final_signal"] = confirmed_today
-            results.at[idx, "bullish_match"] = bool(bullish and confirmed_today)
-            results.at[idx, "bearish_match"] = bool(bearish and confirmed_today)
+            results.at[idx, "final_signal"] = confirmed_window
+            results.at[idx, "bullish_match"] = bool(bullish and confirmed_window)
+            results.at[idx, "bearish_match"] = bool(bearish and confirmed_window)
 
-            if confirmed_today:
+            if confirmed_window:
                 current_close = float(daily.iloc[-1]["Close"])
                 outcome = {
-                    "bullish": bool(bullish and confirmed_today),
-                    "bearish": bool(bearish and confirmed_today),
+                    "bullish": bool(bullish and confirmed_window),
+                    "bearish": bool(bearish and confirmed_window),
                     "sl_level": float(swing.swing_level),
                     "entry_ref": current_close,
                 }

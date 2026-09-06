@@ -301,8 +301,7 @@ export default function Home() {
   const [strategyScanning, setStrategyScanning] = useState(false);
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
   const [strategyDateNote, setStrategyDateNote] = useState<string | null>(null);
-  const [showAutoRun, setShowAutoRun] = useState(false);
-  const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(false);
+  const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
@@ -481,9 +480,11 @@ export default function Home() {
     const current = new Date(strategyAnchorDate);
     if (Number.isNaN(current.getTime())) return;
     current.setUTCDate(current.getUTCDate() + days);
+    while (current.getUTCDay() === 0 || current.getUTCDay() === 6) {
+      current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
+    }
     const next = current.toISOString().slice(0, 10);
     setStrategyAnchorDate(next);
-    setShowAutoRun(true);
     if (autoRunOnDateChange) {
       runStrategyScan(next);
     } else {
@@ -794,7 +795,7 @@ export default function Home() {
           <span>Strategy profiles</span>
           <div className="panel-heading-actions">
             <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
-            <button className="test-button" type="button" onClick={runStrategyScan} disabled={strategyScanning || selected.length === 0}>
+            <button className="test-button" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
               <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
               {strategyScanning ? "Scanning…" : "Run strategies"}
             </button>
@@ -909,16 +910,14 @@ export default function Home() {
           >
             <ArrowRight size={14} />
           </button>
-          {showAutoRun && (
-            <label className="strategy-date-auto">
-              <input
-                type="checkbox"
-                checked={autoRunOnDateChange}
-                onChange={(event) => setAutoRunOnDateChange(event.target.checked)}
-              />
-              Auto-run
-            </label>
-          )}
+          <label className="strategy-date-auto">
+            <input
+              type="checkbox"
+              checked={autoRunOnDateChange}
+              onChange={(event) => setAutoRunOnDateChange(event.target.checked)}
+            />
+            Auto-run
+          </label>
         </div>
         {strategyDateNote && <p className="date-note">{strategyDateNote}</p>}
         {strategyGroups.length > 0 && (

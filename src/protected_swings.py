@@ -11,7 +11,7 @@ the current trend continues. It forms in one of two ways:
 
 A swing is only **confirmed** once the qualifying close occurs; before that it is
 **anticipated**. After confirmation the swing is **invalidated** if price closes
-back beyond the protected level.
+back beyond the swept extreme for sweep events or the protected level for FVG events.
 
 This module contains *only* point-in-time, deterministic detection logic that
 operates on a daily OHLC ``DataFrame`` (columns ``Open/High/Low/Close`` indexed
@@ -102,6 +102,7 @@ class ProtectedSwing:
     series_end: int = 0
     state: str = STATE_NONE
     confirm_date: Optional[object] = None
+    confirmation_price: Optional[float] = None
     invalidate_date: Optional[object] = None
     # diagnostic
     gap_id: Optional[str] = None
@@ -173,19 +174,49 @@ def _collect_run(o: np.ndarray, c: np.ndarray, anchor: int, down: bool) -> List[
     return run
 
 
-def _first_after(arr: np.ndarray, level: float, after_idx: int, above: bool) -> Optional[int]:
-    """First index strictly after ``after_idx`` where ``arr[i]`` is above/below
-    ``level`` (``above=True`` -> arr[i] > level; ``above=False`` -> arr[i] < level).
+def _collect_prior_run(o: np.ndarray, c: np.ndarray, anchor: int, down: bool) -> List[int]:
+    """Collect the contiguous same-direction candles ending at ``anchor``.
+
+    Unlike ``_collect_run``, this returns no series when the anchor candle is
+    not in the requested direction. It is used when the candle immediately
+    before a pierce must start the confirmation series.
     """
-    if after_idx is None or after_idx >= len(arr) - 1:
+    if anchor < 0 or anchor >= len(c):
+        return []
+    qualifies = (c[anchor] < o[anchor]) if down else (c[anchor] > o[anchor])
+    if not qualifies:
+        return []
+    run = [anchor]
+    j = anchor - 1
+    while j >= 0 and ((c[j] < o[j]) if down else (c[j] > o[j])):
+        run.append(j)
+        j -= 1
+    run.reverse()
+    return run
+
+
+def _first_after(arr: np.ndarray, level: float, after_idx: int, above: bool, inclusive: bool = False) -> Optional[int]:
+    """First index after (or at) ``after_idx`` where ``arr[i]`` is above/below
+    ``level`` (``above=True`` -> arr[i] > level; ``above=False`` -> arr[i] < level).
+
+    If ``inclusive=True``, the bar at ``after_idx`` itself is considered.
+    If ``inclusive=False`` (default for backward compatibility), only bars
+    strictly after ``after_idx`` are considered.
+    """
+    if after_idx is None or (inclusive and after_idx >= len(arr)) or (not inclusive and after_idx >= len(arr) - 1):
         return None
-    if above:
-        hits = np.flatnonzero(arr[after_idx + 1:] > level)
+    if inclusive:
+        slice_start = after_idx
     else:
-        hits = np.flatnonzero(arr[after_idx + 1:] < level)
+        slice_start = after_idx + 1
+
+    if above:
+        hits = np.flatnonzero(arr[slice_start:] > level)
+    else:
+        hits = np.flatnonzero(arr[slice_start:] < level)
     if len(hits) == 0:
         return None
-    return int(hits[0]) + (after_idx + 1)
+    return int(hits[0]) + slice_start
 
 
 def _first_le_after(arr: np.ndarray, level: float, after_idx: int, high: bool) -> Optional[int]:
@@ -311,14 +342,21 @@ def confirm_close(
     protected_level: float,
     after_idx: int,
     above: bool,
+    inclusive: bool = True,
 ) -> Optional[int]:
-    """First bar *after* ``after_idx`` whose close pierces ``protected_level``.
+    """First bar at or after (or strictly after) ``after_idx`` whose close pierces
+    ``protected_level``.
+
+    The bar at ``after_idx`` itself is included (same-bar confirmation),
+    in addition to subsequent bars.
 
     ``above=True`` (bullish confirm): close > protected_level.
     ``above=False`` (bearish confirm): close < protected_level.
+
+    ``inclusive=False`` requires a distinct close after the sweep/pierce bar.
     """
     o, h, l, c = _ohlc_arrays(daily)
-    return _first_after(c, protected_level, after_idx, above=above)
+    return _first_after(c, protected_level, after_idx, above=above, inclusive=inclusive)
 
 
 def invalidate_close(
@@ -327,11 +365,11 @@ def invalidate_close(
     after_idx: int,
     above: bool,
 ) -> Optional[int]:
-    """First bar *after* ``after_idx`` whose close pierces ``protected_level``
+    """First bar *strictly after* ``after_idx`` whose close pierces ``protected_level``
     in the *opposite* direction to confirmation (the protection breaking).
     """
     o, h, l, c = _ohlc_arrays(daily)
-    return _first_after(c, protected_level, after_idx, above=above)
+    return _first_after(c, protected_level, after_idx, above=above, inclusive=False)
 
 
 # ---------------------------------------------------------------------------
@@ -360,14 +398,14 @@ def _build_sweep_candidate(
     if swing.is_high:
         direction = -1  # bearish protected high
         swing_level = swing.high
-        run = _collect_run(o, c, j, down=False) or [j]
-        protected_level = float(np.nanmin(o[run]))  # body: lowest open of the green series
         sweep_idx = detect_liquidity_sweep(daily, j, is_high=True)
         if sweep_idx is None:
             return None
-        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False)
+        run = _collect_run(o, c, sweep_idx, down=False) or [sweep_idx]
+        protected_level = float(np.nanmin(o[run]))  # body: lowest open of the green sweep series
+        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False, inclusive=False)
         invalidate_idx = (
-            invalidate_close(daily, protected_level, confirm_idx, above=True)
+            invalidate_close(daily, swing_level, confirm_idx, above=True)
             if confirm_idx is not None
             else None
         )
@@ -375,14 +413,14 @@ def _build_sweep_candidate(
     else:
         direction = 1  # bullish protected low
         swing_level = swing.low
-        run = _collect_run(o, c, j, down=True) or [j]
-        protected_level = float(np.nanmax(o[run]))  # body: highest open of the red series
         sweep_idx = detect_liquidity_sweep(daily, j, is_high=False)
         if sweep_idx is None:
             return None
-        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True)
+        run = _collect_run(o, c, sweep_idx, down=True) or [sweep_idx]
+        protected_level = float(np.nanmax(o[run]))  # body: highest open of the red sweep series
+        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True, inclusive=False)
         invalidate_idx = (
-            invalidate_close(daily, protected_level, confirm_idx, above=False)
+            invalidate_close(daily, swing_level, confirm_idx, above=False)
             if confirm_idx is not None
             else None
         )
@@ -403,6 +441,7 @@ def _build_sweep_candidate(
         series_end=int(run[-1]),
         state=state,
         confirm_date=(idx[confirm_idx] if confirm_idx is not None else None),
+        confirmation_price=(float(c[confirm_idx]) if confirm_idx is not None else None),
          invalidate_date=(idx[invalidate_idx] if invalidate_idx is not None else None),
          gap_id=gap_id,
          tag=TAG_SWEEP_BASED,
@@ -420,16 +459,18 @@ def _build_fvg_candidate(
     o, h, l, c = _ohlc_arrays(daily)
     idx = daily.index
     i = gap.idx  # 3rd (confirming) candle of the 3-candle group
-    series = list(range(gap.series_start, gap.series_end + 1))
     if gap.fvg_type == "bullish":
         direction = 1
-        swing_level = float(np.nanmin(l[series]))  # the "corresponding low"
-        protected_level = float(np.nanmax(o[series]))  # body: highest open of gap block
         # price trades into the gap: a bar whose low reaches the gap zone
         entry_idx = _first_le_after(l, gap.gap_high, i, high=False)
         if entry_idx is None:
             return None
         sweep_idx = entry_idx
+        series = _collect_prior_run(o, c, entry_idx - 1, down=True)
+        if not series:
+            return None
+        swing_level = float(np.nanmin(l[series]))
+        protected_level = float(np.nanmax(o[series]))  # body: highest open of red series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True)
         invalidate_idx = (
             invalidate_close(daily, protected_level, confirm_idx, above=False)
@@ -438,12 +479,15 @@ def _build_fvg_candidate(
         )
     else:
         direction = -1
-        swing_level = float(np.nanmax(h[series]))  # the "corresponding high"
-        protected_level = float(np.nanmin(o[series]))  # body: lowest open of gap block
         entry_idx = _first_le_after(h, gap.gap_low, i, high=True)
         if entry_idx is None:
             return None
         sweep_idx = entry_idx
+        series = _collect_prior_run(o, c, entry_idx - 1, down=False)
+        if not series:
+            return None
+        swing_level = float(np.nanmax(h[series]))
+        protected_level = float(np.nanmin(o[series]))  # body: lowest open of green series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False)
         invalidate_idx = (
             invalidate_close(daily, protected_level, confirm_idx, above=True)
@@ -465,6 +509,7 @@ def _build_fvg_candidate(
         series_end=int(series[-1]),
         state=state,
         confirm_date=(idx[confirm_idx] if confirm_idx is not None else None),
+        confirmation_price=(float(c[confirm_idx]) if confirm_idx is not None else None),
          invalidate_date=(idx[invalidate_idx] if invalidate_idx is not None else None),
          gap_id=f"{gap.fvg_type}:{i}",
          tag=TAG_FVG_BASED,
