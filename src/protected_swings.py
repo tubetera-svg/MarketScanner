@@ -4,10 +4,10 @@ A *protected swing* is a swing high or swing low that is expected to hold while
 the current trend continues. It forms in one of two ways:
 
 * **Sweep-based** — price pierces a recent short-term swing extreme (a liquidity
-  sweep), then a candle *closes* beyond the high/low of the series of
+  sweep), then a candle *closes* beyond the **open (body)** of the series of
   same-direction candles that formed that extreme.
 * **FVG-based** — price trades into a fair value gap, then a candle closes beyond
-  the high/low of the three candles that created the gap.
+  the **open (body)** of the three candles that created the gap.
 
 A swing is only **confirmed** once the qualifying close occurs; before that it is
 **anticipated**. After confirmation the swing is **invalidated** if price closes
@@ -361,7 +361,7 @@ def _build_sweep_candidate(
         direction = -1  # bearish protected high
         swing_level = swing.high
         run = _collect_run(o, c, j, down=False) or [j]
-        protected_level = float(np.nanmin(l[run]))
+        protected_level = float(np.nanmin(o[run]))  # body: lowest open of the green series
         sweep_idx = detect_liquidity_sweep(daily, j, is_high=True)
         if sweep_idx is None:
             return None
@@ -376,7 +376,7 @@ def _build_sweep_candidate(
         direction = 1  # bullish protected low
         swing_level = swing.low
         run = _collect_run(o, c, j, down=True) or [j]
-        protected_level = float(np.nanmax(h[run]))
+        protected_level = float(np.nanmax(o[run]))  # body: highest open of the red series
         sweep_idx = detect_liquidity_sweep(daily, j, is_high=False)
         if sweep_idx is None:
             return None
@@ -424,7 +424,7 @@ def _build_fvg_candidate(
     if gap.fvg_type == "bullish":
         direction = 1
         swing_level = float(np.nanmin(l[series]))  # the "corresponding low"
-        protected_level = float(np.nanmax(h[series]))
+        protected_level = float(np.nanmax(o[series]))  # body: highest open of gap block
         # price trades into the gap: a bar whose low reaches the gap zone
         entry_idx = _first_le_after(l, gap.gap_high, i, high=False)
         if entry_idx is None:
@@ -439,7 +439,7 @@ def _build_fvg_candidate(
     else:
         direction = -1
         swing_level = float(np.nanmax(h[series]))  # the "corresponding high"
-        protected_level = float(np.nanmin(l[series]))
+        protected_level = float(np.nanmin(o[series]))  # body: lowest open of gap block
         entry_idx = _first_le_after(h, gap.gap_low, i, high=True)
         if entry_idx is None:
             return None

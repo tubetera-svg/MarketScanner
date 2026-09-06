@@ -231,6 +231,8 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .strategy-date { align-items: center; display: flex; gap: var(--gap-sm); }
 .strategy-date label { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
 .strategy-date input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 12px; min-height: 32px; padding: 6px 10px; border-radius: 4px; }
+.strategy-date-auto { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 5px; white-space: nowrap; }
+.strategy-date-auto input { min-height: 0; padding: 0; }
 .date-arrow { align-items: center; background: white; border: 1px solid var(--line); color: var(--ink); cursor: pointer; display: inline-flex; height: 32px; justify-content: center; padding: 0 8px; border-radius: 4px; }
 .date-arrow:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
 .date-arrow:disabled { cursor: not-allowed; opacity: .5; }

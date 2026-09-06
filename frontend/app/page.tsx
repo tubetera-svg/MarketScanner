@@ -44,6 +44,7 @@ type StrategyRow = {
   target?: number | null;
   rr?: number | null;
   track_mode?: string | null;
+  tag?: string | null;
   flip_level?: number | null;
   signal_date?: string | null;
   daily_bias?: string | null;
@@ -300,6 +301,8 @@ export default function Home() {
   const [strategyScanning, setStrategyScanning] = useState(false);
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
   const [strategyDateNote, setStrategyDateNote] = useState<string | null>(null);
+  const [showAutoRun, setShowAutoRun] = useState(false);
+  const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(false);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
@@ -442,14 +445,14 @@ export default function Home() {
     }
   };
 
-  const runStrategyScan = async () => {
+  const runStrategyScan = async (dateOverride = strategyAnchorDate) => {
     setStrategyScanning(true);
     setMessage("Running strategy profiles...");
     try {
       const response = await fetch(`${API}/api/strategy-scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: selected, anchor_date: strategyAnchorDate }),
+        body: JSON.stringify({ symbols: selected, anchor_date: dateOverride }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Strategy scan failed");
@@ -463,7 +466,7 @@ export default function Home() {
       setTrackerAlerts(alerts);
       const trig = alerts.filter((a) => a.kind === "triggered").length;
       const exits = alerts.filter((a) => a.kind === "closed_sl" || a.kind === "closed_target").length;
-      setStrategyDateNote(`Testing date ${data.resolved_date ?? strategyAnchorDate}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} · ${groups.length} strategies · ${bulls} bull / ${bears} bear matches`);
+      setStrategyDateNote(`Testing date ${data.resolved_date ?? dateOverride}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} · ${groups.length} strategies · ${bulls} bull / ${bears} bear matches`);
       setMessage(`Strategy scan complete - ${bulls} bullish, ${bears} bearish${trig ? ` - ${trig} new trigger(s)` : ""}${exits ? ` - ${exits} exit(s)` : ""}`);
       await loadTracker(selected);
     } catch (error) {
@@ -480,7 +483,17 @@ export default function Home() {
     current.setUTCDate(current.getUTCDate() + days);
     const next = current.toISOString().slice(0, 10);
     setStrategyAnchorDate(next);
-    setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
+    setShowAutoRun(true);
+    if (autoRunOnDateChange) {
+      runStrategyScan(next);
+    } else {
+      setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
+    }
+  };
+
+  const handleStrategyDateChange = (next: string) => {
+    setStrategyAnchorDate(next);
+    if (autoRunOnDateChange) runStrategyScan(next);
   };
 
   useEffect(() => {
@@ -886,7 +899,7 @@ export default function Home() {
           >
             <ArrowLeft size={14} />
           </button>
-          <input id="strategy-date" type="date" value={strategyAnchorDate} onChange={(event) => setStrategyAnchorDate(event.target.value)} />
+          <input id="strategy-date" type="date" value={strategyAnchorDate} onChange={(event) => handleStrategyDateChange(event.target.value)} />
           <button
             className="date-arrow"
             type="button"
@@ -896,6 +909,16 @@ export default function Home() {
           >
             <ArrowRight size={14} />
           </button>
+          {showAutoRun && (
+            <label className="strategy-date-auto">
+              <input
+                type="checkbox"
+                checked={autoRunOnDateChange}
+                onChange={(event) => setAutoRunOnDateChange(event.target.checked)}
+              />
+              Auto-run
+            </label>
+          )}
         </div>
         {strategyDateNote && <p className="date-note">{strategyDateNote}</p>}
         {strategyGroups.length > 0 && (
@@ -917,10 +940,14 @@ export default function Home() {
                           </span>
                         )}
                         {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
-                        {row.entry != null && (
-                          <small>
-                            E {row.entry}{row.sl != null ? ` · SL ${row.sl}` : ""}{row.target != null ? ` · T ${row.target}` : ""}{row.rr != null ? ` · R:R ${row.rr}` : ""}
-                          </small>
+                        {group.strategy !== "protected_swings" && row.entry != null && (
+                          (() => {
+                            const detail = "E " + row.entry + (row.sl != null ? ` · SL ${row.sl}` : "") + (row.target != null ? ` · T ${row.target}` : "") + (row.rr != null ? ` · R:R ${row.rr}` : "") + (row.tag ? ` · ${row.tag}` : "");
+                            return <small title={detail}>{detail}</small>;
+                          })()
+                        )}
+                        {group.strategy === "protected_swings" && row.tag && (
+                          <small title={row.note ?? row.tag}>{row.tag}</small>
                         )}
                         {row.entry == null && row.note && (
                           <span className="note-tooltip-wrap">
@@ -949,10 +976,14 @@ export default function Home() {
                           </span>
                         )}
                         {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
-                        {row.entry != null && (
-                          <small>
-                            E {row.entry}{row.sl != null ? ` · SL ${row.sl}` : ""}{row.target != null ? ` · T ${row.target}` : ""}{row.rr != null ? ` · R:R ${row.rr}` : ""}
-                          </small>
+                        {group.strategy !== "protected_swings" && row.entry != null && (
+                          (() => {
+                            const detail = "E " + row.entry + (row.sl != null ? ` · SL ${row.sl}` : "") + (row.target != null ? ` · T ${row.target}` : "") + (row.rr != null ? ` · R:R ${row.rr}` : "") + (row.tag ? ` · ${row.tag}` : "");
+                            return <small title={detail}>{detail}</small>;
+                          })()
+                        )}
+                        {group.strategy === "protected_swings" && row.tag && (
+                          <small title={row.note ?? row.tag}>{row.tag}</small>
                         )}
                         {row.entry == null && row.note && (
                           <span className="note-tooltip-wrap">

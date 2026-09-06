@@ -742,6 +742,20 @@ def run_ema5_sweep(
 PROTECTED_SWINGS_LOOKBACK_DAYS = _PS_LOOKBACK
 
 
+def _as_date(value: object) -> Optional[date]:
+    """Coerce a pandas index label (Timestamp / date / str) to a ``date``,
+    or ``None`` when unset. Used to decide whether a protected swing's
+    confirmation happened *on* ``as_of_date`` (its single-day event)."""
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, pd.Timestamp):
+        return value
+    try:
+        return pd.Timestamp(value).date()
+    except Exception:
+        return None
+
+
 def run_protected_swings(
     symbols: Sequence[str],
     as_of_date: date,
@@ -819,6 +833,21 @@ def run_protected_swings(
         bullish = direction > 0
         bearish = direction < 0
         has_confirmed = active is not None
+        # Single-day event: a protected swing is reported (and a trade plan is
+        # produced) only on the session it is *confirmed* — the close that
+        # breaches the protecting series. A swing confirmed on an earlier
+        # session that merely persists is not re-listed, preventing the same
+        # pattern from reappearing every day.
+        # The "session we just observed" is the last available close in the
+        # (already possibly trimmed) daily frame — compare against that rather
+        # than `as_of_date` (which can be an in-progress session while the live
+        # frame was trimmed to the last *complete* day).
+        scan_date = _as_date(daily.index[-1]) if not daily.empty else None
+        confirmed_today = (
+            has_confirmed
+            and scan_date is not None
+            and _as_date(active.confirm_date) == scan_date
+        )
 
         results.at[idx, "direction"] = direction
         results.at[idx, "note"] = str(analysis.note)
@@ -832,24 +861,25 @@ def run_protected_swings(
             results.at[idx, "tag"] = swing.tag
             # The protected level is the reference for a confirmed bias; an
             # anticipated swing is reported for awareness but does not fire.
-            results.at[idx, "final_signal"] = has_confirmed
-            results.at[idx, "bullish_match"] = bool(bullish and has_confirmed)
-            results.at[idx, "bearish_match"] = bool(bearish and has_confirmed)
+            results.at[idx, "final_signal"] = confirmed_today
+            results.at[idx, "bullish_match"] = bool(bullish and confirmed_today)
+            results.at[idx, "bearish_match"] = bool(bearish and confirmed_today)
 
-            current_close = float(daily.iloc[-1]["Close"])
-            outcome = {
-                "bullish": bool(bullish and has_confirmed),
-                "bearish": bool(bearish and has_confirmed),
-                "sl_level": float(swing.swing_level),
-                "entry_ref": current_close,
-            }
-            context = {"prior_weeks": [], "swing": {}}
-            plan = _build_trade_plan(outcome, context, _daily_atr(daily))
-            results.at[idx, "entry"] = plan["entry"]
-            results.at[idx, "sl"] = plan["sl"]
-            results.at[idx, "target"] = plan["target"]
-            results.at[idx, "rr"] = plan["rr"]
-            results.at[idx, "atr"] = plan["atr"]
+            if confirmed_today:
+                current_close = float(daily.iloc[-1]["Close"])
+                outcome = {
+                    "bullish": bool(bullish and confirmed_today),
+                    "bearish": bool(bearish and confirmed_today),
+                    "sl_level": float(swing.swing_level),
+                    "entry_ref": current_close,
+                }
+                context = {"prior_weeks": [], "swing": {}}
+                plan = _build_trade_plan(outcome, context, _daily_atr(daily))
+                results.at[idx, "entry"] = plan["entry"]
+                results.at[idx, "sl"] = plan["sl"]
+                results.at[idx, "target"] = plan["target"]
+                results.at[idx, "rr"] = plan["rr"]
+                results.at[idx, "atr"] = plan["atr"]
 
             state_label = "confirmed" if has_confirmed else "anticipated"
             via = swing.mode
@@ -1309,15 +1339,17 @@ def _pre_week_swing_extremes(daily: pd.DataFrame, as_of_date: date, sessions: in
 
 
 def _extract_weekly_profile_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    columns = ["symbol", "profile", "state", "direction", "entry", "sl", "target", "rr", "track_mode", "note"]
+    columns = ["symbol", "profile", "state", "direction", "entry", "sl", "target", "rr", "track_mode", "tag", "note"]
     bullish = (
-        results.loc[results["bullish_match"] == True, columns]
+        results.loc[results["bullish_match"] == True]
+        .reindex(columns=columns)
         .sort_values("symbol")
         .reset_index(drop=True)
         .copy()
     )
     bearish = (
-        results.loc[results["bearish_match"] == True, columns]
+        results.loc[results["bearish_match"] == True]
+        .reindex(columns=columns)
         .sort_values("symbol")
         .reset_index(drop=True)
         .copy()

@@ -172,18 +172,19 @@ BEARISH_HIGH = [
 
 
 # Confirmed bullish FVG: gap at idx2 (c1 high 105 < c3 low 110, c2 bullish),
-# price trades into the gap at idx3 (low 90 <= gap_high 110), then closes beyond
-# the series high (protected_level 105) at idx4 (close 106) -> confirmed fvg low.
-# idx5 is a neutral-to-up follow-through bar (close 107 > 105) that keeps the
-# swing confirmed (no invalidation) and satisfies the run_protected_swings >=6-bar
-# minimum.
+# price trades into the gap at idx3 (low 90 <= gap_high 110). Protected level
+# is the BODY (max open of the gap block c0/c1/c2 = 101, not the wick high).
+# idx4 closes flat at 101 (== protect) so it neither confirms nor invalidates,
+# while idx5 (close 106 > 101) is the confirming close on the LAST bar
+# (== as_of_date); idx4 high 112 avoids a spurious bearish FVG at i=4. The
+# >=6-bar runner minimum is also satisfied.
 FVG_BULLISH = [
-    (100, 105, 99, 101),   # 0 c1
-    (95, 100, 96, 99),     # 1 c2 bullish
+    (100, 105, 99, 101),   # 0 c1  (o=100)
+    (95, 100, 96, 99),     # 1 c2 bullish (o=95)
     (101, 104, 110, 112),  # 2 c3 -> bullish FVG (gap_low 105, gap_high 110)
     (101, 102, 90, 91),    # 3 low 90 <= 110 -> trades into gap (entry)
-    (90, 95, 88, 106),     # 4 close 106 > 105 -> confirmed
-    (104, 108, 103, 107),  # 5 follow-through, close 107 > 105 (keeps confirmed)
+    (101, 112, 91, 101),   # 4 close 101 == protect (no confirm, no invalidate)
+    (95, 108, 91, 106),    # 5 close 106 > 101 -> confirmed on last bar
 ]
 
 
@@ -198,7 +199,7 @@ def test_confirmed_bullish_protected_low():
     assert an.active.direction == 1
     assert an.active.state == ps.STATE_CONFIRMED
     assert abs(an.active.swing_level - 84.0) < 1e-9
-    assert abs(an.active.protected_level - 108.0) < 1e-9
+    assert abs(an.active.protected_level - 107.0) < 1e-9  # body: max open of red series (idx4=107)
     assert an.active.mode == ps.MODE_SWEEP
     assert an.active.tag == ps.TAG_SWEEP_BASED
     assert an.active.tag != ps.TAG_FVG_BASED
@@ -250,7 +251,7 @@ def test_bearish_protected_high():
     assert an.active.direction == -1
     assert an.active.state == ps.STATE_CONFIRMED
     assert abs(an.active.swing_level - 108.0) < 1e-9
-    assert abs(an.active.protected_level - 99.0) < 1e-9
+    assert abs(an.active.protected_level - 100.0) < 1e-9  # body: min open of green series (idx0=100)
 
 
 def test_bias_flips_to_bearish_on_more_recent_confirm():
@@ -284,8 +285,8 @@ def test_signal_persists_while_no_newer_confirm():
 # ---------------------------------------------------------------------------
 def test_run_protected_swings_output_contract():
     ex = all_strategy.run_protected_swings(
-        ["TEST"], as_of_date=date(2026, 1, 20), verbose=False,
-        daily_map={"TEST": _df(BULLISH_LOW)},
+        ["TEST"], as_of_date=date(2026, 1, 19), verbose=False,
+        daily_map={"TEST": _df(BULLISH_LOW[:11])},
     )
     assert ex.name == "protected_swings"
     row = ex.results.iloc[0]
@@ -299,6 +300,8 @@ def test_run_protected_swings_output_contract():
     assert row["tag"] == ps.TAG_SWEEP_BASED
     # bullish/bearish frames carry the weekly-profile columns + tradingview_link
     assert "tradingview_link" in ex.bullish.columns
+    assert "tag" in ex.bullish.columns
+    assert ex.bullish.iloc[0]["tag"] == ps.TAG_SWEEP_BASED
     assert len(ex.bullish) == 1
     assert len(ex.bullish) == int(row["bullish_match"])
 
@@ -318,16 +321,37 @@ def test_run_protected_swings_no_signal_when_anticipated():
 
 def test_run_protected_swings_surfaces_fvg_tag():
     ex = all_strategy.run_protected_swings(
-        ["TEST"], as_of_date=date(2026, 1, 20), verbose=False,
+        ["TEST"], as_of_date=date(2026, 1, 12), verbose=False,
         daily_map={"TEST": _df(FVG_BULLISH)},
     )
     row = ex.results.iloc[0]
     assert row["symbol"] == "TEST"
     assert row["status"] == "complete"
-    assert row["final_signal"] is True or bool(row["final_signal"]) is True
+    assert bool(row["final_signal"]) is True
     assert row["tag"] == ps.TAG_FVG_BASED
     assert row["state"] == ps.STATE_CONFIRMED
     assert len(ex.bullish) == 1
+    assert "tag" in ex.bullish.columns
+    assert ex.bullish.iloc[0]["tag"] == ps.TAG_FVG_BASED
+
+
+def test_run_protected_swings_not_relisted_on_subsequent_day():
+    # Swing confirmed on 2026-01-19 (idx10). Scanning on the *next* session
+    # (2026-01-20) where the swing merely persists must NOT re-fire the signal.
+    ex = all_strategy.run_protected_swings(
+        ["TEST"], as_of_date=date(2026, 1, 20), verbose=False,
+        daily_map={"TEST": _df(BULLISH_LOW)},
+    )
+    row = ex.results.iloc[0]
+    assert row["status"] == "complete"
+    # swing is still active/confirmed, but no signal fires -> not in results.
+    assert bool(row["final_signal"]) is False
+    assert bool(row["bullish_match"]) is False
+    assert bool(row["bearish_match"]) is False
+    assert row["state"] == ps.STATE_CONFIRMED
+    assert row["tag"] == ps.TAG_SWEEP_BASED
+    assert len(ex.bullish) == 0
+    assert len(ex.bearish) == 0
 
 
 def test_protected_swings_registered_in_registry_and_lookback():
