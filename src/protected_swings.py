@@ -404,6 +404,9 @@ def _build_sweep_candidate(
         run = _collect_run(o, c, sweep_idx, down=False) or [sweep_idx]
         protected_level = float(np.nanmin(o[run]))  # body: lowest open of the green sweep series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False, inclusive=False)
+        swing_break_idx = _first_after(c, swing_level, sweep_idx, above=True)
+        if swing_break_idx is not None and (confirm_idx is None or swing_break_idx <= confirm_idx):
+            confirm_idx = None
         invalidate_idx = (
             invalidate_close(daily, swing_level, confirm_idx, above=True)
             if confirm_idx is not None
@@ -419,6 +422,9 @@ def _build_sweep_candidate(
         run = _collect_run(o, c, sweep_idx, down=True) or [sweep_idx]
         protected_level = float(np.nanmax(o[run]))  # body: highest open of the red sweep series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True, inclusive=False)
+        swing_break_idx = _first_after(c, swing_level, sweep_idx, above=False)
+        if swing_break_idx is not None and (confirm_idx is None or swing_break_idx <= confirm_idx):
+            confirm_idx = None
         invalidate_idx = (
             invalidate_close(daily, swing_level, confirm_idx, above=False)
             if confirm_idx is not None
@@ -594,9 +600,9 @@ def evaluate_protected_swings(
     parts: List[str] = []
     if active is not None:
         parts.append(
-            f"active {('bullish' if active.direction > 0 else 'bearish')} protected "
-            f"{'low' if active.direction > 0 else 'high'} via {active.mode} "
-            f"@ protect={active.protected_level:.2f} swing={active.swing_level:.2f} "
+            f"{('bullish' if active.direction > 0 else 'bearish')} protected "
+            f"{'low' if active.direction > 0 else 'high'} via {active.mode} | "
+            f"protect={active.protected_level:.2f} swing={active.swing_level:.2f} | "
             f"confirmed={active.confirm_date}"
         )
     if anticip is not None and active is None:

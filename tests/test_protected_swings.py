@@ -218,8 +218,8 @@ def test_tag_fvg_based_event():
 
 def test_invalidated_after_confirmation():
     # Close below the swept swing low (84) to invalidate the bullish event.
-    # The invalidating bar also confirms a newer bearish protected high because
-    # its close is below the bearish series body level.
+    # The same bar also sweeps a newer high, but its close above that swept
+    # swing must prevent a later bearish confirmation.
     rows = BULLISH_LOW + [
         (111, 115, 80, 80),  # close 80 < 84 -> invalidates the bullish swing at idx=6
                     # and confirms the newer bearish swing
@@ -227,11 +227,9 @@ def test_invalidated_after_confirmation():
     an = ps.evaluate_protected_swings(_df(rows))
     bull = _bullish_events(an)
     assert any(e.state == ps.STATE_INVALIDATED for e in bull), "old swing should be invalidated"
-    # The old swing is invalidated and a newer bearish swing is confirmed.
-    assert an.active is not None, "new swing should be active after same-bar confirm"
-    assert an.active.state == ps.STATE_CONFIRMED
-    assert an.active.direction == -1
-    assert an.bias == -1
+    # The old swing is invalidated and no newer bearish swing is confirmed.
+    assert an.active is None
+    assert an.bias == 0
 
 
 def test_anticipated_when_only_swept():
@@ -288,6 +286,39 @@ def test_sweep_confirmation_uses_immediate_sweep_series():
     assert event.protected_level == 120.0
     assert event.confirm_date == _df(rows).index[6]
     assert event.confirmation_price == 110.0
+
+
+def test_sweep_is_rejected_after_close_beyond_swept_extreme():
+    # A later close below the bearish body threshold must not confirm after a
+    # prior close above the swept high. The bullish mirror is checked as well.
+    bearish_rows = [
+        (100, 102, 99, 101),
+        (101, 105, 100, 104),
+        (104, 110, 103, 109),  # swing high
+        (109, 108, 105, 106),
+        (106, 107, 102, 105),
+        (120, 125, 115, 124),  # sweep high
+        (124, 127, 121, 122),  # close above swept high: invalidates setup
+        (122, 123, 95, 96),    # would otherwise confirm below protection
+    ]
+    bearish = ps.evaluate_protected_swings(_df(bearish_rows))
+    assert not any(e.state == ps.STATE_CONFIRMED for e in bearish.events if e.mode == ps.MODE_SWEEP)
+
+    bullish_rows = [
+        (100, 102, 99, 101),
+        (101, 104, 100, 103),
+        (103, 106, 102, 105),
+        (105, 108, 104, 107),
+        (107, 108, 98, 100),
+        (100, 104, 92, 94),
+        (94, 98, 84, 86),   # swing low
+        (86, 94, 85, 92),
+        (92, 100, 83, 85),  # sweep low
+        (85, 82, 80, 82),   # close below swept low: invalidates setup
+        (82, 110, 81, 111), # would otherwise confirm above protection
+    ]
+    bullish = ps.evaluate_protected_swings(_df(bullish_rows))
+    assert not any(e.state == ps.STATE_CONFIRMED for e in bullish.events if e.mode == ps.MODE_SWEEP)
 
 
 def test_signal_persists_while_no_newer_confirm():
@@ -359,21 +390,21 @@ def test_run_protected_swings_surfaces_fvg_tag():
     assert ex.bullish.iloc[0]["tag"] == ps.TAG_FVG_BASED
 
 
-def test_run_protected_swings_includes_following_day_only():
-    # Swing confirmed on 2026-01-19 (idx10). The next session is still included
-    # in the result window, but a later persistence day is not.
+def test_run_protected_swings_emits_on_confirmation_day_only():
+    # Swing confirmed on 2026-01-19 (idx10), but it must not be emitted again
+    # on the following persistence session.
     ex = all_strategy.run_protected_swings(
         ["TEST"], as_of_date=date(2026, 1, 20), verbose=False,
         daily_map={"TEST": _df(BULLISH_LOW)},
     )
     row = ex.results.iloc[0]
     assert row["status"] == "complete"
-    assert bool(row["final_signal"]) is True
-    assert bool(row["bullish_match"]) is True
+    assert bool(row["final_signal"]) is False
+    assert bool(row["bullish_match"]) is False
     assert bool(row["bearish_match"]) is False
     assert row["state"] == ps.STATE_CONFIRMED
     assert row["tag"] == ps.TAG_SWEEP_BASED
-    assert len(ex.bullish) == 1
+    assert len(ex.bullish) == 0
     assert len(ex.bearish) == 0
 
     ex = all_strategy.run_protected_swings(

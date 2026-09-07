@@ -1,6 +1,7 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:system",
     "chat.tools.terminal.autoApprove": {
-        "npm.cmd": true
+        "npm.cmd": true,
+        "pytest": true
     }
 }

@@ -820,13 +820,12 @@ def run_protected_swings(
         bullish = direction > 0
         bearish = direction < 0
         has_confirmed = active is not None
-        # A protected swing is reported (and a trade plan is produced) on the
-        # confirmation session and the immediately following available session.
+        # A protected swing is reported only on the confirmation session.
         # A swing confirmed earlier that merely persists is not re-listed.
         confirmed_window = (
             has_confirmed
             and active.confirm_idx is not None
-            and active.confirm_idx >= len(daily) - 2
+            and active.confirm_idx == len(daily) - 1
         )
 
         results.at[idx, "direction"] = direction
@@ -866,14 +865,7 @@ def run_protected_swings(
                 results.at[idx, "rr"] = plan["rr"]
                 results.at[idx, "atr"] = plan["atr"]
 
-            state_label = "confirmed" if has_confirmed else "anticipated"
-            via = swing.mode
-            results.at[idx, "note"] = (
-                f"{analysis.note} | protected {via} swing "
-                f"{'low' if direction > 0 else 'high'} "
-                f"protect={swing.protected_level:.2f} swing={swing.swing_level:.2f} "
-                f"status={state_label}"
-            )
+            results.at[idx, "note"] = analysis.note
         else:
             results.at[idx, "state"] = STATE_NONE
             results.at[idx, "note"] = str(analysis.note)
