@@ -599,10 +599,11 @@ def evaluate_protected_swings(
 
     parts: List[str] = []
     if active is not None:
+        level_name = "fvg" if active.mode == MODE_FVG else "swing"
         parts.append(
             f"{('bullish' if active.direction > 0 else 'bearish')} protected "
             f"{'low' if active.direction > 0 else 'high'} via {active.mode} | "
-            f"protect={active.protected_level:.2f} swing={active.swing_level:.2f} | "
+            f"protect={active.protected_level:.2f} {level_name}={active.swing_level:.2f} | "
             f"confirmed={active.confirm_date}"
         )
     if anticip is not None and active is None:

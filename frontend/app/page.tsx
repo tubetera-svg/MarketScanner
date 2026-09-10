@@ -45,6 +45,8 @@ type StrategyRow = {
   rr?: number | null;
   track_mode?: string | null;
   tag?: string | null;
+  swing_level?: number | null;
+  protected_level?: number | null;
   flip_level?: number | null;
   signal_date?: string | null;
   daily_bias?: string | null;
@@ -946,7 +948,9 @@ export default function Home() {
                           })()
                         )}
                         {group.strategy === "protected_swings" && row.tag && (
-                          <small title={row.note ?? row.tag}>{row.tag}</small>
+                          <small title={row.note ?? row.tag}>
+                            {row.tag === "fvg_based" ? "fvg" : "sweep"}={row.swing_level?.toFixed(2) ?? "-"}
+                          </small>
                         )}
                         {row.entry == null && row.note && (
                           <span className="note-tooltip-wrap">
@@ -982,7 +986,9 @@ export default function Home() {
                           })()
                         )}
                         {group.strategy === "protected_swings" && row.tag && (
-                          <small title={row.note ?? row.tag}>{row.tag}</small>
+                          <small title={row.note ?? row.tag}>
+                            {row.tag === "fvg_based" ? "fvg" : "sweep"}={row.swing_level?.toFixed(2) ?? "-"}
+                          </small>
                         )}
                         {row.entry == null && row.note && (
                           <span className="note-tooltip-wrap">

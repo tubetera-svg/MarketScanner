@@ -1316,7 +1316,10 @@ def _pre_week_swing_extremes(daily: pd.DataFrame, as_of_date: date, sessions: in
 
 
 def _extract_weekly_profile_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    columns = ["symbol", "profile", "state", "direction", "entry", "sl", "target", "rr", "track_mode", "tag", "note"]
+    columns = [
+        "symbol", "profile", "state", "direction", "entry", "sl", "target", "rr",
+        "track_mode", "tag", "swing_level", "note",
+    ]
     bullish = (
         results.loc[results["bullish_match"] == True]
         .reindex(columns=columns)

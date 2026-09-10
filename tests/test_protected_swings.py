@@ -214,6 +214,7 @@ def test_tag_fvg_based_event():
     assert an.active.mode == ps.MODE_FVG
     assert abs(an.active.protected_level - 115.0) < 1e-9
     assert abs(an.active.confirmation_price - 116.0) < 1e-9
+    assert "fvg=111.00" in an.note
 
 
 def test_invalidated_after_confirmation():
@@ -388,6 +389,7 @@ def test_run_protected_swings_surfaces_fvg_tag():
     assert len(ex.bullish) == 1
     assert "tag" in ex.bullish.columns
     assert ex.bullish.iloc[0]["tag"] == ps.TAG_FVG_BASED
+    assert abs(ex.bullish.iloc[0]["swing_level"] - 111.0) < 1e-9
 
 
 def test_run_protected_swings_emits_on_confirmation_day_only():
