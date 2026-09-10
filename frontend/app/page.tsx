@@ -106,6 +106,41 @@ const WEEKLY_PROFILE_DAYS: Record<string, string> = {
 
 const baseSymbol = (symbol: string) => symbol.split(":").pop() ?? symbol;
 const isCommodity = (symbol: string) => /(?:NATURALGAS|UKOIL|USOIL|XAUUSD|XAGUSD|COPPER|SILVER|GOLD)/i.test(symbol);
+const tradingViewWidgetUrl = (link: string | null | undefined, symbol: string, timeframe = "D", indicators: string[] = []) => {
+  let chartSymbol = symbol;
+  try {
+    const parsed = link ? new URL(link) : null;
+    chartSymbol = parsed?.searchParams.get("symbol") || symbol;
+  } catch {
+    // Fall back to the result symbol when a provider URL is malformed.
+  }
+  const params = new URLSearchParams({
+    symbol: chartSymbol,
+    interval: timeframe,
+    hidesidetoolbar: "0",
+    symboledit: "1",
+    saveimage: "1",
+    toolbarbg: "#f1f3f6",
+    studies: JSON.stringify(indicators),
+    overrides: JSON.stringify({
+      "mainSeriesProperties.candleStyle.upColor": "#16a34a",
+      "mainSeriesProperties.candleStyle.downColor": "#000000",
+      "mainSeriesProperties.candleStyle.borderUpColor": "#16a34a",
+      "mainSeriesProperties.candleStyle.borderDownColor": "#000000",
+      "mainSeriesProperties.candleStyle.wickUpColor": "#16a34a",
+      "mainSeriesProperties.candleStyle.wickDownColor": "#000000",
+    }),
+    theme: "light",
+    style: "1",
+    timezone: "Etc/UTC",
+    withdateranges: "1",
+    hideideas: "1",
+    hide_side_toolbar: "0",
+    hide_volume: "1",
+    locale: "en",
+  });
+  return `https://www.tradingview.com/widgetembed/?${params.toString()}`;
+};
 const matchesScope_check = (item: { symbol: string; session: string }, scope: WatchScope) => {
   const symbol = item.symbol.toUpperCase();
   const base = baseSymbol(symbol);
@@ -309,6 +344,13 @@ export default function Home() {
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
   const [inventoryNow, setInventoryNow] = useState(() => Date.now());
+  const [chart, setChart] = useState<{ symbol: string; sourceLink: string; timeframe: string; indicators: string[] } | null>(null);
+
+  const openTradingViewChart = (event: React.MouseEvent<HTMLAnchorElement>, row: StrategyRow) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
+    event.preventDefault();
+    setChart({ symbol: row.symbol, sourceLink: row.tradingview_link, timeframe: "D", indicators: [] });
+  };
 
   const loadTracker = async (symbols?: string[]) => {
     try {
@@ -930,7 +972,7 @@ export default function Home() {
                 {group.bull_count + group.bear_count > 0 ? (
                   <div className="signal-list">
                     {group.bullish.map((row) => (
-                      <a key={`bull-${row.symbol}`} href={row.tradingview_link ?? "#"} target="_blank" rel="noreferrer" className="signal-chip bull">
+                      <a key={`bull-${row.symbol}`} href={row.tradingview_link ?? "#"} rel="noreferrer" className="signal-chip bull" onClick={(event) => openTradingViewChart(event, row)}>
                         <ArrowUpRight size={12} />
                         <strong>{row.symbol}</strong>
                         {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
@@ -968,7 +1010,7 @@ export default function Home() {
                       </a>
                     ))}
                     {group.bearish.map((row) => (
-                      <a key={`bear-${row.symbol}`} href={row.tradingview_link ?? "#"} target="_blank" rel="noreferrer" className="signal-chip bear">
+                      <a key={`bear-${row.symbol}`} href={row.tradingview_link ?? "#"} rel="noreferrer" className="signal-chip bear" onClick={(event) => openTradingViewChart(event, row)}>
                         <ArrowDownRight size={12} />
                         <strong>{row.symbol}</strong>
                         {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
@@ -1080,6 +1122,58 @@ export default function Home() {
           )}
         </div>
         </section>
+        {chart && (
+          <div className="chart-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setChart(null)}>
+            <section className="chart-modal" role="dialog" aria-modal="true" aria-label={`${chart.symbol} TradingView chart`}>
+              <div className="chart-modal-header">
+                <strong>{chart.symbol}</strong>
+                <button type="button" className="chart-modal-close" aria-label="Close chart" title="Close chart" onClick={() => setChart(null)}>×</button>
+              </div>
+              <div className="chart-modal-controls">
+                <label>
+                  Timeframe
+                  <select value={chart.timeframe} onChange={(event) => setChart((current) => current && { ...current, timeframe: event.target.value })}>
+                    <option value="1">1m</option>
+                    <option value="5">5m</option>
+                    <option value="15">15m</option>
+                    <option value="60">1h</option>
+                    <option value="240">4h</option>
+                    <option value="D">1D</option>
+                    <option value="W">1W</option>
+                  </select>
+                </label>
+                <span className="chart-control-label">Indicators</span>
+                {[
+                  ["RSI@tv-basicstudies", "RSI"],
+                  ["MACD@tv-basicstudies", "MACD"],
+                  ["MAExp@tv-basicstudies", "EMA"],
+                  ["VWAP@tv-basicstudies", "VWAP"],
+                ].map(([value, label]) => (
+                  <label key={value} className="chart-indicator">
+                    <input
+                      type="checkbox"
+                      checked={chart.indicators.includes(value)}
+                      onChange={(event) => setChart((current) => current && {
+                        ...current,
+                        indicators: event.target.checked
+                          ? [...current.indicators, value]
+                          : current.indicators.filter((indicator) => indicator !== value),
+                      })}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <iframe
+                key={tradingViewWidgetUrl(chart.sourceLink, chart.symbol, chart.timeframe, chart.indicators)}
+                title={`${chart.symbol} live TradingView chart`}
+                src={tradingViewWidgetUrl(chart.sourceLink, chart.symbol, chart.timeframe, chart.indicators)}
+                className="chart-frame"
+                allowFullScreen
+              />
+            </section>
+          </div>
+        )}
         </main>
       </div>
       <footer>Rule-based analysis only. Validate signals before taking any trade.</footer>

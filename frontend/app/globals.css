@@ -237,6 +237,19 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .date-arrow:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
 .date-arrow:disabled { cursor: not-allowed; opacity: .5; }
 .strategy-results { display: grid; gap: var(--gap-md); grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.chart-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgb(15 23 42 / 62%); }
+.chart-modal { width: min(1100px, 100%); height: min(720px, 90vh); display: flex; flex-direction: column; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 24px 80px rgb(15 23 42 / 28%); }
+.chart-modal-header { display: flex; align-items: center; justify-content: space-between; min-height: 46px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); }
+.chart-modal-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 9px 16px; border-bottom: 1px solid var(--line); background: #fafaf8; color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
+.chart-modal-controls label { align-items: center; display: inline-flex; gap: 6px; }
+.chart-modal-controls select { min-height: 28px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: white; color: var(--ink); font: 11px 'DM Mono', monospace; text-transform: none; }
+.chart-control-label { color: var(--ink); }
+.chart-indicator { cursor: pointer; }
+.chart-indicator input { margin: 0; accent-color: var(--teal); }
+.chart-modal-close { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; }
+.chart-modal-close:hover { background: var(--soft); color: var(--ink); }
+.chart-frame { flex: 1; width: 100%; border: 0; background: #f1f3f6; }
+@media (max-width: 640px) { .chart-modal-backdrop { padding: 10px; } .chart-modal { height: 88vh; } }
 .strategy-result { background: #fdfdfc; border: 1px solid var(--line); border-radius: 6px; padding: var(--gap-md); }
 .strategy-result summary { cursor: pointer; font-weight: 600; font-size: 13px; letter-spacing: -0.2px; list-style: none; display: flex; align-items: center; justify-content: space-between; }
 .strategy-result summary::-webkit-details-marker { display: none; }
