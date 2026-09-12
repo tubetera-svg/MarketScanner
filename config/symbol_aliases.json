@@ -7,7 +7,7 @@
     "FOREXCOM:XAGUSD",
     "CAPITALCOM:XAGUSD"
   ],
-  "NSE:BAJAJ_AUTO": [
-    "NSE:BAJAJ-AUTO"
+  "NSE:BAJAJ-AUTO": [
+    "NSE:BAJAJ_AUTO"
   ]
 }

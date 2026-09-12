@@ -92,6 +92,7 @@ import os
 import json
 import time
 import logging
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from enum import Enum
@@ -226,6 +227,36 @@ def categorize_symbol(raw: str) -> dict:
         "asset_class": asset_class,
         "scope": scope,
     }
+
+
+def load_watchlist_categories(filename: str = "../config/watchlist_categories.json") -> dict[str, str]:
+    """Load persisted watchlist scope overrides keyed by canonical symbol."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.normpath(os.path.join(script_dir, filename))
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(symbol).strip().upper(): str(scope).strip()
+        for symbol, scope in data.items()
+        if str(symbol).strip() and str(scope).strip()
+    }
+
+
+def load_watchlist_details(filename: str = "watchlist.txt") -> list[dict[str, str]]:
+    """Return watchlist entries with one synchronized category/scope field."""
+    categories = load_watchlist_categories()
+    details: list[dict[str, str]] = []
+    for symbol, session in load_watchlist(filename):
+        category = categorize_symbol(symbol)
+        category["scope"] = categories.get(symbol.upper(), category["scope"])
+        category["session"] = session.value
+        details.append(category)
+    return details
 
 
 # ==================================================

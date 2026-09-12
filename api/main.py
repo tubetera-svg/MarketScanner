@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import logging
 import os
 import re
@@ -66,6 +67,7 @@ class ScheduleStartRequest(BaseModel):
 
 class WatchlistAddRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=80)
+    category: str | None = Field(default=None, max_length=80)
 
 
 class WatchlistRemoveRequest(BaseModel):
@@ -75,6 +77,17 @@ class WatchlistRemoveRequest(BaseModel):
 class WatchlistRenameRequest(BaseModel):
     old_symbol: str = Field(min_length=1, max_length=80)
     new_symbol: str = Field(min_length=1, max_length=80)
+    category: str | None = Field(default=None, max_length=80)
+
+
+WATCHLIST_CATEGORIES_PATH = ROOT / "config" / "watchlist_categories.json"
+
+
+def save_watchlist_categories(categories: dict[str, str]) -> None:
+    WATCHLIST_CATEGORIES_PATH.write_text(
+        json.dumps(dict(sorted(categories.items())), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 class ScannerService:
@@ -93,34 +106,14 @@ class ScannerService:
         self.last_date_note: dict[str, str | None] = {"requested_date": None, "resolved_date": None, "resolution_reason": None}
 
     def watchlist(self) -> list[dict[str, str]]:
-        entries = self.module.load_watchlist(str(ROOT / "config" / "watchlist.txt"))
-        result: list[dict[str, str]] = []
-        for symbol, session in entries:
-            try:
-                category = self.module.categorize_symbol(symbol)
-                result.append({
-                    "symbol": symbol,
-                    "session": session.value,
-                    "exchange": category["exchange"],
-                    "asset_class": category["asset_class"],
-                    "scope": category["scope"],
-                })
-            except Exception:
-                result.append({
-                    "symbol": symbol,
-                    "session": session.value,
-                    "exchange": "",
-                    "asset_class": "unknown",
-                    "scope": "",
-                })
-        return result
+        return self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))
 
-    def add_to_watchlist(self, value: str) -> list[dict[str, str]]:
+    def add_to_watchlist(self, value: str, category_label: str | None = None) -> list[dict[str, str]]:
         try:
-            category = self.module.categorize_symbol(value)
+            category_info = self.module.categorize_symbol(value)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
-        symbol = category["symbol"]
+        symbol = category_info["symbol"]
 
         path = ROOT / "config" / "watchlist.txt"
         entries = self.module.load_watchlist(str(path))
@@ -129,6 +122,10 @@ class ScannerService:
 
         with path.open("a", encoding="utf-8") as file:
             file.write(f"{symbol}\n")
+        if category_label and category_label.strip():
+            categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+            categories[symbol] = category_label.strip()
+            save_watchlist_categories(categories)
         return self.watchlist()
 
     def remove_from_watchlist(self, value: str) -> list[dict[str, str]]:
@@ -143,6 +140,9 @@ class ScannerService:
         with path.open("w", encoding="utf-8") as file:
             for existing_symbol, _ in kept:
                 file.write(f"{existing_symbol}\n")
+        categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+        if categories.pop(symbol, None) is not None:
+            save_watchlist_categories(categories)
         # Drop any alias mapping for the removed symbol.
         try:
             from market_data.config import load_symbol_aliases, save_symbol_aliases
@@ -154,7 +154,7 @@ class ScannerService:
             pass
         return self.watchlist()
 
-    def rename_in_watchlist(self, old_value: str, new_value: str) -> list[dict[str, str]]:
+    def rename_in_watchlist(self, old_value: str, new_value: str, category: str | None = None) -> list[dict[str, str]]:
         old_symbol = old_value.strip().upper()
         try:
             new_category = self.module.categorize_symbol(new_value)
@@ -165,11 +165,18 @@ class ScannerService:
         entries = self.module.load_watchlist(str(path))
         if not any(existing_symbol.upper() == old_symbol for existing_symbol, _ in entries):
             raise ValueError(f"{old_symbol} is not in the watchlist")
-        if any(existing_symbol.upper() == new_symbol for existing_symbol, _ in entries):
+        if new_symbol != old_symbol and any(existing_symbol.upper() == new_symbol for existing_symbol, _ in entries):
             raise ValueError(f"{new_symbol} is already in the watchlist")
         with path.open("w", encoding="utf-8") as file:
             for existing_symbol, _ in entries:
                 file.write(f"{(new_symbol if existing_symbol.upper() == old_symbol else existing_symbol)}\n")
+        categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+        old_category = categories.pop(old_symbol, None)
+        if category and category.strip():
+            categories[new_symbol] = category.strip()
+        elif old_category and new_symbol != old_symbol:
+            categories[new_symbol] = old_category
+        save_watchlist_categories(categories)
         # Carry the alias mapping over to the new symbol name.
         try:
             from market_data.config import load_symbol_aliases, save_symbol_aliases
@@ -192,6 +199,7 @@ class ScannerService:
 
     def scan(self, requested_symbols: list[str] | None) -> list[dict[str, Any]]:
         entries = self.module.load_watchlist(str(ROOT / "config" / "watchlist.txt"))
+        details = {item["symbol"]: item for item in self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))}
         selected = {value.strip().upper() for value in requested_symbols or [] if value.strip()}
         if selected:
             entries = [(symbol, session) for symbol, session in entries if symbol.upper() in selected]
@@ -229,7 +237,7 @@ class ScannerService:
             if tracker.snapshot is None:
                 continue
             row = asdict(tracker.snapshot)
-            row.update({"symbol": tracker.symbol, "session": tracker.session.value, "tier": tracker.tier.value, "state": tracker.state.value})
+            row.update({"symbol": tracker.symbol, "session": tracker.session.value, "tier": tracker.tier.value, "state": tracker.state.value, "scope": details.get(tracker.symbol, {}).get("scope", "")})
             results.append(row)
         self.last_results = results
         self.last_scan_at = datetime.now().astimezone().isoformat()
@@ -238,6 +246,7 @@ class ScannerService:
     def historical_test(self, requested_symbols: list[str] | None, anchor_date: date) -> dict[str, Any]:
         requested_date, resolved_date, reason = self.module.resolve_previous_working_date(anchor_date)
         entries = self.module.load_watchlist(str(ROOT / "config" / "watchlist.txt"))
+        details = {item["symbol"]: item for item in self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))}
         selected = {value.strip().upper() for value in requested_symbols or [] if value.strip()}
         entries = [(symbol, session) for symbol, session in entries if not selected or symbol.upper() in selected]
         if not entries:
@@ -275,7 +284,7 @@ class ScannerService:
             if tracker.snapshot is None:
                 continue
             row = asdict(tracker.snapshot)
-            row.update({"symbol": tracker.symbol, "session": tracker.session.value, "tier": tracker.tier.value, "state": tracker.state.value})
+            row.update({"symbol": tracker.symbol, "session": tracker.session.value, "tier": tracker.tier.value, "state": tracker.state.value, "scope": details.get(tracker.symbol, {}).get("scope", "")})
             results.append(row)
 
         self.last_date_note = {
@@ -417,7 +426,7 @@ def get_watchlist() -> dict[str, Any]:
 @app.post("/api/watchlist")
 def add_watchlist_item(request: WatchlistAddRequest) -> dict[str, Any]:
     try:
-        return {"symbols": service.add_to_watchlist(request.symbol)}
+        return {"symbols": service.add_to_watchlist(request.symbol, request.category)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -433,7 +442,7 @@ def remove_watchlist_item(request: WatchlistRemoveRequest) -> dict[str, Any]:
 @app.put("/api/watchlist")
 def rename_watchlist_item(request: WatchlistRenameRequest) -> dict[str, Any]:
     try:
-        return {"symbols": service.rename_in_watchlist(request.old_symbol, request.new_symbol)}
+        return {"symbols": service.rename_in_watchlist(request.old_symbol, request.new_symbol, request.category)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

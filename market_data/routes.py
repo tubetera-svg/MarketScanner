@@ -96,6 +96,8 @@ class SyncRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list, max_length=500)
     source: Optional[str] = None
     anchor_date: Optional[date] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     lookback_days: Optional[int] = Field(default=None, ge=1, le=120)
     gate_market_hours: bool = Field(
         default=True,
@@ -143,7 +145,9 @@ def sync_market_data(request: SyncRequest) -> dict:
     if not entries:
         raise HTTPException(status_code=404, detail="No symbols resolved for sync")
 
-    anchor = request.anchor_date or date.today()
+    anchor = request.end_date or request.anchor_date or date.today()
+    if request.start_date and request.start_date > anchor:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date")
     alias_map = load_symbol_aliases() if request.use_aliases else {}
     results = []
     for symbol, session in entries:
@@ -158,11 +162,18 @@ def sync_market_data(request: SyncRequest) -> dict:
             symbol,
             anchor,
             lookback,
+            start_date=request.start_date,
             gate_market_hours=request.gate_market_hours,
             aliases=aliases,
         )
         results.append(summary.to_dict())
-    return {"anchor_date": anchor.isoformat(), "lookback_days": lookback, "results": results}
+    return {
+        "anchor_date": anchor.isoformat(),
+        "start_date": request.start_date.isoformat() if request.start_date else None,
+        "end_date": anchor.isoformat(),
+        "lookback_days": lookback,
+        "results": results,
+    }
 
 
 @router.delete("/api/market-data/records")
@@ -212,6 +223,31 @@ def _watchlist_entries() -> list[tuple[str, object]]:
         return ict_scanner.load_watchlist(str(root / "config" / "watchlist.txt"))
     except Exception as exc:
         log.warning("Could not load watchlist for sync endpoint: %s", exc)
+        return []
+
+
+def _watchlist_details() -> list[dict[str, str]]:
+    """Best-effort category-aware watchlist load for API payloads."""
+    try:
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        src_path = str(root / "src")
+        if src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        import ict_scanner  # type: ignore
+
+        categories = ict_scanner.load_watchlist_categories(str(root / "config" / "watchlist_categories.json"))
+        details: list[dict[str, str]] = []
+        for symbol, session in _watchlist_entries():
+            category = ict_scanner.categorize_symbol(symbol)
+            category["scope"] = categories.get(str(symbol).upper(), category["scope"])
+            category["session"] = session.value if hasattr(session, "value") else str(session)
+            details.append(category)
+        return details
+    except Exception as exc:
+        log.warning("Could not load watchlist categories: %s", exc)
         return []
 
 
@@ -409,8 +445,9 @@ def read_watchlist() -> dict:
     upstream provider, so requesting it never triggers data fetching.
     """
     try:
-        symbols = sorted({str(symbol).strip().upper() for symbol, _ in _watchlist_entries()})
-        return {"symbols": symbols}
+        entries = _watchlist_details()
+        symbols = sorted({str(entry["symbol"]).strip().upper() for entry in entries})
+        return {"symbols": symbols, "entries": entries}
     except Exception as exc:  # unexpected – log full traceback
         log.exception("Unhandled market-data watchlist error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc

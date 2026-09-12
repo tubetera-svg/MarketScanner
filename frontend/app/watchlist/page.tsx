@@ -51,6 +51,7 @@ type MetaPayload = {
 };
 
 type WatchlistPayload = { symbols: string[] };
+type ApiWatchlistItem = { symbol: string; scope?: string };
 
 const SCOPE = "watchlist";
 const pageSizeOptions = [25, 50, 100, 250];
@@ -86,6 +87,8 @@ export default function WatchlistPage() {
   const [editingSymbol, setEditingSymbol] = useState<string | null>(null);
   const [editSymbolText, setEditSymbolText] = useState("");
   const [editAliasesText, setEditAliasesText] = useState("");
+  const [editCategoryText, setEditCategoryText] = useState("");
+  const [categories, setCategories] = useState<Record<string, string>>({});
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -112,11 +115,15 @@ export default function WatchlistPage() {
 
   const refreshWatchlist = async () => {
     try {
-      const [watchData, aliasData] = await Promise.all([
+      const [watchData, aliasData, categoryData] = await Promise.all([
         fetch(`${API}/api/market-data/watchlist`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
         fetch(`${API}/api/market-data/aliases`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
+        fetch(`${API}/api/watchlist`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
       ]);
-      const symbols = (watchData?.symbols as string[] | undefined) ?? [];
+      const categoryItems = (categoryData?.symbols as ApiWatchlistItem[] | undefined) ?? [];
+      const symbols = Array.isArray(categoryItems) && categoryItems.length > 0
+        ? categoryItems.map((item) => item.symbol)
+        : ((watchData?.symbols as string[] | undefined) ?? []);
       if (Array.isArray(symbols)) {
         setAllSymbols(symbols);
         setSelectedSymbols((current) => {
@@ -128,6 +135,9 @@ export default function WatchlistPage() {
       }
       if (aliasData && typeof aliasData.aliases === "object") {
         setAliases(aliasData.aliases as Record<string, string[]>);
+      }
+      if (Array.isArray(categoryItems)) {
+        setCategories(Object.fromEntries(categoryItems.filter((item) => item.scope).map((item) => [item.symbol, item.scope as string])));
       }
     } catch {
       // best-effort config reads
@@ -308,12 +318,14 @@ export default function WatchlistPage() {
     setEditingSymbol(symbol);
     setEditSymbolText(symbol);
     setEditAliasesText((aliases[symbol] ?? []).join(", "));
+    setEditCategoryText(categories[symbol] ?? "");
   };
 
   const cancelEdit = () => {
     setEditingSymbol(null);
     setEditSymbolText("");
     setEditAliasesText("");
+    setEditCategoryText("");
   };
 
   const saveEdit = async () => {
@@ -323,16 +335,17 @@ export default function WatchlistPage() {
       .split(",")
       .map((value) => value.trim().toUpperCase())
       .filter((value) => value.length > 0);
+    const category = editCategoryText.trim();
     if (!newSymbol || !newSymbol.includes(":")) {
       setMessage("Symbol must be exchange-qualified, e.g. NSE:INFY");
       return;
     }
     try {
-      if (newSymbol !== editingSymbol) {
+      {
         const renameResponse = await fetch(`${API}/api/watchlist`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol }),
+          body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol, category: category || null }),
         });
         const renameData = await renameResponse.json();
         if (!renameResponse.ok) throw new Error(typeof renameData.detail === "string" ? renameData.detail : "Rename failed");
@@ -354,7 +367,7 @@ export default function WatchlistPage() {
       if (!aliasResponse.ok) throw new Error(typeof aliasData.detail === "string" ? aliasData.detail : "Alias save failed");
       cancelEdit();
       await refreshWatchlist();
-      setMessage(`Saved ${newSymbol}${aliasList.length ? ` with ${aliasList.length} alias(es)` : " (aliases cleared)"}`);
+      setMessage(`Saved ${newSymbol} · ${category || "automatic category"}${aliasList.length ? ` · ${aliasList.length} alias(es)` : " · aliases cleared"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Save failed");
     }
@@ -375,6 +388,7 @@ export default function WatchlistPage() {
   const filteredManageSymbols = allSymbols.filter((symbol) => {
     if (!manageNeedle) return true;
     if (symbol.toUpperCase().includes(manageNeedle)) return true;
+    if ((categories[symbol] ?? "").toUpperCase().includes(manageNeedle)) return true;
     return (aliases[symbol] ?? []).some((alias) => alias.toUpperCase().includes(manageNeedle));
   });
 
@@ -435,13 +449,14 @@ export default function WatchlistPage() {
                 {editingSymbol === symbol ? (
                   <div className="watchlist-edit">
                     <input aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
+                    <input aria-label={`Category for ${symbol}`} value={editCategoryText} onChange={(event) => setEditCategoryText(event.target.value)} placeholder="Category, e.g. Equity" />
                     <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
                     <button className="test-button" type="button" onClick={saveEdit}>Save</button>
                     <button className="test-button" type="button" onClick={cancelEdit}>Cancel</button>
                   </div>
                 ) : (
                   <div className="watchlist-view">
-                    <span className="wl-symbol"><strong>{symbol}</strong>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
+                    <span className="wl-symbol"><strong>{symbol}</strong><small>category: {categories[symbol] ?? "automatic"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
                     <span className="wl-actions">
                       <button className="test-button" type="button" onClick={() => beginEdit(symbol)}>Edit</button>
                       <button className="test-button danger" type="button" onClick={() => deleteSymbol(symbol)}>Delete</button>

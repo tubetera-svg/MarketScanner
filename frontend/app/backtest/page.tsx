@@ -24,7 +24,7 @@ const C_MUTED = "#71808b";
 const C_TEAL = "#287b79";
 
 type StrategyFlag = { name: string; label: string; group: string; enabled: boolean; runnable: boolean };
-type WatchSymbol = { symbol: string; session: string };
+type WatchSymbol = { symbol: string; session: string; scope?: string };
 
 type Metrics = {
   sharpe: number | null;
@@ -268,7 +268,7 @@ export default function BacktestPage() {
               {visibleSymbols.map((sym) => (
                 <label key={sym} className="check-row">
                   <input type="checkbox" checked={selectedSymbols.includes(sym)} onChange={() => toggleSymbol(sym)} />
-                  <span>{sym}</span>
+                  <span>{sym}{watchlist.find((item) => item.symbol === sym)?.scope ? <small> · {watchlist.find((item) => item.symbol === sym)?.scope}</small> : null}</span>
                 </label>
               ))}
               {visibleSymbols.length === 0 && <div className="small-empty">No symbols match.</div>}

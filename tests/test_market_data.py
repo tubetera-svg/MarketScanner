@@ -18,6 +18,7 @@ from market_data.service import (
     register_fetcher,
     reset_fetchers,
     resolve_session_source,
+    sync_symbol_range,
 )
 
 
@@ -268,6 +269,27 @@ def test_resolve_session_source():
     assert resolve_session_source("RELIANCE") == "NSE"
     assert resolve_session_source("OANDA:XAUUSD") == "TRADINGVIEW"
     assert resolve_session_source("FOREXCOM:USOIL") == "TRADINGVIEW"
+
+
+def test_sync_symbol_range_accepts_explicit_date_range(tmp_db):
+    end = date.today()
+    start = end - timedelta(days=4)
+    requested = []
+
+    def fake_nse(spec):
+        requested.append(spec)
+        return [row("NSE", "RELIANCE", "NSE", day) for day in spec["dates"]]
+
+    register_fetcher("NSE", fake_nse)
+    result = sync_symbol_range(
+        "NSE", "RELIANCE", end, start_date=start, db_path=tmp_db
+    )
+
+    assert result.start_date == start.isoformat()
+    assert result.end_date == end.isoformat()
+    assert requested[0]["start"] == min(requested[0]["dates"])
+    assert requested[0]["end"] == max(requested[0]["dates"])
+    assert requested[0]["dates"]
 
 
 # ------------------------------------------------------------------ endpoint

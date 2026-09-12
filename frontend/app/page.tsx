@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, Info, Plus, RefreshCw, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
-type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex";
+type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
 type Setup = {
   symbol: string;
   session: string;
@@ -85,6 +85,12 @@ type TrackerAlert = {
 type StrategyGroup = { strategy: string; label: string; total: number; bull_count: number; bear_count: number; bullish: StrategyRow[]; bearish: StrategyRow[] };
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
 
+const localDate = (offsetDays = 0) => {
+  const value = new Date();
+  value.setUTCDate(value.getUTCDate() + offsetDays);
+  return value.toISOString().slice(0, 10);
+};
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const niftyIndexes = ["NSE:NIFTY", "NSE:BANKNIFTY", "NSE:FINNIFTY", "NSE:MIDCPNIFTY", "NSE:NIFTYNXT50", "NSE:INDIAVIX"];
 const nifty50 = ["ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ_AUTO", "BAJFINANCE", "BAJAJFINSV", "BEL", "BHARTIARTL", "BPCL", "BRITANNIA", "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL", "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDUNILVR", "ICICIBANK", "INDUSINDBK", "INFY", "ITC", "JIOFIN", "JSWSTEEL", "KOTAKBANK", "LT", "M&M", "MARUTI", "MAXHEALTH", "NESTLEIND", "NTPC", "ONGC", "POWERGRID", "RELIANCE", "SBILIFE", "SBIN", "SHRIRAMFIN", "SUNPHARMA", "TATACONSUM", "TATAMOTORS", "TATASTEEL", "TCS", "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO"];
@@ -141,17 +147,14 @@ const tradingViewWidgetUrl = (link: string | null | undefined, symbol: string, t
   });
   return `https://www.tradingview.com/widgetembed/?${params.toString()}`;
 };
-const matchesScope_check = (item: { symbol: string; session: string }, scope: WatchScope) => {
+const matchesScope_check = (item: { symbol: string; session: string; scope?: string }, scope: WatchScope) => {
   const symbol = item.symbol.toUpperCase();
   const base = baseSymbol(symbol);
   if (scope === "All") return true;
-  if (scope === "Forex") return item.session === "forex_24_5" && !isCommodity(symbol);
-  if (scope === "Commodities") return item.session === "forex_24_5" && isCommodity(symbol);
-  if (scope === "Crypto") return symbol.startsWith("CRYPTO:");
-  if (scope === "F&O") return symbol.startsWith("NSE:");
+  if (scope === "Forex" || scope === "Commodities" || scope === "Crypto" || scope === "F&O" || item.scope === scope) return item.scope === scope;
   if (scope === "Nifty indexes") return niftyIndexes.includes(symbol);
   if (scope === "Nifty 50") return symbol.startsWith("NSE:") && nifty50.includes(base);
-  return symbol.startsWith("NSE:") && sectorSymbols[scope].includes(base);
+  return symbol.startsWith("NSE:") && (sectorSymbols[scope as keyof typeof sectorSymbols] ?? []).includes(base);
 };
 
 type Sentiment = "bull" | "bear" | "neutral";
@@ -317,10 +320,13 @@ export default function Home() {
   const [newSymbol, setNewSymbol] = useState("");
   const [watchlistMessage, setWatchlistMessage] = useState("");
   const [showAddSymbol, setShowAddSymbol] = useState(false);
-  const [anchorDate, setAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [syncStartDate, setSyncStartDate] = useState(() => localDate(-13));
+  const [anchorDate, setAnchorDate] = useState(() => localDate());
   const [dateNote, setDateNote] = useState<DateNote | null>(null);
   const [syncSummary, setSyncSummary] = useState<{
     anchor_date: string;
+    start_date?: string | null;
+    end_date?: string | null;
     lookback_days: number;
     results: { symbol: string; source: string; notes?: string[]; fetched_new?: number; rows?: number }[];
     synced: number;
@@ -383,6 +389,8 @@ export default function Home() {
         body: JSON.stringify({
           symbols: selected,
           anchor_date: anchorDate,
+          start_date: syncStartDate || undefined,
+          end_date: anchorDate || undefined,
           gate_market_hours: true,
           use_aliases: true,
         }),
@@ -821,11 +829,11 @@ export default function Home() {
         {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` · last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` · ${selected.length} selected symbols` : " · full watchlist"}</small>}
       </section>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", flex: "1 1 320px", minWidth: 0 }}>
-        <section className="date-test"><label htmlFor="anchor-date">Sync anchor date</label><input id="anchor-date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
+        <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
         {dateNote && <p className="date-note">Testing date: {dateNote.requested}{dateNote.reason ? ` was unavailable (${dateNote.reason}); using ${dateNote.resolved}.` : ` using ${dateNote.resolved}.`}</p>}
         {syncSummary && (
           <div className="history-results">
-            <p className="kicker">Sync summary · {syncSummary.anchor_date} · {syncSummary.lookback_days}d window</p>
+            <p className="kicker">Sync summary · {syncSummary.start_date ?? "lookback"} to {syncSummary.end_date ?? syncSummary.anchor_date}</p>
             <span>{syncSummary.synced} synced{syncSummary.failed > 0 ? ` · ${syncSummary.failed} failed` : ""}{syncSummary.gated ? " · some deferred (market open)" : ""}</span>
             {syncSummary.results.filter((row) => row.notes?.some((note: string) => note.startsWith("sync failed") || note.includes("alias"))).map((row) => (
               <span key={row.symbol} className="sync-note"><strong>{row.symbol}</strong> {row.notes?.join("; ")}</span>

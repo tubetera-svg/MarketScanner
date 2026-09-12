@@ -2,6 +2,9 @@
     "python-envs.defaultEnvManager": "ms-python.python:system",
     "chat.tools.terminal.autoApprove": {
         "npm.cmd": true,
-        "pytest": true
+        "pytest": true,
+        "Push-Location": true,
+        "npm run build": true,
+        "Pop-Location": true
     }
 }

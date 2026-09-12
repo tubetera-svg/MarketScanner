@@ -328,6 +328,7 @@ def sync_symbol_range(
     end_date: date | str,
     lookback_days: int = 14,
     *,
+    start_date: date | str | None = None,
     gate_market_hours: bool = False,
     aliases: Optional[list[str]] = None,
     db_path=None,
@@ -346,7 +347,13 @@ def sync_symbol_range(
       when the primary fetch returns nothing.
     """
     end = date.fromisoformat(str(end_date).strip()) if isinstance(end_date, str) else end_date
-    start = end - timedelta(days=max(1, lookback_days) - 1)
+    start = (
+        date.fromisoformat(str(start_date).strip())
+        if isinstance(start_date, str)
+        else start_date
+    ) or end - timedelta(days=max(1, lookback_days) - 1)
+    if start > end:
+        raise ValueError("start_date must be on or before end_date")
     gated = False
     if gate_market_hours:
         session = session_for_source(source)
