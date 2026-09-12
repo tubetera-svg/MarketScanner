@@ -51,7 +51,33 @@ type MetaPayload = {
 };
 
 type WatchlistPayload = { symbols: string[] };
-type ApiWatchlistItem = { symbol: string; scope?: string };
+type WatchlistClassification = {
+  asset_class?: string;
+  exchange?: string;
+  scope?: string;
+  f_and_o?: string;
+  sector?: string;
+  industry?: string;
+  index?: string;
+  market_cap?: string;
+  liquidity?: string;
+  price_range?: string;
+  theme?: string;
+};
+type ApiWatchlistItem = WatchlistClassification & { symbol: string };
+const classificationFields: { key: keyof WatchlistClassification; label: string; placeholder: string }[] = [
+  { key: "asset_class", label: "Asset class", placeholder: "equity, crypto, commodity" },
+  { key: "exchange", label: "Exchange", placeholder: "NSE, BSE, CRYPTO, OANDA" },
+  { key: "scope", label: "Scope", placeholder: "F&O, Crypto, Commodities" },
+  { key: "f_and_o", label: "F&O", placeholder: "F&O or Non-F&O" },
+  { key: "sector", label: "Sector", placeholder: "Banking, IT, Pharma" },
+  { key: "industry", label: "Industry", placeholder: "Private Banks, IT Services" },
+  { key: "index", label: "Index", placeholder: "NIFTY 50, NIFTY 500" },
+  { key: "market_cap", label: "Market cap", placeholder: "Large, Mid, Small" },
+  { key: "liquidity", label: "Liquidity", placeholder: "High, Medium, Low" },
+  { key: "price_range", label: "Price range", placeholder: "Penny, Low, Mid, High" },
+  { key: "theme", label: "Theme", placeholder: "Defence, EV, Renewable" },
+];
 
 const SCOPE = "watchlist";
 const pageSizeOptions = [25, 50, 100, 250];
@@ -87,8 +113,8 @@ export default function WatchlistPage() {
   const [editingSymbol, setEditingSymbol] = useState<string | null>(null);
   const [editSymbolText, setEditSymbolText] = useState("");
   const [editAliasesText, setEditAliasesText] = useState("");
-  const [editCategoryText, setEditCategoryText] = useState("");
-  const [categories, setCategories] = useState<Record<string, string>>({});
+  const [editClassification, setEditClassification] = useState<WatchlistClassification>({});
+  const [classifications, setClassifications] = useState<Record<string, WatchlistClassification>>({});
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -137,7 +163,7 @@ export default function WatchlistPage() {
         setAliases(aliasData.aliases as Record<string, string[]>);
       }
       if (Array.isArray(categoryItems)) {
-        setCategories(Object.fromEntries(categoryItems.filter((item) => item.scope).map((item) => [item.symbol, item.scope as string])));
+        setClassifications(Object.fromEntries(categoryItems.map((item) => [item.symbol, item])));
       }
     } catch {
       // best-effort config reads
@@ -318,14 +344,14 @@ export default function WatchlistPage() {
     setEditingSymbol(symbol);
     setEditSymbolText(symbol);
     setEditAliasesText((aliases[symbol] ?? []).join(", "));
-    setEditCategoryText(categories[symbol] ?? "");
+    setEditClassification({ ...(classifications[symbol] ?? {}) });
   };
 
   const cancelEdit = () => {
     setEditingSymbol(null);
     setEditSymbolText("");
     setEditAliasesText("");
-    setEditCategoryText("");
+    setEditClassification({});
   };
 
   const saveEdit = async () => {
@@ -335,7 +361,12 @@ export default function WatchlistPage() {
       .split(",")
       .map((value) => value.trim().toUpperCase())
       .filter((value) => value.length > 0);
-    const category = editCategoryText.trim();
+    const classification = Object.fromEntries(
+      Object.entries(editClassification)
+        .map(([key, value]) => [key, value?.trim() ?? ""])
+        .filter(([, value]) => value),
+    );
+    const category = classification.scope ?? "";
     if (!newSymbol || !newSymbol.includes(":")) {
       setMessage("Symbol must be exchange-qualified, e.g. NSE:INFY");
       return;
@@ -345,7 +376,7 @@ export default function WatchlistPage() {
         const renameResponse = await fetch(`${API}/api/watchlist`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol, category: category || null }),
+          body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol, category: category || null, classification }),
         });
         const renameData = await renameResponse.json();
         if (!renameResponse.ok) throw new Error(typeof renameData.detail === "string" ? renameData.detail : "Rename failed");
@@ -388,7 +419,7 @@ export default function WatchlistPage() {
   const filteredManageSymbols = allSymbols.filter((symbol) => {
     if (!manageNeedle) return true;
     if (symbol.toUpperCase().includes(manageNeedle)) return true;
-    if ((categories[symbol] ?? "").toUpperCase().includes(manageNeedle)) return true;
+    if (Object.values(classifications[symbol] ?? {}).some((value) => value?.toUpperCase().includes(manageNeedle))) return true;
     return (aliases[symbol] ?? []).some((alias) => alias.toUpperCase().includes(manageNeedle));
   });
 
@@ -449,14 +480,22 @@ export default function WatchlistPage() {
                 {editingSymbol === symbol ? (
                   <div className="watchlist-edit">
                     <input aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
-                    <input aria-label={`Category for ${symbol}`} value={editCategoryText} onChange={(event) => setEditCategoryText(event.target.value)} placeholder="Category, e.g. Equity" />
+                    {classificationFields.map(({ key, label, placeholder }) => (
+                      <input
+                        key={key}
+                        aria-label={`${label} for ${symbol}`}
+                        value={editClassification[key] ?? ""}
+                        onChange={(event) => setEditClassification((current) => ({ ...current, [key]: event.target.value }))}
+                        placeholder={placeholder}
+                      />
+                    ))}
                     <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
                     <button className="test-button" type="button" onClick={saveEdit}>Save</button>
                     <button className="test-button" type="button" onClick={cancelEdit}>Cancel</button>
                   </div>
                 ) : (
                   <div className="watchlist-view">
-                    <span className="wl-symbol"><strong>{symbol}</strong><small>category: {categories[symbol] ?? "automatic"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
+                    <span className="wl-symbol"><strong>{symbol}</strong><small>{classificationFields.map(({ key, label }) => classifications[symbol]?.[key] ? `${label}: ${classifications[symbol]?.[key]}` : null).filter(Boolean).join(" · ") || "automatic classification"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
                     <span className="wl-actions">
                       <button className="test-button" type="button" onClick={() => beginEdit(symbol)}>Edit</button>
                       <button className="test-button danger" type="button" onClick={() => deleteSymbol(symbol)}>Delete</button>

@@ -5,6 +5,7 @@
         "pytest": true,
         "Push-Location": true,
         "npm run build": true,
-        "Pop-Location": true
+        "Pop-Location": true,
+        "py": true
     }
 }

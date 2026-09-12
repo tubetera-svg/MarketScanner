@@ -242,7 +242,7 @@ def _watchlist_details() -> list[dict[str, str]]:
         details: list[dict[str, str]] = []
         for symbol, session in _watchlist_entries():
             category = ict_scanner.categorize_symbol(symbol)
-            category["scope"] = categories.get(str(symbol).upper(), category["scope"])
+            category.update(categories.get(str(symbol).upper(), {}))
             category["session"] = session.value if hasattr(session, "value") else str(session)
             details.append(category)
         return details

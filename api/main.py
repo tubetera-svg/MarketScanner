@@ -68,6 +68,7 @@ class ScheduleStartRequest(BaseModel):
 class WatchlistAddRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=80)
     category: str | None = Field(default=None, max_length=80)
+    classification: dict[str, str] | None = None
 
 
 class WatchlistRemoveRequest(BaseModel):
@@ -78,12 +79,13 @@ class WatchlistRenameRequest(BaseModel):
     old_symbol: str = Field(min_length=1, max_length=80)
     new_symbol: str = Field(min_length=1, max_length=80)
     category: str | None = Field(default=None, max_length=80)
+    classification: dict[str, str] | None = None
 
 
 WATCHLIST_CATEGORIES_PATH = ROOT / "config" / "watchlist_categories.json"
 
 
-def save_watchlist_categories(categories: dict[str, str]) -> None:
+def save_watchlist_categories(categories: dict[str, dict[str, str]]) -> None:
     WATCHLIST_CATEGORIES_PATH.write_text(
         json.dumps(dict(sorted(categories.items())), indent=2) + "\n",
         encoding="utf-8",
@@ -108,7 +110,7 @@ class ScannerService:
     def watchlist(self) -> list[dict[str, str]]:
         return self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))
 
-    def add_to_watchlist(self, value: str, category_label: str | None = None) -> list[dict[str, str]]:
+    def add_to_watchlist(self, value: str, category_label: str | None = None, classification: dict[str, str] | None = None) -> list[dict[str, str]]:
         try:
             category_info = self.module.categorize_symbol(value)
         except ValueError as exc:
@@ -122,10 +124,26 @@ class ScannerService:
 
         with path.open("a", encoding="utf-8") as file:
             file.write(f"{symbol}\n")
+        categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+        defaults = {
+            "asset_class": category_info["asset_class"],
+            "exchange": category_info["exchange"],
+            "scope": category_info["scope"],
+            "f_and_o": "",
+            "sector": "",
+            "industry": "",
+            "index": "",
+            "market_cap": "",
+            "liquidity": "",
+            "price_range": "",
+            "theme": "",
+        }
         if category_label and category_label.strip():
-            categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
-            categories[symbol] = category_label.strip()
-            save_watchlist_categories(categories)
+            defaults["scope"] = category_label.strip()
+        if classification:
+            defaults.update({key.strip(): value.strip() for key, value in classification.items() if key.strip() and value.strip()})
+        categories[symbol] = defaults
+        save_watchlist_categories(categories)
         return self.watchlist()
 
     def remove_from_watchlist(self, value: str) -> list[dict[str, str]]:
@@ -154,7 +172,7 @@ class ScannerService:
             pass
         return self.watchlist()
 
-    def rename_in_watchlist(self, old_value: str, new_value: str, category: str | None = None) -> list[dict[str, str]]:
+    def rename_in_watchlist(self, old_value: str, new_value: str, category: str | None = None, classification: dict[str, str] | None = None) -> list[dict[str, str]]:
         old_symbol = old_value.strip().upper()
         try:
             new_category = self.module.categorize_symbol(new_value)
@@ -171,11 +189,13 @@ class ScannerService:
             for existing_symbol, _ in entries:
                 file.write(f"{(new_symbol if existing_symbol.upper() == old_symbol else existing_symbol)}\n")
         categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
-        old_category = categories.pop(old_symbol, None)
+        old_category = categories.pop(old_symbol, {})
+        new_category = dict(old_category)
         if category and category.strip():
-            categories[new_symbol] = category.strip()
-        elif old_category and new_symbol != old_symbol:
-            categories[new_symbol] = old_category
+            new_category["scope"] = category.strip()
+        if classification:
+            new_category.update({key.strip(): value.strip() for key, value in classification.items() if key.strip() and value.strip()})
+        categories[new_symbol] = new_category
         save_watchlist_categories(categories)
         # Carry the alias mapping over to the new symbol name.
         try:
@@ -426,7 +446,7 @@ def get_watchlist() -> dict[str, Any]:
 @app.post("/api/watchlist")
 def add_watchlist_item(request: WatchlistAddRequest) -> dict[str, Any]:
     try:
-        return {"symbols": service.add_to_watchlist(request.symbol, request.category)}
+        return {"symbols": service.add_to_watchlist(request.symbol, request.category, request.classification)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -442,7 +462,7 @@ def remove_watchlist_item(request: WatchlistRemoveRequest) -> dict[str, Any]:
 @app.put("/api/watchlist")
 def rename_watchlist_item(request: WatchlistRenameRequest) -> dict[str, Any]:
     try:
-        return {"symbols": service.rename_in_watchlist(request.old_symbol, request.new_symbol, request.category)}
+        return {"symbols": service.rename_in_watchlist(request.old_symbol, request.new_symbol, request.category, request.classification)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

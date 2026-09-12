@@ -229,8 +229,8 @@ def categorize_symbol(raw: str) -> dict:
     }
 
 
-def load_watchlist_categories(filename: str = "../config/watchlist_categories.json") -> dict[str, str]:
-    """Load persisted watchlist scope overrides keyed by canonical symbol."""
+def load_watchlist_categories(filename: str = "../config/watchlist_categories.json") -> dict[str, dict[str, str]]:
+    """Load persisted watchlist classifications, including legacy scope strings."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.normpath(os.path.join(script_dir, filename))
     try:
@@ -240,20 +240,29 @@ def load_watchlist_categories(filename: str = "../config/watchlist_categories.js
         return {}
     if not isinstance(data, dict):
         return {}
-    return {
-        str(symbol).strip().upper(): str(scope).strip()
-        for symbol, scope in data.items()
-        if str(symbol).strip() and str(scope).strip()
-    }
+    result: dict[str, dict[str, str]] = {}
+    for symbol, value in data.items():
+        key = str(symbol).strip().upper()
+        if not key:
+            continue
+        if isinstance(value, dict):
+            result[key] = {
+                str(field).strip(): str(field_value).strip()
+                for field, field_value in value.items()
+                if str(field).strip() and str(field_value).strip()
+            }
+        elif str(value).strip():
+            result[key] = {"scope": str(value).strip()}
+    return result
 
 
 def load_watchlist_details(filename: str = "watchlist.txt") -> list[dict[str, str]]:
-    """Return watchlist entries with one synchronized category/scope field."""
+    """Return watchlist entries with detected values and saved classifications."""
     categories = load_watchlist_categories()
     details: list[dict[str, str]] = []
     for symbol, session in load_watchlist(filename):
         category = categorize_symbol(symbol)
-        category["scope"] = categories.get(symbol.upper(), category["scope"])
+        category.update(categories.get(symbol.upper(), {}))
         category["session"] = session.value
         details.append(category)
     return details
