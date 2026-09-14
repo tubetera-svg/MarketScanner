@@ -419,6 +419,102 @@ class ScanScheduler:
                 self.scanning = False
 
 
+class IPOScanner:
+    """Periodically detect newly-listed NSE stocks from bhavcopy and register them.
+
+    Automation design
+    -----------------
+    - Runs on an interval (default hourly). Only acts once the NSE daily bar is
+      ready (after 17:00 IST on a trading day), because IPO detection needs the
+      final bhavcopy.
+    - Builds the *already listed* baseline from the most recent completed NSE
+      Universe so established stocks are never mistaken for new listings, then
+      scans a trailing ``lookback_days`` window from that baseline for symbols
+      that are brand new -> potential IPOs.
+    - New candidates are auto-registered (watchlist + category scope=IPO +
+      ipo_metadata). OHLC backfill is NOT run automatically to avoid bulk
+      downloads; callers can trigger ``/api/market-data/ipo/backfill`` explicitly
+      (per repo convention to ask before long-running work).
+    """
+
+    def __init__(self, lookback_days: int = 7) -> None:
+        self.task: asyncio.Task[None] | None = None
+        self.interval_minutes = 60
+        self.lookback_days = max(1, int(lookback_days))
+        self.last_ran_at: str | None = None
+        self.last_error: str | None = None
+        self.run_count = 0
+
+    def start(self) -> dict[str, Any]:
+        self.stop()
+        self.task = asyncio.create_task(self._loop())
+        return self.status()
+
+    def stop(self) -> dict[str, Any]:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+        self.task = None
+        return self.status()
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "running": self.task is not None and not self.task.done(),
+            "interval_minutes": self.interval_minutes,
+            "lookback_days": self.lookback_days,
+            "last_ran_at": self.last_ran_at,
+            "last_error": self.last_error,
+            "run_count": self.run_count,
+        }
+
+    async def _loop(self) -> None:
+        while True:
+            try:
+                await asyncio.to_thread(self.run_once)
+            except Exception as exc:  # pragma: no cover - defensive
+                self.last_error = f"{exc.__class__.__name__}: {exc}"
+            await asyncio.sleep(self.interval_minutes * 60)
+
+    def run_once(self) -> dict[str, Any]:
+        try:
+            bar_ready = self.service.module.is_daily_bar_ready(self.service.module.Session.NSE)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.last_error = f"market-ready check failed: {exc}"
+            return {"skipped": True, "reason": self.last_error}
+        if not bar_ready:
+            self.last_error = "NSE daily bar not ready yet; IPO scan deferred"
+            return {"skipped": True, "reason": self.last_error}
+
+        from market_data import ipo as ipo_service
+        from market_data.config import db_path
+
+        today = date.today()
+        end = today - timedelta(days=1)  # most recent completed trading day
+        baseline = ipo_service.known_symbols_from_bhavcopy(end)
+        if not baseline:
+            self.last_error = "No baseline bhavcopy universe available; IPO scan skipped"
+            return {"skipped": True, "reason": self.last_error}
+        start = end - timedelta(days=self.lookback_days)
+        candidates = ipo_service.discover_new_ipos(start, today, known_symbols=baseline, db_path=db_path())
+        registered = ipo_service.register_ipos(candidates, db_path=db_path()) if candidates else []
+        self.last_ran_at = datetime.now().astimezone().isoformat()
+        self.run_count += 1
+        self.last_error = None
+        return {
+            "baseline_date": end.isoformat(),
+            "window_start": start.isoformat(),
+            "window_end": today.isoformat(),
+            "candidates": candidates,
+            "registered": registered,
+        }
+
+    @property
+    def service(self) -> Any:
+        return service
+
+
+ipo_scanner = IPOScanner()
+
+
 service = ScannerService()
 scheduler = ScanScheduler(service)
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
@@ -645,6 +741,31 @@ async def start_schedule(request: ScheduleStartRequest) -> dict[str, Any]:
 @app.post("/api/schedule/stop")
 async def stop_schedule() -> dict[str, Any]:
     return scheduler.stop()
+
+
+class IPOScannerRequest(BaseModel):
+    lookback_days: int = Field(default=7, ge=1, le=90)
+
+
+@app.get("/api/ipo-scan")
+def get_ipo_scanner_status() -> dict[str, Any]:
+    return ipo_scanner.status()
+
+
+@app.post("/api/ipo-scan/start")
+async def start_ipo_scanner(request: IPOScannerRequest) -> dict[str, Any]:
+    ipo_scanner.lookback_days = max(1, int(request.lookback_days))
+    return ipo_scanner.start()
+
+
+@app.post("/api/ipo-scan/stop")
+async def stop_ipo_scanner() -> dict[str, Any]:
+    return ipo_scanner.stop()
+
+
+@app.post("/api/ipo-scan/run-once")
+async def run_ipo_scan_once() -> dict[str, Any]:
+    return await asyncio.to_thread(ipo_scanner.run_once)
 
 
 @app.get("/api/markets")

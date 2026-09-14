@@ -1,7 +1,8 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, Info, Plus, RefreshCw, SearchX, Timer } from "lucide-react";
+import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -112,50 +113,17 @@ const WEEKLY_PROFILE_DAYS: Record<string, string> = {
 
 const baseSymbol = (symbol: string) => symbol.split(":").pop() ?? symbol;
 const isCommodity = (symbol: string) => /(?:NATURALGAS|UKOIL|USOIL|XAUUSD|XAGUSD|COPPER|SILVER|GOLD)/i.test(symbol);
-const tradingViewWidgetUrl = (link: string | null | undefined, symbol: string, timeframe = "D", indicators: string[] = []) => {
-  let chartSymbol = symbol;
-  try {
-    const parsed = link ? new URL(link) : null;
-    chartSymbol = parsed?.searchParams.get("symbol") || symbol;
-  } catch {
-    // Fall back to the result symbol when a provider URL is malformed.
-  }
-  const params = new URLSearchParams({
-    symbol: chartSymbol,
-    interval: timeframe,
-    hidesidetoolbar: "0",
-    symboledit: "1",
-    saveimage: "1",
-    toolbarbg: "#f1f3f6",
-    studies: JSON.stringify(indicators),
-    overrides: JSON.stringify({
-      "mainSeriesProperties.candleStyle.upColor": "#16a34a",
-      "mainSeriesProperties.candleStyle.downColor": "#000000",
-      "mainSeriesProperties.candleStyle.borderUpColor": "#16a34a",
-      "mainSeriesProperties.candleStyle.borderDownColor": "#000000",
-      "mainSeriesProperties.candleStyle.wickUpColor": "#16a34a",
-      "mainSeriesProperties.candleStyle.wickDownColor": "#000000",
-    }),
-    theme: "light",
-    style: "1",
-    timezone: "Etc/UTC",
-    withdateranges: "1",
-    hideideas: "1",
-    hide_side_toolbar: "0",
-    hide_volume: "1",
-    locale: "en",
-  });
-  return `https://www.tradingview.com/widgetembed/?${params.toString()}`;
-};
 const matchesScope_check = (item: { symbol: string; session: string; scope?: string }, scope: WatchScope) => {
   const symbol = item.symbol.toUpperCase();
   const base = baseSymbol(symbol);
   if (scope === "All") return true;
-  if (scope === "Forex" || scope === "Commodities" || scope === "Crypto" || scope === "F&O" || item.scope === scope) return item.scope === scope;
+  if (scope === "Forex" || scope === "Commodities" || scope === "Crypto" || scope === "F&O" || scope === "IPO" || item.scope === scope) return item.scope === scope;
   if (scope === "Nifty indexes") return niftyIndexes.includes(symbol);
   if (scope === "Nifty 50") return symbol.startsWith("NSE:") && nifty50.includes(base);
   return symbol.startsWith("NSE:") && (sectorSymbols[scope as keyof typeof sectorSymbols] ?? []).includes(base);
 };
+const matchesScopes_check = (item: { symbol: string; session: string; scope?: string }, scopes: WatchScope[]) =>
+  scopes.length === 0 || scopes.includes("All") || scopes.some((scope) => matchesScope_check(item, scope));
 
 type Sentiment = "bull" | "bear" | "neutral";
 const sentimentOf = (direction: number | null): Sentiment =>
@@ -315,7 +283,7 @@ export default function Home() {
   const [scannedAt, setScannedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading watchlist...");
-  const [watchScope, setWatchScope] = useState<WatchScope>("Commodities");
+  const [watchScopes, setWatchScopes] = useState<WatchScope[]>(["Commodities"]);
   const [watchQuery, setWatchQuery] = useState("");
   const [newSymbol, setNewSymbol] = useState("");
   const [watchlistMessage, setWatchlistMessage] = useState("");
@@ -350,12 +318,12 @@ export default function Home() {
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
   const [inventoryNow, setInventoryNow] = useState(() => Date.now());
-  const [chart, setChart] = useState<{ symbol: string; sourceLink: string; timeframe: string; indicators: string[] } | null>(null);
+  const [chart, setChart] = useState<ChartTarget | null>(null);
 
   const openTradingViewChart = (event: React.MouseEvent<HTMLAnchorElement>, row: StrategyRow) => {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
     event.preventDefault();
-    setChart({ symbol: row.symbol, sourceLink: row.tradingview_link, timeframe: "D", indicators: [] });
+    setChart({ symbol: row.symbol, sourceLink: row.tradingview_link });
   };
 
   const loadTracker = async (symbols?: string[]) => {
@@ -618,8 +586,8 @@ export default function Home() {
     ]).then(([watchData, , scheduleData]) => {
       const symbols = watchData.symbols ?? [];
       setWatchlist(symbols);
-      const initialScope = "Commodities" as WatchScope;
-      const initialSymbols = symbols.filter((item: WatchSymbol) => matchesScope_check(item, initialScope)).map((item: WatchSymbol) => item.symbol);
+      const initialScopes: WatchScope[] = ["Commodities"];
+      const initialSymbols = symbols.filter((item: WatchSymbol) => matchesScopes_check(item, initialScopes)).map((item: WatchSymbol) => item.symbol);
       setSelected(initialSymbols);
       loadTracker(initialSymbols).catch(() => {});
       if (scheduleData) setSchedule(scheduleData);
@@ -727,7 +695,7 @@ export default function Home() {
     }
   };
 
-  const filteredWatchlist = watchlist.filter((item) => matchesScope_check(item, watchScope) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase()));
+  const filteredWatchlist = watchlist.filter((item) => matchesScopes_check(item, watchScopes) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase()));
   const allVisibleSelected = filteredWatchlist.length > 0 && filteredWatchlist.every((item) => selected.includes(item.symbol));
 
   const groupKeyOf = (setup: TrackedSetup): string => {
@@ -792,6 +760,7 @@ export default function Home() {
         </div>
         <div className="top-actions">
           <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
+          <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
           <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
 
           {markets && (
@@ -806,7 +775,7 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><select aria-label="Filter watchlist" value={watchScope} onChange={(event) => { const nextScope = event.target.value as WatchScope; setWatchScope(nextScope); setSelected(watchlist.filter((item) => matchesScope_check(item, nextScope)).map((item) => item.symbol)); }}><option>All</option><option>Nifty indexes</option><option>Nifty 50</option><option>Nifty Bank</option><option>Nifty IT</option><option>Nifty Auto</option><option>Nifty Pharma</option><option>F&amp;O</option><option>Crypto</option><option>Commodities</option><option>Forex</option></select><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><select multiple aria-label="Filter watchlist (ctrl/cmd-click to multi-select)" size={6} value={watchScopes as string[]} onChange={(event) => { const nextScopes = Array.from(event.target.selectedOptions).map((option) => option.value as WatchScope); setWatchScopes(nextScopes); setSelected(watchlist.filter((item) => matchesScopes_check(item, nextScopes)).map((item) => item.symbol)); }}><option>All</option><option>Nifty indexes</option><option>Nifty 50</option><option>Nifty Bank</option><option>Nifty IT</option><option>Nifty Auto</option><option>Nifty Pharma</option><option>IPO</option><option>F&amp;O</option><option>Crypto</option><option>Commodities</option><option>Forex</option></select><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }}>
         <section className="auto-scan">
@@ -1131,56 +1100,11 @@ export default function Home() {
         </div>
         </section>
         {chart && (
-          <div className="chart-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setChart(null)}>
-            <section className="chart-modal" role="dialog" aria-modal="true" aria-label={`${chart.symbol} TradingView chart`}>
-              <div className="chart-modal-header">
-                <strong>{chart.symbol}</strong>
-                <button type="button" className="chart-modal-close" aria-label="Close chart" title="Close chart" onClick={() => setChart(null)}>×</button>
-              </div>
-              <div className="chart-modal-controls">
-                <label>
-                  Timeframe
-                  <select value={chart.timeframe} onChange={(event) => setChart((current) => current && { ...current, timeframe: event.target.value })}>
-                    <option value="1">1m</option>
-                    <option value="5">5m</option>
-                    <option value="15">15m</option>
-                    <option value="60">1h</option>
-                    <option value="240">4h</option>
-                    <option value="D">1D</option>
-                    <option value="W">1W</option>
-                  </select>
-                </label>
-                <span className="chart-control-label">Indicators</span>
-                {[
-                  ["RSI@tv-basicstudies", "RSI"],
-                  ["MACD@tv-basicstudies", "MACD"],
-                  ["MAExp@tv-basicstudies", "EMA"],
-                  ["VWAP@tv-basicstudies", "VWAP"],
-                ].map(([value, label]) => (
-                  <label key={value} className="chart-indicator">
-                    <input
-                      type="checkbox"
-                      checked={chart.indicators.includes(value)}
-                      onChange={(event) => setChart((current) => current && {
-                        ...current,
-                        indicators: event.target.checked
-                          ? [...current.indicators, value]
-                          : current.indicators.filter((indicator) => indicator !== value),
-                      })}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-              <iframe
-                key={tradingViewWidgetUrl(chart.sourceLink, chart.symbol, chart.timeframe, chart.indicators)}
-                title={`${chart.symbol} live TradingView chart`}
-                src={tradingViewWidgetUrl(chart.sourceLink, chart.symbol, chart.timeframe, chart.indicators)}
-                className="chart-frame"
-                allowFullScreen
-              />
-            </section>
-          </div>
+          <TradingViewChartModal
+            key={chart.symbol}
+            chart={chart}
+            onClose={() => setChart(null)}
+          />
         )}
         </main>
       </div>

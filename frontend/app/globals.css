@@ -101,6 +101,8 @@ button, input { font: inherit; }
 .watch-filter { display: grid; gap: 6px; margin: 10px 0 8px; }
 .watch-filter select, .watch-filter input, .watch-filter button { background: #f9faf8; border: 1px solid var(--line); color: var(--ink); font-size: 11px; min-height: 28px; padding: 5px 8px; border-radius: 4px; }
 .watch-filter button { cursor: pointer; text-align: left; }
+.watch-filter select[multiple] { min-height: 0; height: auto; padding: 2px 0; }
+.watch-filter select[multiple] option { padding: 2px 8px; }
 .watch-filter button:hover { border-color: var(--teal); }
 
 /* Check list */
@@ -248,6 +250,8 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .chart-indicator input { margin: 0; accent-color: var(--teal); }
 .chart-modal-close { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; }
 .chart-modal-close:hover { background: var(--soft); color: var(--ink); }
+.chart-unlisted-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 14px; font-size: 12px; color: var(--muted); background: #fff8e6; border-bottom: 1px solid var(--line); }
+.chart-unlisted-hint a { color: var(--teal); }
 .chart-frame { flex: 1; width: 100%; border: 0; background: #f1f3f6; }
 @media (max-width: 640px) { .chart-modal-backdrop { padding: 10px; } .chart-modal { height: 88vh; } }
 .strategy-result { background: #fdfdfc; border: 1px solid var(--line); border-radius: 6px; padding: var(--gap-md); }
@@ -367,4 +371,115 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .inventory-row.soon { background: #fdeee8; border-color: var(--coral); border-left-color: var(--coral); animation: inventory-pulse 1.8s ease-in-out infinite; }
 .inventory-row.soon .ist { color: var(--coral); font-weight: 500; }
 @keyframes inventory-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(214,90,58,0.0); } 50% { box-shadow: 0 0 0 3px rgba(214,90,58,0.18); } }
+
+/* IPO page filter bar */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  min-width: 140px;
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.filter-num {
+  min-width: 80px;
+  width: 80px;
+}
+
+.filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+th.sortable:hover {
+  opacity: 0.8;
+}
+
+
+/* shared TradingView chart modal */
+.chart-frame-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 420px;
+  padding: 1.5rem;
+  text-align: center;
+  color: #475569;
+}
+
+.chart-symbol-note {
+  font-size: 0.85rem;
+}
+
+/* IPO table chart link */
+.chart-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: inherit;
+  opacity: 0.75;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.chart-link:hover {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* text (symbol-name) variant used in tables */
+a.chart-link.symbol-link {
+  display: inline;
+  width: auto;
+  height: auto;
+  border: none;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+a.chart-link.symbol-link:hover {
+  border: none;
+  text-decoration-style: solid;
+}
+
+/* checkbox filter (IPO page) */
+.filter-label.filter-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.filter-label.filter-check input[type="checkbox"] {
+  width: auto;
+  accent-color: currentColor;
+}
 

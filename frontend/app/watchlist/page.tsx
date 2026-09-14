@@ -6,7 +6,7 @@
 // trigger NSE/TradingView requests.
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Database, RefreshCw, SearchX } from "lucide-react";
+import { ArrowLeft, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const number = (value: number | null) => value == null ? "-" : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -453,6 +453,7 @@ export default function WatchlistPage() {
             {deleting ? "Deleting…" : "Delete data"}
           </button>
           <div className="status"><span className="pulse" />{message}</div>
+          <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
           <a className="top-link" href="/"><ArrowLeft size={12} /> Scanner</a>
         </div>
       </header>

@@ -37,6 +37,10 @@ strategy_outputs/
 *.sqlite
 *.sqlite3
 
+# IPO backfill cache + run logs (large, regenerable)
+data/bhavcopy_cache/
+data/*.log
+
 # OS / editor
 .DS_Store
 Thumbs.db

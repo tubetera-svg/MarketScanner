@@ -486,3 +486,124 @@ def set_alias(request: AliasRequest) -> dict:
     except Exception as exc:  # unexpected – log full traceback
         log.exception("Unhandled market-data alias write error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class IPODiscoverRequest(BaseModel):
+    start_date: date
+    end_date: date
+    do_register: bool = Field(default=False, alias="register", description="Also register discovered IPOs in watchlist/categories.")
+    backfill: bool = Field(default=True, description="Backfill OHLC after registration.")
+
+    model_config = {"populate_by_name": True}
+
+
+class IPOBackfillRequest(BaseModel):
+    days: int = Field(default=1098, ge=1, le=10000)
+
+
+@router.get("/api/market-data/ipo/performance")
+def read_ipo_performance(reference_date: Optional[date] = Query(default=None)) -> dict:
+    """IPO performance: listing price vs current, plus high/low since listing.
+
+    Read-only over SQLite; does NOT trigger upstream fetches.
+    """
+    try:
+        from . import ipo as ipo_service
+
+        items = ipo_service.ipo_performance(reference_date=reference_date)
+        return {"items": items, "count": len(items)}
+    except Exception as exc:  # unexpected – log full traceback
+        log.exception("Unhandled IPO performance error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/api/market-data/ipo")
+def read_ipo_metadata() -> dict:
+    """List all tracked IPOs (from the ipo_metadata table). Read-only."""
+    try:
+        rows = database.query_ipo_metadata(source="NSE")
+        return {"items": rows, "count": len(rows)}
+    except Exception as exc:  # unexpected – log full traceback
+        log.exception("Unhandled IPO metadata error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/api/market-data/ipo/discover")
+def discover_ipos(request: IPODiscoverRequest) -> dict:
+    """Scan bhavcopy for newly-listed NSE stocks in a window.
+
+    If ``register`` is true the discovered IPOs are added to the watchlist,
+    category file (scope=IPO) and ipo_metadata table, optionally followed by an
+    OHLC backfill. When discovery needs a realistic baseline, callers may pass
+    known symbols via the query (see ipo.known_symbols_from_bhavcopy).
+    """
+    try:
+        from . import ipo as ipo_service
+
+        if request.do_register:
+            result = ipo_service.sync_new_ipos(
+                request.start_date, request.end_date,
+                known_symbols=None, backfill=request.backfill,
+            )
+            return result
+        # Read-only discovery (no registration/backfill).
+        candidates = ipo_service.discover_new_ipos(
+            request.start_date, request.end_date, known_symbols=None
+        )
+        return {"window": {"start_date": request.start_date.isoformat(),
+                           "end_date": request.end_date.isoformat()},
+                "discovered": candidates}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # unexpected – log full traceback
+        log.exception("Unhandled IPO discovery error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/api/market-data/tv-symbol")
+def read_tv_symbol(
+    symbol: Optional[str] = Query(default=None, description="Single app symbol, e.g. NSE:ACHYUT."),
+    symbols: Optional[str] = Query(default=None, description="Comma-separated app symbols."),
+    refresh: bool = Query(default=False, description="Ignore the cache and re-resolve."),
+    limit: int = Query(default=50, ge=1, le=200, description="Max live lookups per call."),
+) -> dict:
+    """Resolve app symbols to TradingView symbols (NSE preferred, BSE fallback).
+
+    Cache-first: only uncached symbols hit TradingView, so repeated page views
+    make no upstream calls. Returns a mapping keyed by app symbol.
+    """
+    requested: list[str] = []
+    if symbols:
+        requested.extend(part.strip() for part in symbols.split(",") if part.strip())
+    if symbol:
+        requested.append(symbol.strip())
+    requested = list(dict.fromkeys(requested))
+    if not requested:
+        raise HTTPException(status_code=400, detail="Provide symbol or symbols")
+
+    try:
+        from . import tv_symbol as tv_service
+
+        resolved = tv_service.resolve_tv_symbols(
+            requested, refresh=refresh, limit=limit
+        )
+        return {"items": resolved, "count": len(resolved)}
+    except Exception as exc:  # unexpected – log full traceback
+        log.exception("Unhandled TradingView symbol resolution error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/api/market-data/ipo/backfill")
+def backfill_ipos(request: IPOBackfillRequest) -> dict:
+    """Backfill OHLC history for all tracked IPOs from listing date to today.
+
+    Explicit trigger: invokes NSE bhavcopy fetching for any missing bars, so it
+    can take a while on first run.
+    """
+    try:
+        from . import ipo as ipo_service
+
+        return ipo_service.run_ipo_backfill(days=request.days)
+    except Exception as exc:  # unexpected – log full traceback
+        log.exception("Unhandled IPO backfill error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

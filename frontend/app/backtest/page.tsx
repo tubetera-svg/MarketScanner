@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, ArrowDownRight, ArrowUpRight, Database, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, Database, Rocket, TrendingDown, TrendingUp } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -167,6 +167,7 @@ export default function BacktestPage() {
         <div className="top-actions">
           <a className="top-link" href="/"><Activity size={12} /> Scanner</a>
           <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
+          <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
         </div>
       </header>
 

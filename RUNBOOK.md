@@ -53,6 +53,74 @@ Lightweight local cache for daily OHLC bars in `data/market_data.db` (SQLite onl
   python -m pytest tests/test_market_data.py -v
   ```
 
+## IPO tracking
+
+New-IPO discovery, backfill, and listing-price performance tracking for NSE
+IPOs (last 3 years).
+
+- `market_data/ipo.py` â IPO discovery from NSE bhavcopy history (a symbol is
+  an IPO if its first bhavcopy appearance is within the lookback window;
+  listing price = first trading day's open), watchlist integration
+  (adds `IPO` category entries to `config/watchlist.txt` /
+  `config/watchlist_categories.json`), and DB backfill via the existing
+  NSE bhavcopy pipeline.
+- `market_data/database.py` â `ipo_metadata` table (symbol, exchange,
+  listing_date, listing_price, first/high/low since listing).
+- Endpoints (all under `/api/market-data`):
+  - `GET  /ipo` â tracked IPOs with metadata
+  - `GET  /ipo/performance` â listing price vs current, high/low since listing, % change
+  - `POST /ipo/discover` â scan recent bhavcopies for newly listed symbols
+  - `POST /ipo/backfill` â add IPOs to the watchlist + fetch their full OHLC history
+- Frontend: `/ipo` page shows the performance table with filters (symbol search,
+  listing-age selector defaulting to the last 3 months, performance bucket,
+  "never above listing", min/max % change) and click-to-sort headers. High/Low
+  columns sort by their % versus listing price.
+- 3-year history backfill CLI (`scripts/ipo_full_history.py`, run per month so
+  long scans stay resumable):
+  ```powershell
+  python scripts/ipo_full_history.py --months 2023-09            # one month
+  python scripts/ipo_full_history.py --months 2023-09 2023-10    # several
+  python scripts/ipo_full_history.py --months all                # whole window
+  ```
+  Each trading day's bhavcopy is downloaded once and cached in
+  `data/bhavcopy_cache/YYYY-MM-DD.pkl`, so re-runs and later batches reuse it.
+  Detection uses the full series universe (not just `EQ`) because NSE bhavcopy
+  only lists stocks that actually traded — illiquid old stocks flicker in/out
+  and would otherwise look like new listings. Candidates are additionally
+  validated on post-listing trading activity before being registered.
+- Tests:
+  ```powershell
+  python -m pytest tests/test_ipo.py -v
+  python -m pytest tests/test_tv_symbol.py -v
+  ```
+
+## TradingView chart popup (shared)
+
+`frontend/components/TradingViewChartModal.tsx` is the single chart popup used
+app-wide (home scanner results and `/ipo` results). Reuse it with:
+
+```tsx
+const [chart, setChart] = useState<ChartTarget | null>(null);
+// ...onClick={() => setChart({ symbol, sourceLink })}
+<TradingViewChartModal key={chart.symbol} chart={chart} onClose={() => setChart(null)} />
+```
+
+It renders the timeframe selector, RSI/MACD/EMA/VWAP toggles and the widget
+iframe; remount per symbol via `key` to reset the controls.
+
+- Symbol resolution (`market_data/tv_symbol.py`): TradingView's embed widget
+  shows "This symbol doesn't exist" for symbols it does not carry — many SME
+  IPOs are `BSE:`-only (e.g. `ACHYUT`). The modal resolves each app symbol via
+  the endpoint below, preferring `NSE:` and falling back to `BSE:`, and shows a
+  "not listed on TradingView" message with search links when neither exists.
+- Resolution is cached in the `tv_symbol_cache` table (`symbol` PK, `tv_symbol`,
+  `exchange`, `resolved_at`). Negative results are cached too, so a missing
+  symbol is not re-queried on every page view. Network/WAF failures are *not*
+  cached, so they retry later.
+- Endpoint: `GET /api/market-data/tv-symbol?symbol=NSE:ACHYUT` (or
+  `?symbols=A,B,C`, plus optional `refresh=true` and `limit=1..200`). `limit`
+  caps live lookups per call, so rendering 1,500 rows cannot trigger a burst.
+
 ## One-click Windows launch
 
 Double-click `start_market_scanner.bat` in the project folder. It opens the API and frontend in separate windows and opens the app in your browser. The script uses `.venv` automatically when that environment exists.
@@ -82,3 +150,5 @@ Double-click `stop_market_scanner.bat` to close both service windows.
 - 2026-08-25 — Same convention fix for NSE: `nse_source.fetch_daily` now stores exchange-qualified symbols (`NSE:INFY`) instead of bare bhavcopy names — the mirror image of the TV fix. Root cause of "0 rows match · TRADINGVIEW 55 only": after a DB rebuild, NSE rows were bare so prefixed watchlist keys matched nothing. One-time migration qualified all 1,947 NSE rows (`UPDATE … SET symbol = 'NSE:' || symbol WHERE source='NSE' AND instr(symbol,':')=0`; idempotent). DB is now uniformly prefixed: NSE 1,947 rows / 177 symbols + TRADINGVIEW 55 rows / 5 symbols; watchlist coverage check and `get_ohlc` cache lookups line up for every symbol. Validated: 22/22 tests pass.
 - 2026-08-25 — Scanner UI: moved the "Run scan" button out of the top bar into the Auto-scan panel, directly beside "Start auto-scan"/"Stop auto-scan" (same `runScan` handler, still disabled while scanning or with zero selected symbols).
 - 2026-08-26 — Fixed market-hours sync gating so each source's data-availability window is respected instead of a blanket "market must be open" check. Added `is_daily_bar_ready(session, now)` + `NSE_BHAVCOPY_READY=17:00` in `src/ict_scanner.py`: NSE bars sync once the bhavcopy is published (after 17:00 IST); commodity/forex bars defer to the next day. `market_data/service.py::sync_symbol_range` now gates on `is_daily_bar_ready` (defers to last completed session, or keeps today and clears any stale `no_data` marker when ready); added `market_data/database.py::clear_no_data`. Live scan loop (`ict_scanner.py:1795`) and scheduled-scan gate (`api/main.py:336`) also run for NSE once `is_daily_bar_ready`. `/api/market-data/sync` now defaults `gate_market_hours=True`. Root cause of the observed bug: the scan skipped symbols whose market was closed, so NSE (closed at night) never backfilled while 24/5 commodities did. Backup (state at change): Backup_26-08_231814.
+
+- 2026-09-14 - IPO tracking: new market_data/ipo.py (discovery, registration, metadata, performance) + scripts/ipo_full_history.py one-pass 3-year NSE scan (per-day bhavcopy cached in data/bhavcopy_cache/, listing price = first-day OPEN, bulk OHLC upsert, validation + rename/flicker scrub). 1,508 IPOs tracked in ipo_metadata + OHLC in DB + watchlist/categories tagged scope=IPO. Endpoints: GET /api/market-data/ipo, /ipo/performance, POST /ipo/discover, /ipo/backfill. Frontend: /ipo page (listing vs current, high/low since listing). Tests: tests/test_ipo.py (9 pass). Known limitation: symbol renames indistinguishable from IPOs via bhavcopy alone.

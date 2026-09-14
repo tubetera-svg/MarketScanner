@@ -8,6 +8,6 @@
   "midweek_reversal_sweep": false,
   "multi_timeframe_bias": false,
   "protected_swings": true,
-  "tgif_setup_sweep": true,
+  "tgif_setup_sweep": false,
   "thursday_counter_sweep": false
 }

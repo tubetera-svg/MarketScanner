@@ -58,6 +58,22 @@ _INDEXES = (
     "        checked_at TEXT NOT NULL DEFAULT (datetime('now')),\n"
     "        UNIQUE (source, exchange, symbol, date)\n"
     "    );",
+    "CREATE TABLE IF NOT EXISTS ipo_metadata (\n"
+    "        symbol         TEXT PRIMARY KEY,\n"
+    "        exchange       TEXT NOT NULL,\n"
+    "        source         TEXT NOT NULL,\n"
+    "        listing_date   TEXT NOT NULL,\n"
+    "        listing_price  REAL,\n"
+    "        issue_price    REAL,\n"
+    "        created_at     TEXT NOT NULL DEFAULT (datetime('now')),\n"
+    "        updated_at     TEXT NOT NULL DEFAULT (datetime('now'))\n"
+    "    );",
+"CREATE TABLE IF NOT EXISTS tv_symbol_cache (\n"
+    "        symbol         TEXT PRIMARY KEY,\n"  # app symbol, e.g. NSE:ACHYUT
+    "        tv_symbol      TEXT,\n"              # resolved TradingView symbol
+    "        exchange       TEXT,\n"              # resolved TV exchange
+    "        resolved_at    TEXT NOT NULL DEFAULT (datetime('now'))\n"
+    "    );",
 )
 
 _ROW_COLUMNS = ("source", "symbol", "exchange", "date", "open", "high", "low", "close", "volume")
@@ -576,6 +592,182 @@ def rows_per_source(
         ]
     finally:
         conn.close()
+
+
+def upsert_ipo_metadata(row: dict, db_path: Optional[Path | str] = None) -> int:
+    """Insert or update one IPO metadata row (keyed by symbol).
+
+    Expected fields: symbol, exchange, source, listing_date, listing_price and
+    optional issue_price. Returns 1 when stored (upsert is idempotent - it
+    refreshes updated_at rather than duplicating rows).
+    """
+    symbol = str(row.get("symbol", "")).strip().upper()
+    if not symbol:
+        raise ValueError("ipo_metadata upsert requires a symbol")
+    exchange = str(row.get("exchange", "")).strip().upper() or "NSE"
+    source = str(row.get("source", "")).strip().upper() or "NSE"
+    listing_date = _to_date_text(row["listing_date"])
+    listing_price = None if row.get("listing_price") is None else float(row["listing_price"])
+    issue_price = None if row.get("issue_price") is None else float(row["issue_price"])
+
+    statement = (
+        "INSERT INTO ipo_metadata "
+        "(symbol, exchange, source, listing_date, listing_price, issue_price, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now')) "
+        "ON CONFLICT (symbol) DO UPDATE SET "
+        "exchange      = excluded.exchange, "
+        "source        = excluded.source, "
+        "listing_date  = excluded.listing_date, "
+        "listing_price = excluded.listing_price, "
+        "issue_price   = excluded.issue_price, "
+        "updated_at    = datetime('now')"
+    )
+    with _WRITE_LOCK:
+        conn = connect(db_path)
+        try:
+            conn.execute(
+                statement,
+                (symbol, exchange, source, listing_date, listing_price, issue_price),
+            )
+            conn.commit()
+            log.info("Stored IPO metadata for %s (listed %s)", symbol, listing_date)
+            return 1
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def query_ipo_metadata(
+    symbols: Optional[Sequence[str]] = None,
+    source: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> list[dict]:
+    """Return ipo_metadata rows, optionally filtered by symbol/source (date asc)."""
+    clauses: list[str] = []
+    params: list[object] = []
+    if symbols:
+        wanted = [str(value).strip().upper() for value in symbols if str(value).strip()]
+        if wanted:
+            markers = ", ".join("?" * len(wanted))
+            clauses.append(f"symbol IN ({markers})")
+            params.extend(wanted)
+    if source:
+        clauses.append("source = ?")
+        params.append(str(source).strip().upper())
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    conn = connect(db_path)
+    try:
+        return [dict(row) for row in conn.execute(
+            f"SELECT symbol, exchange, source, listing_date, listing_price, "
+            f"issue_price, created_at, updated_at FROM ipo_metadata{where} "
+            f"ORDER BY listing_date ASC", params,
+        ).fetchall()]
+    finally:
+        conn.close()
+
+
+def remove_ipo_metadata(symbol: str, db_path: Optional[Path | str] = None) -> int:
+    """Delete one ipo_metadata row by symbol. Returns rows removed (0 or 1)."""
+    key = str(symbol).strip().upper()
+    with _WRITE_LOCK:
+        conn = connect(db_path)
+        try:
+            cursor = conn.execute("DELETE FROM ipo_metadata WHERE symbol = ?", (key,))
+            conn.commit()
+            return cursor.rowcount
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def upsert_tv_symbol(row: dict, db_path: Optional[Path | str] = None) -> int:
+    """Insert/replace one TradingView symbol resolution (cached lookup).
+
+    ``row`` needs ``symbol`` (app symbol, e.g. NSE:ACHYUT) and may carry
+    ``tv_symbol`` (resolved TradingView symbol, NULL when nothing matched) and
+    ``exchange``. Returns 1 when written.
+    """
+    key = str(row.get("symbol", "")).strip().upper()
+    if not key:
+        raise ValueError("tv symbol row requires a symbol")
+    tv = row.get("tv_symbol")
+    tv = str(tv).strip().upper() if tv else None
+    exchange = row.get("exchange")
+    exchange = str(exchange).strip().upper() if exchange else None
+    with _WRITE_LOCK:
+        conn = connect(db_path)
+        try:
+            conn.execute(
+                "INSERT INTO tv_symbol_cache (symbol, tv_symbol, exchange, resolved_at)"
+                " VALUES (?, ?, ?, datetime('now'))"
+                " ON CONFLICT (symbol) DO UPDATE SET"
+                " tv_symbol = excluded.tv_symbol,"
+                " exchange = excluded.exchange,"
+                " resolved_at = datetime('now')",
+                (key, tv, exchange),
+            )
+            conn.commit()
+            return 1
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def query_tv_symbol(
+    symbols: Optional[Sequence[str]] = None,
+    db_path: Optional[Path | str] = None,
+) -> dict[str, dict]:
+    """Read cached TradingView resolutions keyed by app symbol.
+
+    Pass ``symbols`` to look up a subset. Missing keys are simply absent from
+    the result, letting callers fall back to a live lookup.
+    """
+    init_db(db_path)
+    conn = connect(db_path)
+    try:
+        if symbols:
+            keys = [str(s).strip().upper() for s in symbols]
+            out: dict[str, dict] = {}
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                rows = conn.execute(
+                    "SELECT symbol, tv_symbol, exchange, resolved_at"
+                    " FROM tv_symbol_cache WHERE symbol IN (%s)"
+                    % ",".join("?" * len(chunk)),
+                    chunk,
+                ).fetchall()
+                for record in rows:
+                    out[str(record["symbol"])] = dict(record)
+            return out
+        rows = conn.execute(
+            "SELECT symbol, tv_symbol, exchange, resolved_at FROM tv_symbol_cache"
+        ).fetchall()
+        return {str(record["symbol"]): dict(record) for record in rows}
+    finally:
+        conn.close()
+
+
+def remove_tv_symbol(symbol: str, db_path: Optional[Path | str] = None) -> int:
+    """Delete one cached resolution (forces a fresh lookup). Returns rows removed."""
+    key = str(symbol).strip().upper()
+    with _WRITE_LOCK:
+        conn = connect(db_path)
+        try:
+            cursor = conn.execute("DELETE FROM tv_symbol_cache WHERE symbol = ?", (key,))
+            conn.commit()
+            return cursor.rowcount
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def _to_date_text(value: date | str) -> str:
