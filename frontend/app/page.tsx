@@ -308,6 +308,7 @@ export default function Home() {
   const [markets, setMarkets] = useState<{ nse: boolean; forex_commodities: boolean } | null>(null);
   const [strategies, setStrategies] = useState<StrategyFlag[]>([]);
   const [weeklyMasterOn, setWeeklyMasterOn] = useState(true);
+  const [protectedSwingTimeframe, setProtectedSwingTimeframe] = useState("weekly");
   const [strategyAnchorDate, setStrategyAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [strategyScanning, setStrategyScanning] = useState(false);
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
@@ -476,7 +477,7 @@ export default function Home() {
       const response = await fetch(`${API}/api/strategy-scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: selected, anchor_date: dateOverride }),
+        body: JSON.stringify({ symbols: selected, anchor_date: dateOverride, timeframe: protectedSwingTimeframe }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Strategy scan failed");
@@ -780,7 +781,7 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><select multiple aria-label="Filter watchlist (ctrl/cmd-click to multi-select)" size={6} value={watchScopes as string[]} onChange={(event) => { const nextScopes = Array.from(event.target.selectedOptions).map((option) => option.value as WatchScope); setWatchScopes(nextScopes); setSelected(watchlist.filter((item) => matchesScopes_check(item, nextScopes)).map((item) => item.symbol)); }}><option>All</option><option>Nifty indexes</option><option>Nifty 50</option><option>Nifty Bank</option><option>Nifty IT</option><option>Nifty Auto</option><option>Nifty Pharma</option><option>IPO</option><option>F&amp;O</option><option>Crypto</option><option>Commodities</option><option>Forex</option></select><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><select multiple aria-label="Filter watchlist (ctrl/cmd-click to multi-select)" size={6} value={watchScopes as string[]} onChange={(event) => { const nextScopes = Array.from(event.target.selectedOptions).map((option) => option.value as WatchScope); setWatchScopes(nextScopes); setSelected(watchlist.filter((item) => matchesScopes_check(item, nextScopes)).map((item) => item.symbol)); }}><option>All</option><option>IPO</option><option>Nifty indexes</option><option>Nifty 50</option><option>Nifty Bank</option><option>Nifty IT</option><option>Nifty Auto</option><option>Nifty Pharma</option><option>F&amp;O</option><option>Crypto</option><option>Commodities</option><option>Forex</option></select><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }}>
         <section className="auto-scan">
@@ -817,16 +818,42 @@ export default function Home() {
       </div>
       </section>
       <section className="panel strategy-panel">
-        <div className="panel-heading">
-          <span>Strategy profiles</span>
-          <div className="panel-heading-actions">
-            <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
-            <button className="test-button" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
-              <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
-              {strategyScanning ? "Scanning…" : "Run strategies"}
-            </button>
-          </div>
-        </div>
+         <div className="panel-heading">
+           <span>Strategy profiles</span>
+           <div className="panel-heading-actions">
+             <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
+             <button className="test-button" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
+               <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
+               {strategyScanning ? "Scanning…" : "Run strategies"}
+             </button>
+           </div>
+         </div>
+         <div className="protected-swings-bar">
+           <button
+             type="button"
+             className={`ps-chip${strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " active" : ""}`}
+             onClick={() => {
+               const current = strategies.find((f: StrategyFlag) => f.name === "protected_swings");
+               if (current) toggleStrategy(current);
+             }}
+             title="Toggle Protected Swings strategy"
+           >
+             Protected Swings{strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " ✓" : ""}
+           </button>
+           <select
+             id="protected-swing-timeframe"
+             value={protectedSwingTimeframe}
+             onChange={(event) => setProtectedSwingTimeframe(event.target.value)}
+             disabled={strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled !== true}
+             title={strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled !== true ? "Enable Protected Swings first" : "Protected swing timeframe"}
+           >
+             <option value="daily">Daily</option>
+             <option value="weekly">Weekly</option>
+             <option value="15m">15m</option>
+             <option value="1h">1h</option>
+             <option value="4h">4h</option>
+           </select>
+         </div>
           <div className="inventory-horizontal">
             {inventoryReports.map((report) => (
               <a
@@ -850,7 +877,7 @@ export default function Home() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
               <span className="filter-label" style={{ margin: 0 }}>Core</span>
               {(() => {
-                const names = strategies.filter((f) => f.group === "Core").map((f) => f.name);
+                const names = strategies.filter((f) => f.group === "Core" && f.name !== "protected_swings").map((f) => f.name);
                 const count = names.filter((n) => strategies.find((f) => f.name === n)?.enabled).length;
                 const allOn = count === names.length;
                 const partial = count > 0 && !allOn;
@@ -863,7 +890,7 @@ export default function Home() {
               })()}
             </div>
             <div className="filters">
-              {strategies.filter((flag) => flag.group === "Core").map((flag) => (
+              {strategies.filter((flag) => flag.group === "Core" && flag.name !== "protected_swings").map((flag) => (
                 <span key={flag.name} className="strategy-chip-wrap">
                   <button type="button" title={flag.name} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
                     {flag.label}

@@ -294,6 +294,37 @@ def _fetch_daily_from_bhavcopy(symbol: str, as_of_date: date, max_lookback_days:
     return prebuilt.get(symbol.strip().upper(), pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
 
 
+PROTECTED_SWING_TIMEFRAMES = ("daily", "weekly", "15m", "1h", "4h")
+_PROTECTED_SWING_TV_TIMEFRAMES = {"15m": "15m", "1h": "1h", "4h": "4h"}
+
+
+def _protected_swing_frame(symbol: str, timeframe: str, daily: pd.DataFrame) -> pd.DataFrame:
+    """Build the protected-swing frame from historical or live data."""
+    normalized = str(timeframe).strip().lower()
+    if normalized not in PROTECTED_SWING_TIMEFRAMES:
+        raise ValueError(f"Unsupported protected swing timeframe: {timeframe}")
+    if normalized == "daily":
+        return daily
+    if normalized == "weekly":
+        return (
+            daily.resample("W-FRI")
+            .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+            .dropna(subset=["Open", "High", "Low", "Close"])
+        )
+
+    from market_data.sources import tradingview_source
+
+    today = date.today()
+    rows = tradingview_source.fetch_timeframe(
+        symbol=symbol,
+        start_date=today - timedelta(days=30),
+        end_date=today,
+        timeframe=_PROTECTED_SWING_TV_TIMEFRAMES[normalized],
+        exchange=symbol.split(":", 1)[0] if ":" in symbol else "NSE",
+    )
+    return _rows_to_daily_df(rows)
+
+
 def _build_candles_from_daily(daily: pd.DataFrame) -> Optional[CandleSet]:
     if daily.empty:
         return None
@@ -748,6 +779,7 @@ def run_protected_swings(
     verbose: bool = False,
     print_values: bool = False,
     daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+    timeframe: str = "daily",
 ) -> StrategyExecution:
     """Protected Swings strategy.
 
@@ -786,6 +818,7 @@ def run_protected_swings(
             "protected_level": None,
             "confirmation_price": None,
             "tag": "",
+            "timeframe": timeframe,
         }
     )
 
@@ -803,14 +836,20 @@ def run_protected_swings(
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
 
-        if daily is None or daily.empty or len(daily) < 6:
+        try:
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+        except Exception as exc:
+            log.warning("Protected swing %s frame failed for %s: %s", timeframe, symbol_upper, exc)
+            frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+
+        if frame.empty or len(frame) < 6:
             results.at[idx, "status"] = "no_data"
             results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
             if verbose:
                 print(f"{symbol_upper}: SKIPPED (no_data)")
             continue
 
-        analysis: ProtectedSwingAnalysis = evaluate_protected_swings(daily)
+        analysis: ProtectedSwingAnalysis = evaluate_protected_swings(frame)
         active = analysis.active
         anticip = analysis.anticipated
         swing = active if active is not None else anticip
@@ -825,7 +864,7 @@ def run_protected_swings(
         confirmed_window = (
             has_confirmed
             and active.confirm_idx is not None
-            and active.confirm_idx == len(daily) - 1
+            and active.confirm_idx == len(frame) - 1
         )
 
         results.at[idx, "direction"] = direction
@@ -850,7 +889,7 @@ def run_protected_swings(
             results.at[idx, "bearish_match"] = bool(bearish and confirmed_window)
 
             if confirmed_window:
-                current_close = float(daily.iloc[-1]["Close"])
+                current_close = float(frame.iloc[-1]["Close"])
                 outcome = {
                     "bullish": bool(bullish and confirmed_window),
                     "bearish": bool(bearish and confirmed_window),
@@ -858,7 +897,7 @@ def run_protected_swings(
                     "entry_ref": current_close,
                 }
                 context = {"prior_weeks": [], "swing": {}}
-                plan = _build_trade_plan(outcome, context, _daily_atr(daily))
+                plan = _build_trade_plan(outcome, context, _daily_atr(frame))
                 results.at[idx, "entry"] = plan["entry"]
                 results.at[idx, "sl"] = plan["sl"]
                 results.at[idx, "target"] = plan["target"]
@@ -2120,7 +2159,13 @@ def run_strategies(
     verbose: bool = False,
     print_values: bool = False,
     parallel: bool = True,
+    timeframe: str = "daily",
 ) -> List[StrategyExecution]:
+    normalized_timeframe = str(timeframe).strip().lower()
+    if "protected_swings" in strategy_names and normalized_timeframe not in PROTECTED_SWING_TIMEFRAMES:
+        supported = ", ".join(PROTECTED_SWING_TIMEFRAMES)
+        raise ValueError(f"Unsupported protected swing timeframe '{timeframe}'. Use: {supported}")
+
     registry = strategy_registry()
     for name in strategy_names:
         if name not in registry:
@@ -2147,17 +2192,18 @@ def run_strategies(
     if parallel and len(strategy_names) > 1:
         results_by_name: Dict[str, StrategyExecution] = {}
         with ThreadPoolExecutor(max_workers=min(4, len(strategy_names))) as executor:
-            future_to_name = {
-                executor.submit(
-                    registry[name].runner,
-                    symbols=symbols,
-                    as_of_date=as_of_date,
-                    verbose=verbose,
-                    print_values=print_values,
-                    daily_map=daily_map,
-                ): name
-                for name in strategy_names
-            }
+            future_to_name = {}
+            for name in strategy_names:
+                runner_kwargs = {
+                    "symbols": symbols,
+                    "as_of_date": as_of_date,
+                    "verbose": verbose,
+                    "print_values": print_values,
+                    "daily_map": daily_map,
+                }
+                if name == "protected_swings":
+                    runner_kwargs["timeframe"] = normalized_timeframe
+                future_to_name[executor.submit(registry[name].runner, **runner_kwargs)] = name
 
             for future in as_completed(future_to_name):
                 name = future_to_name[future]
@@ -2167,13 +2213,16 @@ def run_strategies(
 
     executions: List[StrategyExecution] = []
     for name in strategy_names:
-        execution = registry[name].runner(
-            symbols=symbols,
-            as_of_date=as_of_date,
-            verbose=verbose,
-            print_values=print_values,
-            daily_map=daily_map,
-        )
+        runner_kwargs = {
+            "symbols": symbols,
+            "as_of_date": as_of_date,
+            "verbose": verbose,
+            "print_values": print_values,
+            "daily_map": daily_map,
+        }
+        if name == "protected_swings":
+            runner_kwargs["timeframe"] = normalized_timeframe
+        execution = registry[name].runner(**runner_kwargs)
         executions.append(execution)
 
     return executions

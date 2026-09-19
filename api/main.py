@@ -10,7 +10,7 @@ import sys
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +40,7 @@ class StrategyScanRequest(BaseModel):
     symbols: list[str] | None = Field(default=None, max_length=500)
     strategies: list[str] | None = Field(default=None, max_length=50)
     anchor_date: date | None = None
+    timeframe: Literal["daily", "weekly", "15m", "1h", "4h"] = "weekly"
 
 
 class BacktestRequest(BaseModel):
@@ -614,7 +615,13 @@ async def run_strategy_scan(request: StrategyScanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="A scan is already running")
     async with service.lock:
         try:
-            return await asyncio.to_thread(strategy_bridge.run_scan, request.symbols, request.strategies, request.anchor_date)
+            return await asyncio.to_thread(
+                strategy_bridge.run_scan,
+                request.symbols,
+                request.strategies,
+                request.anchor_date,
+                request.timeframe,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:

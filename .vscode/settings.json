@@ -6,6 +6,10 @@
         "Push-Location": true,
         "npm run build": true,
         "Pop-Location": true,
-        "py": true
+        "py": true,
+        "/^Push-Location frontend; npx\\.cmd tsc --noEmit; Pop-Location$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

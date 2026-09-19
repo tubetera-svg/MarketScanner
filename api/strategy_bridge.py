@@ -151,7 +151,12 @@ def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return [{key: value for key, value in row.items()} for row in clean.to_dict("records")]
 
 
-def run_scan(symbols: list[str] | None, strategy_names: list[str] | None, anchor_date: date | None = None) -> dict[str, Any]:
+def run_scan(
+    symbols: list[str] | None,
+    strategy_names: list[str] | None,
+    anchor_date: date | None = None,
+    timeframe: str = "weekly",
+) -> dict[str, Any]:
     """Run the enabled/requested strategies over the given symbols."""
     module = load_module()
     catalog, _master = list_strategies()
@@ -183,6 +188,7 @@ def run_scan(symbols: list[str] | None, strategy_names: list[str] | None, anchor
         as_of_date=resolved_date,
         verbose=False,
         print_values=False,
+        timeframe=timeframe,
     )
 
     labels = {**dict(CORE_STRATEGIES), **dict(module.WEEKLY_PROFILE_LABELS)}

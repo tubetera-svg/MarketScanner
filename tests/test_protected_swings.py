@@ -423,6 +423,38 @@ def test_protected_swings_registered_in_registry_and_lookback():
     reg = all_strategy.strategy_registry()
     assert "protected_swings" in reg
     assert reg["protected_swings"].runner is all_strategy.run_protected_swings
+
+
+def test_protected_swing_weekly_frame_resamples_historical_daily_data():
+    daily = _df([
+        (100 + i, 102 + i, 99 + i, 101 + i)
+        for i in range(15)
+    ])
+    frame = all_strategy._protected_swing_frame("TEST", "weekly", daily)
+    assert len(frame) == 3
+    assert frame.iloc[0]["Open"] == 100
+    assert frame.iloc[0]["Close"] == 105
+
+
+def test_protected_swing_intraday_frame_uses_live_timeframe_fetch(monkeypatch):
+    calls = []
+
+    def fake_fetch_timeframe(**kwargs):
+        calls.append(kwargs)
+        return [{
+            "date": "2026-09-18T10:00:00",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+        }]
+
+    from market_data.sources import tradingview_source
+
+    monkeypatch.setattr(tradingview_source, "fetch_timeframe", fake_fetch_timeframe)
+    frame = all_strategy._protected_swing_frame("NSE:TEST", "15m", pd.DataFrame())
+    assert len(frame) == 1
+    assert calls[0]["timeframe"] == "15m"
     # lookback dict in run_strategies must know the strategy (else default 60 used)
     import inspect
 
