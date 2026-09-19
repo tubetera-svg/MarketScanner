@@ -37,6 +37,9 @@ ACTIVE_STATES = {"armed", "triggered"}
 # Terminal states that should not be overwritten by a later scan.
 TERMINAL_STATES = {"closed_sl", "closed_target", "invalidated", "expired"}
 
+# Default retention window for the tracker store (weeks -> days).
+DEFAULT_RETENTION_DAYS = 21
+
 
 def _week_start(as_of_date: date) -> date:
     """Monday of the trading week containing ``as_of_date`` (Mon=0)."""
@@ -216,6 +219,37 @@ class ProfileTrackerStore:
     # ---------------------------------------------------------------
     # Queries
     # ---------------------------------------------------------------
+    def _cutoff_for(self, days: int) -> date:
+        """Latest ``week`` value (ISO date) still considered within retention."""
+        return date.today() - timedelta(days=days)
+
+    def _week_str_to_date(self, week_str: Any) -> Optional[date]:
+        if not week_str:
+            return None
+        try:
+            return date.fromisoformat(str(week_str))
+        except (TypeError, ValueError):
+            return None
+
+    def recent_setups(self, days: int = DEFAULT_RETENTION_DAYS) -> List[Dict[str, Any]]:
+        """Setups whose ``week`` is within the last ``days`` days, newest first.
+
+        The store is append-only and unbounded; this is the default view used by
+        the API/frontend so stale setups do not accumulate in the UI.
+        """
+        cutoff = self._cutoff_for(days)
+        data = self.load()
+        rows = [
+            r
+            for r in data.values()
+            if (self._week_str_to_date(r.get("week")) or date.min) >= cutoff
+        ]
+        rows.sort(
+            key=lambda r: (r.get("last_seen", ""), r.get("symbol", "")),
+            reverse=True,
+        )
+        return rows
+
     def active(self) -> List[Dict[str, Any]]:
         """Setups still open (armed or triggered), newest first."""
         rows = [r for r in self.load().values() if r.get("state") in ACTIVE_STATES]
@@ -230,12 +264,29 @@ class ProfileTrackerStore:
     # ---------------------------------------------------------------
     # Maintenance
     # ---------------------------------------------------------------
-    def clear(self) -> int:
-        """Wipe the store (it is derived cache, not source-of-truth data)."""
+    def prune_before(
+        self,
+        cutoff: Optional[date] = None,
+        days: int = DEFAULT_RETENTION_DAYS,
+    ) -> int:
+        """Remove setups whose ``week`` is older than ``cutoff`` (or ``days`` ago).
+
+        The store is append-only; this is the automatic maintenance path so stale
+        setups (closed/expired) do not accumulate unboundedly.
+        """
+        cutoff = cutoff or self._cutoff_for(days)
         data = self.load()
-        count = len(data)
-        self.save({})
-        return count
+        removed: list[str] = []
+        for key, rec in list(data.items()):
+            ws = self._week_str_to_date(rec.get("week"))
+            if ws is None or ws < cutoff:
+                removed.append(key)
+                continue
+        for key in removed:
+            del data[key]
+        if removed:
+            self.save(data)
+        return len(removed)
 
     def repair_store(self) -> int:
         """Fix records written by the pre-1:2-target bug.

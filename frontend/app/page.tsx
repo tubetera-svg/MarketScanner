@@ -333,6 +333,11 @@ export default function Home() {
       if (!response.ok) return;
       const data = await response.json();
       setTrackerSetups(data.setups ?? []);
+      if (data.source === "recent" && typeof data.pruned === "number" && data.pruned > 0 && data.setups.length === 0) {
+        // Pruned away everything the frontend would otherwise display; reload once
+        // more so the panel reflects the current retention window without spamming.
+        loadTracker(symbols).catch(() => {});
+      }
     } catch {
       /* best-effort */
     }

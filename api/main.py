@@ -691,26 +691,49 @@ def _run_backtest(request: BacktestRequest) -> dict[str, Any]:
 
 
 @app.get("/api/weekly-profile-tracker")
-def weekly_profile_tracker(symbols: Optional[str] = None) -> dict[str, Any]:
+def weekly_profile_tracker(
+    symbols: Optional[str] = None,
+    all_: Optional[str] = None,
+) -> dict[str, Any]:
     """Return tracked weekly-profile setups (cross-scan).
+
+    Defaults to the last ``DEFAULT_RETENTION_DAYS`` days of setups. Pass
+    ``?all=true`` to return the full unbounded store (mainly for debugging).
 
     Pass ``symbols`` (comma-separated) to restrict to a watchlist subset —
     used by the frontend to show only the symbols a strategy scan ran over.
     """
     try:
-        from weekly_profile_tracker import ACTIVE_STATES, ProfileTrackerStore
+        from weekly_profile_tracker import (
+            ACTIVE_STATES,
+            DEFAULT_RETENTION_DAYS,
+            ProfileTrackerStore,
+        )
 
         store = ProfileTrackerStore()
-        setups = store.all_setups()
+        if all_ and str(all_).strip().lower() in {"1", "true", "yes"}:
+            setups = store.all_setups()
+        else:
+            setups = store.recent_setups(DEFAULT_RETENTION_DAYS)
+            # Automatic maintenance: drop older records so the JSON store does not
+            # grow unboundedly.
+            removed = store.prune_before(days=DEFAULT_RETENTION_DAYS)
+
         if symbols:
             wanted = {token.strip().upper() for token in symbols.split(",") if token.strip()}
             setups = [s for s in setups if str(s.get("symbol", "")).upper() in wanted]
         active = [s for s in setups if s.get("state") in ACTIVE_STATES]
-        return {
+        body: dict[str, Any] = {
             "active": active,
             "setups": setups,
             "active_count": len(active),
         }
+        if all_ and str(all_).strip().lower() in {"1", "true", "yes"}:
+            body["source"] = "all"
+        else:
+            body["source"] = "recent"
+            body["pruned"] = removed if not symbols else None
+        return body
     except Exception as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
