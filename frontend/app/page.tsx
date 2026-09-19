@@ -48,6 +48,8 @@ type StrategyRow = {
   tag?: string | null;
   swing_level?: number | null;
   protected_level?: number | null;
+  triggered_level?: number | null;
+  order_block_midpoint?: number | null;
   flip_level?: number | null;
   signal_date?: string | null;
   daily_bias?: string | null;
@@ -308,7 +310,7 @@ export default function Home() {
   const [markets, setMarkets] = useState<{ nse: boolean; forex_commodities: boolean } | null>(null);
   const [strategies, setStrategies] = useState<StrategyFlag[]>([]);
   const [weeklyMasterOn, setWeeklyMasterOn] = useState(true);
-  const [protectedSwingTimeframe, setProtectedSwingTimeframe] = useState("weekly");
+  const [protectedSwingTimeframe, setProtectedSwingTimeframe] = useState("daily");
   const [strategyAnchorDate, setStrategyAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [strategyScanning, setStrategyScanning] = useState(false);
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
@@ -998,6 +1000,11 @@ export default function Home() {
                             return <small title={detail}>{detail}</small>;
                           })()
                         )}
+                        {group.strategy === "propulsion_blocks" && row.triggered_level != null && (
+                          <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
+                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` · OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
+                          </small>
+                        )}
                         {group.strategy === "protected_swings" && row.tag && (
                           <small title={row.note ?? row.tag}>
                             {row.tag === "fvg_based" ? "fvg" : "sweep"}={row.swing_level?.toFixed(2) ?? "-"}
@@ -1035,6 +1042,11 @@ export default function Home() {
                             const detail = "E " + row.entry + (row.sl != null ? ` · SL ${row.sl}` : "") + (row.target != null ? ` · T ${row.target}` : "") + (row.rr != null ? ` · R:R ${row.rr}` : "") + (row.tag ? ` · ${row.tag}` : "");
                             return <small title={detail}>{detail}</small>;
                           })()
+                        )}
+                        {group.strategy === "propulsion_blocks" && row.triggered_level != null && (
+                          <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
+                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` · OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
+                          </small>
                         )}
                         {group.strategy === "protected_swings" && row.tag && (
                           <small title={row.note ?? row.tag}>

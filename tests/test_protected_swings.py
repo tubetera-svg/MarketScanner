@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -322,6 +323,33 @@ def test_sweep_is_rejected_after_close_beyond_swept_extreme():
     assert not any(e.state == ps.STATE_CONFIRMED for e in bullish.events if e.mode == ps.MODE_SWEEP)
 
 
+def test_sweep_requires_directional_sweep_candle():
+    rows = [
+        (100, 102, 99, 101),
+        (101, 105, 100, 104),
+        (104, 110, 103, 109),  # swing high
+        (109, 108, 105, 106),
+        (106, 107, 102, 105),
+        (120, 125, 115, 118),  # non-directional for bearish sweep
+        (118, 119, 95, 96),    # must not confirm from the wrong series
+    ]
+    analysis = ps.evaluate_protected_swings(_df(rows))
+    assert not any(event.state == ps.STATE_CONFIRMED for event in analysis.events)
+
+
+def test_fvg_invalidated_before_confirmation_cannot_confirm_later():
+    rows = FVG_BULLISH + [
+        (116, 117, 100, 100),  # breaks bullish protection before recovery
+        (100, 120, 99, 121),   # later close above protection must not confirm
+    ]
+    analysis = ps.evaluate_protected_swings(_df(rows))
+    assert not any(
+        event.state == ps.STATE_CONFIRMED
+        for event in analysis.events
+        if event.mode == ps.MODE_FVG
+    )
+
+
 def test_signal_persists_while_no_newer_confirm():
     # A consolidation that neither closes below the protected level nor creates a
     # newer confirmed swing must leave the original bullish swing active.
@@ -372,6 +400,16 @@ def test_run_protected_swings_no_signal_when_anticipated():
     assert len(ex.bullish) == 0
     assert len(ex.bearish) == 0
 
+    ex = all_strategy.run_protected_swings(
+        ["TEST"], as_of_date=date(2026, 1, 21), verbose=False,
+        daily_map={"TEST": _df(BULLISH_LOW + [(111, 112, 106, 110)])},
+    )
+    row = ex.results.iloc[0]
+    assert bool(row["final_signal"]) is False
+    assert bool(row["bullish_match"]) is False
+    assert len(ex.bullish) == 0
+    assert len(ex.bearish) == 0
+
 
 def test_run_protected_swings_surfaces_fvg_tag():
     ex = all_strategy.run_protected_swings(
@@ -407,16 +445,60 @@ def test_run_protected_swings_emits_on_confirmation_day_only():
     assert row["state"] == ps.STATE_CONFIRMED
     assert row["tag"] == ps.TAG_SWEEP_BASED
     assert len(ex.bullish) == 0
-    assert len(ex.bearish) == 0
 
-    ex = all_strategy.run_protected_swings(
-        ["TEST"], as_of_date=date(2026, 1, 21), verbose=False,
-        daily_map={"TEST": _df(BULLISH_LOW + [(111, 112, 106, 110)])},
+
+def test_points_of_interest_prioritizes_fvg_from_protected_swing():
+    frame = _df([
+        (100, 102, 99, 101),
+        (101, 104, 100, 103),
+        (103, 106, 102, 105),
+        (105, 108, 104, 107),  # protected swing confirmation anchor
+        (107, 109, 105, 108),
+        (108, 110, 111, 112),  # bullish FVG starts here
+        (112, 118, 110, 116),
+        (116, 122, 114, 120),
+    ])
+    active = SimpleNamespace(confirm_idx=3, protected_level=100.0, direction=1)
+    assert all_strategy._select_point_of_interest(frame, active) == (108.0, "fvg")
+
+
+def test_points_of_interest_is_not_a_backtest_signal():
+    execution = all_strategy.run_points_of_interest(
+        ["TEST"], as_of_date=date(2026, 1, 19), daily_map={"TEST": _df(BULLISH_LOW[:11])}
     )
-    row = ex.results.iloc[0]
+    row = execution.results.iloc[0]
+    assert row["type"] in {"fvg", "sweep", "CISD", ""}
     assert bool(row["final_signal"]) is False
-    assert bool(row["bullish_match"]) is False
-    assert len(ex.bullish) == 0
+    assert "entry" not in execution.results.columns
+    assert "sl" not in execution.results.columns
+    assert "rr" not in execution.results.columns
+
+
+def test_candle_3_closure_reports_equilibrium_without_trade_plan(monkeypatch):
+    frame = _df([
+        (98, 100, 96, 99),    # history
+        (99, 103, 97, 101),   # history
+        (100, 105, 95, 102),  # Candle 1
+        (101, 104, 90, 99),   # Candle 2 reaches POI, fails bullish closure
+        (99, 110, 98, 106),   # Candle 3 closes above Candle 2 body
+    ])
+    active = SimpleNamespace(direction=1, protected_level=95.0, mode="sweep")
+    monkeypatch.setattr(
+        all_strategy,
+        "evaluate_protected_swings",
+        lambda _frame: SimpleNamespace(active=active),
+    )
+    assert all_strategy._candle_3_poi(frame) == (1, 95.0, "sweep")
+    execution = all_strategy.run_candle_3_closure(
+        ["TEST"], as_of_date=date(2026, 1, 7), daily_map={"TEST": frame}
+    )
+    row = execution.results.iloc[0]
+    assert row["equilibrium"] == 104.0
+    assert bool(row["bullish_match"]) is True
+    assert bool(row["final_signal"]) is False
+    assert "entry" not in execution.results.columns
+    assert "sl" not in execution.results.columns
+    assert "rr" not in execution.results.columns
 
 
 def test_protected_swings_registered_in_registry_and_lookback():

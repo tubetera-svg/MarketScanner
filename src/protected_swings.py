@@ -143,7 +143,8 @@ def _ohlc_arrays(daily: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarra
 
 def _collect_run(o: np.ndarray, c: np.ndarray, anchor: int, down: bool) -> List[int]:
     """Maximal run of same-direction candles ending at the nearest qualifying
-    candle at or before ``anchor``.
+    candle at or before ``anchor``. Returns no run when ``anchor`` is not
+    directional; a non-directional sweep candle cannot define protection.
 
     ``down=True`` collects down-close candles (close <= open); ``down=False``
     collects up-close candles (close >= open). The run is walked backward from
@@ -152,17 +153,14 @@ def _collect_run(o: np.ndarray, c: np.ndarray, anchor: int, down: bool) -> List[
     n = len(c)
     if n == 0 or anchor < 0 or anchor >= n:
         return []
-    up = not down
     # Find the end of the run: the largest index <= anchor that qualifies.
     k = anchor
     while k >= 0 and not ((c[k] < o[k]) if down else (c[k] > o[k])):
-        # treat a flat candle (close == open) as qualifying for neither direction
-        # unless it is the anchor itself (so the swing is never lost).
         if k == anchor:
-            break
+            return []
         k -= 1
     if k < 0:
-        return [anchor]
+        return []
     run = [k]
     j = k - 1
     while j >= 0 and ((c[j] < o[j]) if down else (c[j] > o[j])):
@@ -401,7 +399,9 @@ def _build_sweep_candidate(
         sweep_idx = detect_liquidity_sweep(daily, j, is_high=True)
         if sweep_idx is None:
             return None
-        run = _collect_run(o, c, sweep_idx, down=False) or [sweep_idx]
+        run = _collect_run(o, c, sweep_idx, down=False)
+        if not run:
+            return None
         protected_level = float(np.nanmin(o[run]))  # body: lowest open of the green sweep series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False, inclusive=False)
         swing_break_idx = _first_after(c, swing_level, sweep_idx, above=True)
@@ -419,7 +419,9 @@ def _build_sweep_candidate(
         sweep_idx = detect_liquidity_sweep(daily, j, is_high=False)
         if sweep_idx is None:
             return None
-        run = _collect_run(o, c, sweep_idx, down=True) or [sweep_idx]
+        run = _collect_run(o, c, sweep_idx, down=True)
+        if not run:
+            return None
         protected_level = float(np.nanmax(o[run]))  # body: highest open of the red sweep series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True, inclusive=False)
         swing_break_idx = _first_after(c, swing_level, sweep_idx, above=False)
@@ -478,6 +480,11 @@ def _build_fvg_candidate(
         swing_level = float(np.nanmin(l[series]))
         protected_level = float(np.nanmax(o[series]))  # body: highest open of red series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True)
+        invalid_before_confirm = _first_after(c, protected_level, sweep_idx, above=False)
+        if invalid_before_confirm is not None and (
+            confirm_idx is None or invalid_before_confirm < confirm_idx
+        ):
+            confirm_idx = None
         invalidate_idx = (
             invalidate_close(daily, protected_level, confirm_idx, above=False)
             if confirm_idx is not None
@@ -495,6 +502,11 @@ def _build_fvg_candidate(
         swing_level = float(np.nanmax(h[series]))
         protected_level = float(np.nanmin(o[series]))  # body: lowest open of green series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False)
+        invalid_before_confirm = _first_after(c, protected_level, sweep_idx, above=True)
+        if invalid_before_confirm is not None and (
+            confirm_idx is None or invalid_before_confirm < confirm_idx
+        ):
+            confirm_idx = None
         invalidate_idx = (
             invalidate_close(daily, protected_level, confirm_idx, above=True)
             if confirm_idx is not None

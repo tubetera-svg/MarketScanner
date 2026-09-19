@@ -18,7 +18,14 @@ from protected_swings import (
     STATE_INVALIDATED,
     STATE_NONE,
     ProtectedSwingAnalysis,
+    detect_swing_points,
     evaluate_protected_swings,
+    find_fvgs,
+)
+from propulsion_blocks import (
+    PROPULSION_BLOCKS_LOOKBACK_DAYS as _PB_LOOKBACK,
+    PropulsionBlockAnalysis,
+    evaluate_propulsion_blocks,
 )
 
 log = logging.getLogger(__name__)
@@ -924,6 +931,324 @@ def run_protected_swings(
     )
 
 
+def _latest_cisd(daily: pd.DataFrame, direction: int, after_idx: int) -> Optional[float]:
+    if len(daily) < 2 or after_idx >= len(daily) - 1:
+        return None
+    previous = daily.iloc[-2]
+    current = daily.iloc[-1]
+    if direction > 0 and previous["Close"] < previous["Open"] and current["Close"] > previous["High"]:
+        return float(previous["Open"])
+    if direction < 0 and previous["Close"] > previous["Open"] and current["Close"] < previous["Low"]:
+        return float(previous["Open"])
+    return None
+
+
+def _select_point_of_interest(
+    frame: pd.DataFrame,
+    active,
+) -> Optional[tuple[float, str]]:
+    """Select the nearest POI from the protected swing toward current price."""
+    if active is None or active.confirm_idx is None:
+        return None
+    anchor_idx = active.confirm_idx
+    anchor = float(active.protected_level)
+    current = float(frame.iloc[-1]["Close"])
+    direction = int(active.direction)
+    if direction == 0 or (direction > 0 and current <= anchor) or (direction < 0 and current >= anchor):
+        return None
+
+    def in_path(level: float) -> bool:
+        return anchor < level < current if direction > 0 else current < level < anchor
+
+    gaps = [
+        gap for gap in find_fvgs(frame)
+        if gap.idx > anchor_idx
+        and gap.fvg_type == ("bullish" if direction > 0 else "bearish")
+        and in_path(gap.gap_low if direction > 0 else gap.gap_high)
+    ]
+    if gaps:
+        gap = min(gaps, key=lambda item: abs((item.gap_low if direction > 0 else item.gap_high) - anchor))
+        level = gap.gap_low if direction > 0 else gap.gap_high
+        return float(level), "fvg"
+
+    swings = [
+        swing for swing in detect_swing_points(frame)
+        if swing.idx > anchor_idx and in_path(swing.high if swing.is_high else swing.low)
+    ]
+    if swings:
+        swing = min(swings, key=lambda item: abs((item.high if item.is_high else item.low) - anchor))
+        return float(swing.high if swing.is_high else swing.low), "sweep"
+
+    cisd_level = _latest_cisd(frame, direction, anchor_idx)
+    return (cisd_level, "CISD") if cisd_level is not None and in_path(cisd_level) else None
+
+
+def run_points_of_interest(
+    symbols: Sequence[str],
+    as_of_date: date,
+    verbose: bool = False,
+    print_values: bool = False,
+    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+    timeframe: str = "daily",
+) -> StrategyExecution:
+    """Report the highest-priority protected-swing point of interest."""
+    _ = print_values
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols),
+            "bullish_match": False,
+            "bearish_match": False,
+            "final_signal": False,
+            "status": "pending",
+            "profile": "Points of Interest",
+            "note": "",
+            "state": STATE_NONE,
+            "direction": 0,
+            "track_mode": "",
+            "triggered_level": None,
+            "type": "",
+            "timeframe": timeframe,
+        }
+    )
+
+    for idx, symbol in enumerate(symbols):
+        symbol_upper = str(symbol).upper()
+        daily = (
+            _fetch_daily_from_bhavcopy(symbol_upper, as_of_date, _PS_LOOKBACK)
+            if daily_map is None
+            else daily_map.get(symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
+        )
+        if _track_mode_for(symbol_upper) == "eod_confirm":
+            daily = _trim_in_progress_daily(daily)
+        try:
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+        except Exception as exc:
+            log.warning("Points of interest frame failed for %s: %s", symbol_upper, exc)
+            frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+        if frame.empty or len(frame) < 5:
+            results.at[idx, "status"] = "no_data"
+            continue
+
+        analysis: ProtectedSwingAnalysis = evaluate_protected_swings(frame)
+        candidate = analysis.active
+        results.at[idx, "status"] = "complete"
+        results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+        results.at[idx, "note"] = analysis.note
+
+        poi = _select_point_of_interest(frame, candidate)
+        if poi is not None:
+            level, poi_type = poi
+            results.at[idx, "state"] = candidate.state
+            results.at[idx, "direction"] = candidate.direction
+            results.at[idx, "triggered_level"] = round(level, 4)
+            results.at[idx, "type"] = poi_type
+            results.at[idx, "bullish_match"] = candidate.direction > 0
+            results.at[idx, "bearish_match"] = candidate.direction < 0
+            results.at[idx, "note"] = f"{poi_type} POI from protected swing at {candidate.protected_level:.4f}"
+            continue
+
+        if verbose:
+            print(f"{symbol_upper}: poi={results.at[idx, 'type']} level={results.at[idx, 'triggered_level']}")
+
+    bullish, bearish = _extract_points_of_interest_frames(results)
+    return StrategyExecution(
+        name="points_of_interest",
+        results=results,
+        bullish=bullish,
+        bearish=bearish,
+    )
+
+
+def _candle_3_poi(frame: pd.DataFrame) -> Optional[tuple[int, float, str]]:
+    if len(frame) < 5:
+        return None
+    analysis: ProtectedSwingAnalysis = evaluate_protected_swings(frame)
+    active = analysis.active
+    if active is None:
+        return None
+    candle_2 = frame.iloc[-2]
+    candle_3 = frame.iloc[-1]
+    direction = int(active.direction)
+    poi_level = float(active.protected_level)
+    if direction > 0:
+        reached = float(candle_2["Low"]) <= poi_level
+        failed_candle_2 = float(candle_2["Close"]) <= float(candle_2["Open"])
+        body_closure = float(candle_3["Close"]) > float(candle_2["Open"])
+        no_candle_2_sweep = float(candle_2["High"]) <= float(frame.iloc[-3]["High"])
+    else:
+        reached = float(candle_2["High"]) >= poi_level
+        failed_candle_2 = float(candle_2["Close"]) >= float(candle_2["Open"])
+        body_closure = float(candle_3["Close"]) < float(candle_2["Open"])
+        no_candle_2_sweep = float(candle_2["Low"]) >= float(frame.iloc[-3]["Low"])
+    if not (reached and failed_candle_2 and body_closure and no_candle_2_sweep):
+        return None
+    return direction, poi_level, active.mode
+
+
+def run_candle_3_closure(
+    symbols: Sequence[str],
+    as_of_date: date,
+    verbose: bool = False,
+    print_values: bool = False,
+    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+    timeframe: str = "daily",
+) -> StrategyExecution:
+    """Report Candle 3 closures at an existing protected-swing point of interest."""
+    _ = print_values
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols),
+            "bullish_match": False,
+            "bearish_match": False,
+            "final_signal": False,
+            "status": "pending",
+            "profile": "Candle 3 Closure",
+            "note": "",
+            "state": STATE_NONE,
+            "direction": 0,
+            "triggered_level": None,
+            "candle_3_high": None,
+            "candle_3_low": None,
+            "equilibrium": None,
+            "poi_type": "",
+            "timeframe": timeframe,
+        }
+    )
+    for idx, symbol in enumerate(symbols):
+        symbol_upper = str(symbol).upper()
+        daily = (
+            _fetch_daily_from_bhavcopy(symbol_upper, as_of_date, _PS_LOOKBACK)
+            if daily_map is None
+            else daily_map.get(symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
+        )
+        if _track_mode_for(symbol_upper) == "eod_confirm":
+            daily = _trim_in_progress_daily(daily)
+        try:
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+        except Exception as exc:
+            log.warning("Candle 3 frame failed for %s: %s", symbol_upper, exc)
+            frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+        results.at[idx, "status"] = "complete" if len(frame) >= 5 else "no_data"
+        if len(frame) < 5:
+            continue
+        closure = _candle_3_poi(frame)
+        if closure is None:
+            continue
+        direction, poi_level, poi_type = closure
+        candle_3 = frame.iloc[-1]
+        high = float(candle_3["High"])
+        low = float(candle_3["Low"])
+        results.at[idx, "direction"] = direction
+        results.at[idx, "triggered_level"] = round(poi_level, 4)
+        results.at[idx, "candle_3_high"] = round(high, 4)
+        results.at[idx, "candle_3_low"] = round(low, 4)
+        results.at[idx, "equilibrium"] = round((high + low) / 2.0, 4)
+        results.at[idx, "poi_type"] = poi_type
+        results.at[idx, "state"] = STATE_CONFIRMED
+        results.at[idx, "bullish_match"] = direction > 0
+        results.at[idx, "bearish_match"] = direction < 0
+        results.at[idx, "note"] = "Candle 3 body closure; Candle 4 expansion/retrace pending"
+        if verbose:
+            print(f"{symbol_upper}: candle_3 direction={direction} eq={results.at[idx, 'equilibrium']}")
+
+    bullish, bearish = _extract_candle_3_frames(results)
+    return StrategyExecution(
+        name="candle_3_closure",
+        results=results,
+        bullish=bullish,
+        bearish=bearish,
+    )
+
+
+def run_propulsion_blocks(
+    symbols: Sequence[str],
+    as_of_date: date,
+    verbose: bool = False,
+    print_values: bool = False,
+    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+    timeframe: str = "daily",
+) -> StrategyExecution:
+    """Run the point-in-time propulsion-block lifecycle strategy."""
+    _ = print_values
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols), "bullish_match": False, "bearish_match": False,
+            "final_signal": False, "status": "pending", "profile": "Propulsion Blocks",
+            "note": "", "state": STATE_NONE, "direction": 0, "entry": None,
+            "sl": None, "target": None, "rr": None, "atr": None, "track_mode": "",
+            "order_block_low": None, "order_block_high": None, "order_block_midpoint": None,
+            "propulsion_open": None, "triggered_level": None, "mean_threshold": None,
+            "confirmation_price": None,
+            "timeframe": timeframe,
+        }
+    )
+
+    for idx, symbol in enumerate(symbols):
+        symbol_upper = str(symbol).upper()
+        daily = (
+            _fetch_daily_from_bhavcopy(symbol_upper, as_of_date, _PB_LOOKBACK)
+            if daily_map is None
+            else daily_map.get(symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
+        )
+        if _track_mode_for(symbol_upper) == "eod_confirm":
+            daily = _trim_in_progress_daily(daily)
+        try:
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+        except Exception as exc:
+            log.warning("Propulsion block %s frame failed for %s: %s", timeframe, symbol_upper, exc)
+            frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+        if frame.empty or len(frame) < 5:
+            results.at[idx, "status"] = "no_data"
+            results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+            continue
+
+        analysis: PropulsionBlockAnalysis = evaluate_propulsion_blocks(frame)
+        active = analysis.active
+        anticipated = analysis.anticipated
+        candidate = active if active is not None else anticipated
+        confirmed_window = (
+            active is not None
+            and active.confirm_idx is not None
+            and active.confirm_idx == len(frame) - 1
+        )
+        results.at[idx, "status"] = "complete"
+        results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+        results.at[idx, "note"] = analysis.note
+        if candidate is None:
+            continue
+
+        results.at[idx, "state"] = candidate.state
+        results.at[idx, "direction"] = candidate.direction
+        results.at[idx, "order_block_low"] = round(candidate.order_block_low, 4)
+        results.at[idx, "order_block_high"] = round(candidate.order_block_high, 4)
+        results.at[idx, "order_block_midpoint"] = round(candidate.order_block_midpoint, 4)
+        results.at[idx, "propulsion_open"] = round(candidate.propulsion_open, 4)
+        results.at[idx, "triggered_level"] = round(candidate.propulsion_open, 4)
+        results.at[idx, "mean_threshold"] = round(candidate.mean_threshold, 4)
+        results.at[idx, "confirmation_price"] = (
+            round(candidate.confirmation_price, 4)
+            if candidate.confirmation_price is not None else None
+        )
+        results.at[idx, "final_signal"] = confirmed_window
+        results.at[idx, "bullish_match"] = bool(candidate.direction > 0 and confirmed_window)
+        results.at[idx, "bearish_match"] = bool(candidate.direction < 0 and confirmed_window)
+        if confirmed_window:
+            outcome = {
+                "bullish": candidate.direction > 0,
+                "bearish": candidate.direction < 0,
+                "sl_level": candidate.mean_threshold,
+                "entry_ref": float(frame.iloc[-1]["Close"]),
+            }
+            plan = _build_trade_plan(outcome, {"prior_weeks": [], "swing": {}}, _daily_atr(frame))
+            for key in ("entry", "sl", "target", "rr", "atr"):
+                results.at[idx, key] = plan[key]
+        if verbose:
+            print(f"{symbol_upper}: propulsion_blocks state={candidate.state} {analysis.note}")
+
+    bullish_frame, bearish_frame = _extract_weekly_profile_signal_frames(results)
+    return StrategyExecution("propulsion_blocks", results, bullish_frame, bearish_frame)
+
+
 def _load_bias_profile() -> dict:
     from pathlib import Path
     import json
@@ -1224,6 +1549,115 @@ def _empty_mtf_bias_results(symbols: Sequence[str], status: str) -> StrategyExec
     )
 
 
+def _daily_bias_from_history(history: pd.DataFrame) -> tuple[str, float | None, float | None, float | None]:
+    """Resolve the historical daily bias and its candle range references."""
+    if history is None or len(history) < 2:
+        return "Neutral", None, None, None
+    reference = history.iloc[-1]
+    prior = history.iloc[-2]
+    reference_high = float(reference["High"])
+    reference_low = float(reference["Low"])
+    reference_eq = (reference_high + reference_low) / 2.0
+    close = float(reference["Close"])
+    bias = "Bullish" if close > float(prior["High"]) else "Bearish" if close < float(prior["Low"]) else "Neutral"
+    return bias, reference_eq, reference_high, reference_low
+
+
+def run_daily_bias_invalidation(
+    symbols: Sequence[str],
+    as_of_date: date,
+    verbose: bool = False,
+    print_values: bool = False,
+    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
+) -> StrategyExecution:
+    """Trade only invalidation of a previously established daily bias."""
+    _ = (as_of_date, print_values)
+    results = pd.DataFrame(
+        {
+            "symbol": list(symbols),
+            "bullish_match": False,
+            "bearish_match": False,
+            "final_signal": False,
+            "status": "pending",
+            "daily_bias": "Neutral",
+            "invalidation_direction": 0,
+            "invalidation_type": "",
+            "eq": None,
+            "entry": None,
+            "sl": None,
+            "target": None,
+            "rr": None,
+            "note": "",
+        }
+    )
+
+    for idx, symbol in enumerate(symbols):
+        symbol_upper = str(symbol).upper()
+        daily = (daily_map or {}).get(symbol_upper, pd.DataFrame())
+        daily = _trim_in_progress_daily(daily)
+        if daily is None or len(daily) < 4:
+            results.at[idx, "status"] = "no_data"
+            continue
+
+        history = daily.iloc[:-2]
+        bias, eq, reference_high, reference_low = _daily_bias_from_history(history)
+        results.at[idx, "daily_bias"] = bias
+        results.at[idx, "eq"] = eq
+        results.at[idx, "status"] = "complete"
+        if bias == "Neutral" or eq is None or reference_high is None or reference_low is None:
+            results.at[idx, "status"] = "no_daily_bias"
+            continue
+
+        invalidation = daily.iloc[-2]
+        continuation = daily.iloc[-1]
+        invalidation_close = float(invalidation["Close"])
+        continuation_close = float(continuation["Close"])
+        eq_disrespected = (
+            (bias == "Bullish" and invalidation_close < eq)
+            or (bias == "Bearish" and invalidation_close > eq)
+        )
+        swept = (
+            (bias == "Bullish" and float(invalidation["High"]) > reference_high)
+            or (bias == "Bearish" and float(invalidation["Low"]) < reference_low)
+        )
+        opposite_close = (
+            (bias == "Bullish" and continuation_close < invalidation_close)
+            or (bias == "Bearish" and continuation_close > invalidation_close)
+        )
+        if not (opposite_close and (eq_disrespected or swept)):
+            results.at[idx, "note"] = "daily bias intact or continuation unconfirmed"
+            continue
+
+        direction = -1 if bias == "Bullish" else 1
+        invalidation_type = "eq_disrespect" if eq_disrespected else "opposing_setup"
+        entry = continuation_close
+        sl = float(invalidation["High"] if direction < 0 else invalidation["Low"])
+        target = reference_low if direction < 0 else reference_high
+        risk = abs(entry - sl)
+        reward = abs(target - entry)
+        rr = reward / risk if risk > 0 else None
+        results.at[idx, "invalidation_direction"] = direction
+        results.at[idx, "invalidation_type"] = invalidation_type
+        results.at[idx, "bullish_match"] = direction > 0
+        results.at[idx, "bearish_match"] = direction < 0
+        results.at[idx, "final_signal"] = True
+        results.at[idx, "entry"] = entry
+        results.at[idx, "sl"] = sl
+        results.at[idx, "target"] = target
+        results.at[idx, "rr"] = rr
+        results.at[idx, "note"] = f"{bias} daily bias invalidated via {invalidation_type}; opposite continuation confirmed"
+        if verbose:
+            print(f"{symbol_upper}: {results.at[idx, 'note']}")
+
+    bullish_frame, bearish_frame = _extract_signal_frames(results)
+    return StrategyExecution(
+        name="daily_bias_invalidation",
+        results=results,
+        bullish=bullish_frame,
+        bearish=bearish_frame,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Weekly profile strategies (6-profile weekly series)
 #
@@ -1357,7 +1791,8 @@ def _pre_week_swing_extremes(daily: pd.DataFrame, as_of_date: date, sessions: in
 def _extract_weekly_profile_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     columns = [
         "symbol", "profile", "state", "direction", "entry", "sl", "target", "rr",
-        "track_mode", "tag", "swing_level", "note",
+        "track_mode", "tag", "swing_level", "triggered_level", "order_block_low",
+        "order_block_high", "order_block_midpoint", "mean_threshold", "note",
     ]
     bullish = (
         results.loc[results["bullish_match"] == True]
@@ -1373,6 +1808,37 @@ def _extract_weekly_profile_signal_frames(results: pd.DataFrame) -> tuple[pd.Dat
         .reset_index(drop=True)
         .copy()
     )
+    for frame in (bullish, bearish):
+        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
+    return bullish, bearish
+
+
+def _extract_points_of_interest_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    columns = ["symbol", "profile", "state", "direction", "triggered_level", "type", "note"]
+    bullish = (
+        results.loc[results["bullish_match"] == True]
+        .reindex(columns=columns)
+        .sort_values("symbol")
+        .reset_index(drop=True)
+    )
+    bearish = (
+        results.loc[results["bearish_match"] == True]
+        .reindex(columns=columns)
+        .sort_values("symbol")
+        .reset_index(drop=True)
+    )
+    for frame in (bullish, bearish):
+        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
+    return bullish, bearish
+
+
+def _extract_candle_3_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    columns = [
+        "symbol", "profile", "state", "direction", "triggered_level", "poi_type",
+        "candle_3_high", "candle_3_low", "equilibrium", "note",
+    ]
+    bullish = results.loc[results["bullish_match"] == True].reindex(columns=columns).sort_values("symbol").reset_index(drop=True)
+    bearish = results.loc[results["bearish_match"] == True].reindex(columns=columns).sort_values("symbol").reset_index(drop=True)
     for frame in (bullish, bearish):
         frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
     return bullish, bearish
@@ -2103,9 +2569,25 @@ def strategy_registry() -> Dict[str, StrategySpec]:
             name="multi_timeframe_bias",
             runner=run_multi_timeframe_bias,
         ),
+        "daily_bias_invalidation": StrategySpec(
+            name="daily_bias_invalidation",
+            runner=run_daily_bias_invalidation,
+        ),
         "protected_swings": StrategySpec(
             name="protected_swings",
             runner=run_protected_swings,
+        ),
+        "points_of_interest": StrategySpec(
+            name="points_of_interest",
+            runner=run_points_of_interest,
+        ),
+        "candle_3_closure": StrategySpec(
+            name="candle_3_closure",
+            runner=run_candle_3_closure,
+        ),
+        "propulsion_blocks": StrategySpec(
+            name="propulsion_blocks",
+            runner=run_propulsion_blocks,
         ),
     }
 
@@ -2162,7 +2644,7 @@ def run_strategies(
     timeframe: str = "daily",
 ) -> List[StrategyExecution]:
     normalized_timeframe = str(timeframe).strip().lower()
-    if "protected_swings" in strategy_names and normalized_timeframe not in PROTECTED_SWING_TIMEFRAMES:
+    if any(name in strategy_names for name in ("protected_swings", "points_of_interest", "candle_3_closure", "propulsion_blocks")) and normalized_timeframe not in PROTECTED_SWING_TIMEFRAMES:
         supported = ", ".join(PROTECTED_SWING_TIMEFRAMES)
         raise ValueError(f"Unsupported protected swing timeframe '{timeframe}'. Use: {supported}")
 
@@ -2178,6 +2660,7 @@ def run_strategies(
         "daily_fvg_sweep": 80,
         "ema5_sweep": 40,
         "multi_timeframe_bias": 600,
+        "daily_bias_invalidation": 600,
         "classic_expansion_sweep": 60,
         "midweek_reversal_sweep": 60,
         "consolidation_reversal_sweep": 60,
@@ -2185,6 +2668,9 @@ def run_strategies(
         "thursday_counter_sweep": 60,
          "tgif_setup_sweep": 60,
          "protected_swings": PROTECTED_SWINGS_LOOKBACK_DAYS,
+        "points_of_interest": PROTECTED_SWINGS_LOOKBACK_DAYS,
+        "candle_3_closure": PROTECTED_SWINGS_LOOKBACK_DAYS,
+        "propulsion_blocks": _PB_LOOKBACK,
      }
     max_lookback = max(lookback_by_strategy.get(name, 60) for name in strategy_names) if strategy_names else 60
     daily_map = _build_daily_map_for_symbols(symbols=symbols, as_of_date=as_of_date, max_lookback_days=max_lookback)
@@ -2201,7 +2687,7 @@ def run_strategies(
                     "print_values": print_values,
                     "daily_map": daily_map,
                 }
-                if name == "protected_swings":
+                if name in {"protected_swings", "points_of_interest", "candle_3_closure", "propulsion_blocks"}:
                     runner_kwargs["timeframe"] = normalized_timeframe
                 future_to_name[executor.submit(registry[name].runner, **runner_kwargs)] = name
 
@@ -2220,7 +2706,7 @@ def run_strategies(
             "print_values": print_values,
             "daily_map": daily_map,
         }
-        if name == "protected_swings":
+        if name in {"protected_swings", "propulsion_blocks"}:
             runner_kwargs["timeframe"] = normalized_timeframe
         execution = registry[name].runner(**runner_kwargs)
         executions.append(execution)

@@ -1,8 +1,29 @@
+### `propulsion_blocks`
+Point-in-time propulsion blocks: an order-block displacement, retracement into
+the block, opposite candle, and confirming displacement. The propulsion candle
+open is the entry reference and its midpoint is the invalidation threshold.
+After confirmation, the propulsion block is followed by a protected swing for
+the continuing directional structure.
+
 # Strategy Information
 
 This file contains the exact conditions used by strategy runners in `all_strategy.py`.
 
 ## Strategies
+
+### `points_of_interest`
+- Uses the latest protected-swing analysis without creating a trade plan.
+- Reports the triggered protected level and type: `fvg`, `sweep`, or `CISD`.
+- Selection is point-in-time from the active protected swing toward current price: FVG first, then a confirmed swing/liquidity level, then current CISD.
+- Output contains direction, triggered level, type, state, and note; entry, stop-loss, target, and R:R are intentionally omitted.
+- POI rows are informational and do not create backtest positions.
+
+### `candle_3_closure`
+- Reuses the active protected swing as the point of interest.
+- Requires Candle 2 to reach the POI and close in the opposing direction without a Candle 2 range sweep.
+- Requires Candle 3 to close beyond Candle 2's open in the protected direction.
+- Reports Candle 3 high, low, equilibrium, POI level, and direction only; Candle 4 expansion/retrace remains pending.
+- Informational only: it does not emit entry, stop-loss, target, R:R, or backtest positions.
 
 ### `inside_bar_pattern_daily_sweep`
 - Uses the latest 3 daily candles.
@@ -122,6 +143,15 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - Asset selection: evaluates all provided symbols but only emits signals for those with sufficient daily/weekly/monthly history; insufficient-data symbols are marked `no_data`.
 - Output columns: `daily_bias`, `weekly_bias`, `monthly_bias`, `confluence`, `direction`, `entry`, `sl`, `target`, `rr`.
 - SL is previous day's low (bullish) or high (bearish). Target is the furthest higher-timeframe high/low available (weekly or monthly).
+
+### `daily_bias_invalidation`
+- Establishes the daily bias from completed historical daily candles only.
+- Bullish bias is established when the latest historical close exceeds the prior day's high; bearish bias is the mirror condition.
+- The next completed candle must either close through the historical candle EQ or sweep the bias-side liquidity.
+- A following completed candle must continue in the opposite direction before a signal is emitted.
+- Bullish bias invalidation produces only bearish continuation signals; bearish bias invalidation produces only bullish continuation signals.
+- Wicks, consolidation, drift, and EQ breaches without opposite continuation are ignored.
+- The runner uses only data available through `as_of_date`, so live scans must provide closed bars and backtests cannot use future data.
 
 ### `protected_swings`
 - Self-contained strategy module (`src/protected_swings.py`) implementing ICT-style **protected swings**: a swing high/low that is expected to hold while the trend continues. Detection primitives are discrete and unit-tested in `tests/test_protected_swings.py`; the thin `run_protected_swings` runner in `all_strategy.py` plugs them into the standard `StrategyExecution` contract.

@@ -31,7 +31,11 @@ CORE_STRATEGIES = [
     ("daily_fvg_sweep", "Daily FVG Sweep"),
     ("ema5_sweep", "EMA5 Sweep"),
     ("multi_timeframe_bias", "Multi-TimeFrame Bias"),
+    ("daily_bias_invalidation", "Daily Bias Invalidation"),
     ("protected_swings", "Protected Swings"),
+    ("points_of_interest", "Points of Interest"),
+    ("candle_3_closure", "Candle 3 Closure"),
+    ("propulsion_blocks", "Propulsion Blocks"),
 ]
 
 WEEKLY_STRATEGIES = [
@@ -155,7 +159,7 @@ def run_scan(
     symbols: list[str] | None,
     strategy_names: list[str] | None,
     anchor_date: date | None = None,
-    timeframe: str = "weekly",
+    timeframe: str = "daily",
 ) -> dict[str, Any]:
     """Run the enabled/requested strategies over the given symbols."""
     module = load_module()
