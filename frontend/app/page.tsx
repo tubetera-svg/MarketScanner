@@ -368,6 +368,7 @@ export default function Home() {
   const [dateTransition, setDateTransition] = useState(false);
   const statusFlash = useStatusFlash(message);
   const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
+  const [includeSilverBulletTests, setIncludeSilverBulletTests] = useState(true);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
@@ -649,7 +650,7 @@ export default function Home() {
     setStrategyAnchorDate(next);
     if (autoRunOnDateChange) {
       runStrategyScan(next);
-      if (next < localDate()) testSilverBullet(next);
+      if (includeSilverBulletTests && next < localDate()) testSilverBullet(next);
     } else {
       setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
     }
@@ -660,7 +661,7 @@ export default function Home() {
     window.setTimeout(() => setDateTransition(false), 520);
     setStrategyAnchorDate(next);
     if (autoRunOnDateChange) runStrategyScan(next);
-    if (autoRunOnDateChange && next < localDate()) testSilverBullet(next);
+    if (includeSilverBulletTests && autoRunOnDateChange && next < localDate()) testSilverBullet(next);
   };
 
   useEffect(() => {
@@ -1248,6 +1249,14 @@ export default function Home() {
               onChange={(event) => setAutoRunOnDateChange(event.target.checked)}
             />
             Auto-run
+          </label>
+          <label className="strategy-date-auto" title="Include AM Silver Bullet when testing historical dates">
+            <input
+              type="checkbox"
+              checked={includeSilverBulletTests}
+              onChange={(event) => setIncludeSilverBulletTests(event.target.checked)}
+            />
+            AM SB
           </label>
         </div>
         {strategyDateNote && <p className="date-note">{strategyDateNote}</p>}
