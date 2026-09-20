@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
@@ -374,7 +374,21 @@ export default function Home() {
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
   const [inventoryNow, setInventoryNow] = useState(() => Date.now());
   const [chart, setChart] = useState<ChartTarget | null>(null);
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!activeTooltip) return;
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const trigger = target.closest('.info-trigger');
+      const tooltip = target.closest('.info-tooltip');
+      if (!trigger && !tooltip) {
+        setActiveTooltip(null);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [activeTooltip]);
   const openTradingViewChart = (event: React.MouseEvent<HTMLAnchorElement>, row: StrategyRow) => {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
     event.preventDefault();
@@ -439,7 +453,7 @@ export default function Home() {
       setSyncSummary({ ...summaryData!, results, synced, failed, gated });
       setMessage(
         `Sync complete — ${synced} ok, ${failed} failed` +
-        `${gated ? " (some deferred: market still open)" : ""} · ${summaryData!.lookback_days}d window`,
+        `${gated ? " (some deferred: market still open)" : ""} — ${summaryData!.lookback_days}d window`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Data sync failed");
@@ -531,8 +545,8 @@ export default function Home() {
       const hits = Array.isArray(data?.signals) ? data.signals.length : 0;
       setMessage(
         hits
-          ? `✦ Silver Bullet test complete for ${dateOverride} — ${hits} setup${hits === 1 ? "" : "s"} locked in ✦`
-          : `✦ Silver Bullet test complete for ${dateOverride} — no setups, market stayed quiet ✦`,
+          ? `? Silver Bullet test complete for ${dateOverride} — ${hits} setup${hits === 1 ? "" : "s"} locked in ?`
+          : `? Silver Bullet test complete for ${dateOverride} — no setups, market stayed quiet ?`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not test Silver Bullet date");
@@ -611,7 +625,7 @@ export default function Home() {
       setTrackerAlerts(alerts);
       const trig = alerts.filter((a) => a.kind === "triggered").length;
       const exits = alerts.filter((a) => a.kind === "closed_sl" || a.kind === "closed_target").length;
-      setStrategyDateNote(`Testing date ${data.resolved_date ?? dateOverride}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} · ${groups.length} strategies · ${bulls} bull / ${bears} bear matches`);
+      setStrategyDateNote(`Testing date ${data.resolved_date ?? dateOverride}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} — ${groups.length} strategies — ${bulls} bull / ${bears} bear matches`);
       setMessage(`Strategy scan complete - ${bulls} bullish, ${bears} bearish${trig ? ` - ${trig} new trigger(s)` : ""}${exits ? ` - ${exits} exit(s)` : ""}`);
       await loadTracker(selected);
     } catch (error) {
@@ -849,7 +863,7 @@ export default function Home() {
       const added = symbols.find((entry) => entry.symbol === newSymbol.trim().toUpperCase());
       setSelected((current) => [...current, newSymbol.trim().toUpperCase()]);
       setNewSymbol("");
-      setWatchlistMessage(added?.scope ? `Added · ${added.scope}` : "Added");
+      setWatchlistMessage(added?.scope ? `Added — ${added.scope}` : "Added");
     } catch (error) {
       setWatchlistMessage(error instanceof Error ? error.message : "Could not add symbol");
     }
@@ -897,7 +911,7 @@ export default function Home() {
         <span className={`signal-state ${setup.state}`}>{setup.state}</span>
         {setup.entry != null && (
           <small>
-            E {setup.entry}{setup.sl != null ? ` · SL ${setup.sl}` : ""}{setup.target != null ? ` · T ${setup.target}` : ""}{setup.rr != null ? ` · R:R ${setup.rr}` : ""}
+            E {setup.entry}{setup.sl != null ? ` — SL ${setup.sl}` : ""}{setup.target != null ? ` — T ${setup.target}` : ""}{setup.rr != null ? ` — R:R ${setup.rr}` : ""}
           </small>
         )}
         {setup.track_mode && <span className="signal-track">{setup.track_mode === "live" ? "LIVE" : "EOD"}</span>}
@@ -905,7 +919,7 @@ export default function Home() {
           {setup.state === "triggered"
             ? (setup.triggered_date ?? setup.events?.find((e) => e.state === "triggered")?.date ?? setup.last_seen)
             : setup.last_seen}
-          <span className="week-of"> · wk {setup.week}</span>
+          <span className="week-of"> — wk {setup.week}</span>
         </small>
       </div>
     );
@@ -926,7 +940,7 @@ export default function Home() {
           {markets && (
             <>
               <span className={`market-chip ${markets.nse ? "open" : "closed"}`}>NSE {markets.nse ? "OPEN" : "CLOSED"}</span>
-              <span className={`market-chip ${markets.forex_commodities ? "open" : "closed"}`}>FX · CMDTY {markets.forex_commodities ? "OPEN" : "CLOSED"}</span>
+              <span className={`market-chip ${markets.forex_commodities ? "open" : "closed"}`}>FX — CMDTY {markets.forex_commodities ? "OPEN" : "CLOSED"}</span>
             </>
           )}
           <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
@@ -935,7 +949,7 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><select multiple aria-label="Filter watchlist (ctrl/cmd-click to multi-select)" size={6} value={watchScopes as string[]} onChange={(event) => { const nextScopes = Array.from(event.target.selectedOptions).map((option) => option.value as WatchScope); setWatchScopes(nextScopes); setSelected(watchlist.filter((item) => matchesScopes_check(item, nextScopes)).map((item) => item.symbol)); }}><option>All</option><option>IPO</option><option>Nifty indexes</option><option>Nifty 50</option><option>Nifty Bank</option><option>Nifty IT</option><option>Nifty Auto</option><option>Nifty Pharma</option><option>F&amp;O</option><option>Crypto</option><option>Commodities</option><option>Forex</option></select><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => setWatchScopes(["All"])}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => setWatchScopes((current) => current.includes(opt) ? current.filter((s) => s !== opt) : [...current, opt])}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }}>
         <section className="auto-scan">
@@ -945,35 +959,35 @@ export default function Home() {
         </select>
         {schedule?.running ? (
           <>
-            <button className="test-button stop" type="button" onClick={stopSchedule}>Stop auto-scan</button>
-            <span className="auto-live"><span className="pulse" />{schedule.scanning ? "SCAN IN PROGRESS…" : `RUNNING · NEXT IN ${formatCountdown(countdown)}`}</span>
+            <button className="test-button stop button-secondary" type="button" onClick={stopSchedule}>Stop auto-scan</button>
+            <span className="auto-live"><span className="pulse" />{schedule.scanning ? "SCAN IN PROGRESS—" : `RUNNING — NEXT IN ${formatCountdown(countdown)}`}</span>
           </>
         ) : (
-          <button className="test-button" type="button" onClick={() => startSchedule(Number(intervalMinutes))}>Start auto-scan</button>
+          <button className="test-button button-secondary" type="button" onClick={() => startSchedule(Number(intervalMinutes))}>Start auto-scan</button>
         )}
         <button className="scan-now" type="button" onClick={runScan} disabled={loading || selected.length === 0}>
           <RefreshCw size={14} className={loading ? "spin" : undefined} />
-          {loading ? "Scanning…" : "Run scan"}
+          {loading ? "Scanning—" : "Run scan"}
         </button>
-        {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` · last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` · ${selected.length} selected symbols` : " · full watchlist"}</small>}
-        <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
+        {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` — last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` — ${selected.length} selected symbols` : " — full watchlist"}</small>}
+        <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
       </section>
               <section className="auto-scan" aria-label="AM Silver Bullet live scanner">
                 <span className="auto-title"><Timer size={14} /> AM Silver Bullet</span>
                 {silverBullet?.running ? (
                   <>
-                    <button className="test-button stop" type="button" onClick={stopSilverBullet}>Stop live scan</button>
-                    <span className="auto-live"><span className="pulse" />{silverBullet.signals.length ? `${silverBullet.signals.length} alert(s)` : "WATCHING 10:00–11:00 NY"}</span>
+                    <button className="test-button stop button-secondary" type="button" onClick={stopSilverBullet}>Stop live scan</button>
+                    <span className="auto-live"><span className="pulse" />{silverBullet.signals.length ? `${silverBullet.signals.length} alert(s)` : "WATCHING 10:00—11:00 NY"}</span>
                   </>
                 ) : (
                   <>
-                    <button className="test-button" type="button" onClick={startSilverBullet} disabled={silverBulletLoading}>
+                    <button className="test-button button-primary" type="button" onClick={startSilverBullet} disabled={silverBulletLoading}>
                       {silverBulletLoading && <RefreshCw size={12} className="spin" />}
-                      {silverBulletLoading ? "Loading…" : "Start live scan"}
+                      {silverBulletLoading ? "Loading—" : "Start live scan"}
                     </button>
-                    <button className="test-button" type="button" onClick={() => testSilverBullet()} disabled={silverBulletLoading}>
+                    <button className="test-button button-secondary" type="button" onClick={() => testSilverBullet()} disabled={silverBulletLoading}>
                       {silverBulletLoading && <RefreshCw size={12} className="spin" />}
-                      {silverBulletLoading ? "Loading…" : `Test ${strategyAnchorDate}`}
+                      {silverBulletLoading ? "Loading—" : `Test ${strategyAnchorDate}`}
                     </button>
                   </>
                 )}
@@ -982,11 +996,11 @@ export default function Home() {
               </section>
             {silverBulletLoading || silverBullet?.scan_date ? (
               <section className={`panel silver-bullet-results${dateTransition ? " date-refresh" : ""}`} style={{ marginBottom: 16 }}>
-                <div className="panel-heading"><span>AM Silver Bullet alerts</span><small>New York session · commodities only</small></div>
+                <div className="panel-heading"><span>AM Silver Bullet alerts</span><small>New York session — commodities only</small></div>
                 {silverBulletLoading ? (
                   <div className="silver-bullet-loading" role="status" aria-live="polite">
                     <RefreshCw size={15} className="spin" />
-                    <span>Loading Silver Bullet results…</span>
+                    <span>Loading Silver Bullet results—</span>
                   </div>
                 ) : silverBullet?.signals.length ? (
                   <div className="tracker-list">
@@ -994,7 +1008,7 @@ export default function Home() {
                       <div key={signal.id} className={`signal-chip ${signal.direction === "bullish" ? "bull" : "bear"}`}>
                         {signal.direction === "bullish" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                         <strong>{signal.symbol}</strong>
-                        <small>Trigger={signal.entry} · Time={new Date(signal.signal_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} NY</small>
+                        <small>Trigger={signal.entry} — Time={new Date(signal.signal_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} NY</small>
                       </div>
                     ))}
                   </div>
@@ -1003,31 +1017,96 @@ export default function Home() {
                 )}
               </section>
             ) : null}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", flex: "1 1 320px", minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", marginTop: 8 }}>
         {dateNote && <p className="date-note">Testing date: {dateNote.requested}{dateNote.reason ? ` was unavailable (${dateNote.reason}); using ${dateNote.resolved}.` : ` using ${dateNote.resolved}.`}</p>}
         {syncSummary && (
           <div className="history-results">
-            <p className="kicker">Sync summary · {syncSummary.start_date ?? "lookback"} to {syncSummary.end_date ?? syncSummary.anchor_date}</p>
-            <span>{syncSummary.synced} synced{syncSummary.failed > 0 ? ` · ${syncSummary.failed} failed` : ""}{syncSummary.gated ? " · some deferred (market open)" : ""}</span>
+            <p className="kicker">Sync summary — {syncSummary.start_date ?? "lookback"} to {syncSummary.end_date ?? syncSummary.anchor_date}</p>
+            <span>{syncSummary.synced} synced{syncSummary.failed > 0 ? ` — ${syncSummary.failed} failed` : ""}{syncSummary.gated ? " — some deferred (market open)" : ""}</span>
             {syncSummary.results.filter((row) => row.notes?.some((note: string) => note.startsWith("sync failed") || note.includes("alias"))).map((row) => (
               <span key={row.symbol} className="sync-note"><strong>{row.symbol}</strong> {row.notes?.join("; ")}</span>
             ))}
           </div>
         )}
       </div>
-      </section>
-      <section className={`panel strategy-panel${dateTransition ? " date-refresh" : ""}`}>
-         <div className="panel-heading">
-           <span>Strategy profiles</span>
-           <div className="panel-heading-actions">
-             <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
-             <button className="test-button" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
-               <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
-               {strategyScanning ? "Scanning…" : "Run strategies"}
-             </button>
-           </div>
-         </div>
-         <div className="protected-swings-bar">
+      </section>      <section className="panel tracker-panel">
+        <p className="kicker">Cross-scan setup tracker</p>
+        <h3>
+          Weekly-profile setups
+          <span className="tracker-info" role="button" tabIndex={0} aria-label="How to read the tracker" onClick={() => setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker'); } }}>
+            <Info size={13} />
+            <span className={`info-tooltip${activeTooltip === 'tracker' ? " open" : ""}`}>
+              Each row is a weekly-profile setup followed across scans.{"\n"}
+              State: armed = forming (no trigger yet) — triggered = signal confirmed (in the trade) — closed_sl / closed_target = stop or target hit — invalidated = thesis failed — expired = week ended without triggering.{"\n"}
+              E = planned entry (— confirmation close) — SL = invalidation extreme + buffer — T = opposite liquidity pool — R:R = target — risk.{"\n"}
+              LIVE = trackable intraday — EOD = NSE, confirm only after close.
+            </span>
+          </span>
+        </h3>
+        <div className="tracker-head-actions">
+          <small className="auto-meta">
+            {trackerSetups.filter((s) => s.state === "armed" || s.state === "triggered").length} active
+            {" — "}
+            {trackerSetups.length} tracked
+          </small>
+          <div className="tracker-groupby" role="group" aria-label="Group tracker results by">
+            <span className="filter-label">Group</span>
+            <div className="filters">
+              {(["none", "symbol", "week", "month"] as const).map((option) => (
+                <button key={option} type="button" className={`${trackerGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setTrackerGroupBy(option)}>
+                  {option === "none" ? "Off" : option === "symbol" ? "Symbol" : option === "week" ? "Week" : "Month"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button type="button" className="test-button button-secondary" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }}>
+            {trackerWatchlistOnly ? "Watchlist only" : "All setups"}
+          </button>
+        </div>
+        {trackerAlerts.length > 0 && (
+          <div className="tracker-alerts">
+            {trackerAlerts.map((a, i) => (
+              <span key={i} className={`alert ${a.kind}`}>
+                {a.symbol} {a.kind.replaceAll("_", " ")}
+                {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="tracker-list">
+          {trackerSetups.length === 0 ? (
+            <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
+          ) : trackerGroupBy === "none" ? (
+            trackerSetups.map(renderTrackerRow)
+          ) : (
+            trackerGroups!.map((group) => (
+              <div key={group.key} className="tracker-group">
+                <div className="tracker-group-head">
+                  <span className="tracker-group-label">{group.label}</span>
+                  <span className="tracker-group-count">{group.items.length}</span>
+                  {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
+                  {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
+                </div>
+                <div className="tracker-group-items">
+                  {group.items.map(renderTrackerRow)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        </section>
+<details className="panel strategy-panel">
+  <summary className="panel-heading">
+    <span>Strategy profiles</span>
+    <div className="panel-heading-actions">
+      <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
+      <button className="test-button button-primary" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
+        <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
+        {strategyScanning ? "Scanning—" : "Run strategies"}
+      </button>
+    </div>
+  </summary>
+          <div className="protected-swings-bar">
            <button
              type="button"
              className={`ps-chip${strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " active" : ""}`}
@@ -1037,7 +1116,7 @@ export default function Home() {
              }}
              title="Toggle Protected Swings strategy"
            >
-             Protected Swings{strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " ✓" : ""}
+             Protected Swings{strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " ?" : ""}
            </button>
            <select
              id="protected-swing-timeframe"
@@ -1083,7 +1162,7 @@ export default function Home() {
                 return (
                   <button className="toggle-text" title={allOn ? "Turn all Core OFF" : "Turn all Core ON"} onClick={() => setGroupStrategies("Core", !allOn)}>
                     {allOn ? "Clear" : "Select all"}
-                    {partial && <span className="day-marker" style={{ marginLeft: 4 }}>…</span>}
+                    {partial && <span className="day-marker" style={{ marginLeft: 4 }}>—</span>}
                   </button>
                 );
               })()}
@@ -1095,9 +1174,9 @@ export default function Home() {
                     {flag.label}
                   </button>
                   {flag.description && (
-                    <span className="info-trigger" aria-label={`Info: ${flag.label}`}>
+                    <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
                       <Info size={12} />
-                      <span className="info-tooltip">{flag.description}</span>
+                      <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
                     </span>
                   )}
                 </span>
@@ -1115,7 +1194,7 @@ export default function Home() {
                 return (
                   <button className="toggle-text" title={allOn ? "Turn all Weekly profiles OFF" : "Turn all Weekly profiles ON"} onClick={() => setGroupStrategies("Weekly profiles", !allOn)}>
                     {allOn ? "Clear" : "Select all"}
-                    {partial && <span className="day-marker" style={{ marginLeft: 4 }}>…</span>}
+                    {partial && <span className="day-marker" style={{ marginLeft: 4 }}>—</span>}
                   </button>
                 );
               })()}
@@ -1130,9 +1209,9 @@ export default function Home() {
                     )}
                   </button>
                   {flag.description && (
-                    <span className="info-trigger" aria-label={`Info: ${flag.label}`}>
+                    <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
                       <Info size={12} />
-                      <span className="info-tooltip">{flag.description}</span>
+                      <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
                     </span>
                   )}
                 </span>
@@ -1193,13 +1272,13 @@ export default function Home() {
                         {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
                         {group.strategy !== "protected_swings" && row.entry != null && (
                           (() => {
-                            const detail = "E " + row.entry + (row.sl != null ? ` · SL ${row.sl}` : "") + (row.target != null ? ` · T ${row.target}` : "") + (row.rr != null ? ` · R:R ${row.rr}` : "") + (row.tag ? ` · ${row.tag}` : "");
+                            const detail = "E " + row.entry + (row.sl != null ? ` — SL ${row.sl}` : "") + (row.target != null ? ` — T ${row.target}` : "") + (row.rr != null ? ` — R:R ${row.rr}` : "") + (row.tag ? ` — ${row.tag}` : "");
                             return <small title={detail}>{detail}</small>;
                           })()
                         )}
                         {group.strategy === "propulsion_blocks" && row.triggered_level != null && (
                           <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
-                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` · OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
+                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` — OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
                           </small>
                         )}
                         {group.strategy === "protected_swings" && row.tag && (
@@ -1216,7 +1295,7 @@ export default function Home() {
                         {(row.flip_level != null || row.signal_date) && (
                           <small>
                             {row.flip_level != null && `Lvl ${row.flip_level}`}
-                            {row.signal_date ? ` · ${row.signal_date}` : ""}
+                            {row.signal_date ? ` — ${row.signal_date}` : ""}
                           </small>
                         )}
                         {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
@@ -1236,13 +1315,13 @@ export default function Home() {
                         {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
                         {group.strategy !== "protected_swings" && row.entry != null && (
                           (() => {
-                            const detail = "E " + row.entry + (row.sl != null ? ` · SL ${row.sl}` : "") + (row.target != null ? ` · T ${row.target}` : "") + (row.rr != null ? ` · R:R ${row.rr}` : "") + (row.tag ? ` · ${row.tag}` : "");
+                            const detail = "E " + row.entry + (row.sl != null ? ` — SL ${row.sl}` : "") + (row.target != null ? ` — T ${row.target}` : "") + (row.rr != null ? ` — R:R ${row.rr}` : "") + (row.tag ? ` — ${row.tag}` : "");
                             return <small title={detail}>{detail}</small>;
                           })()
                         )}
                         {group.strategy === "propulsion_blocks" && row.triggered_level != null && (
                           <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
-                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` · OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
+                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` — OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
                           </small>
                         )}
                         {group.strategy === "protected_swings" && row.tag && (
@@ -1259,7 +1338,7 @@ export default function Home() {
                         {(row.flip_level != null || row.signal_date) && (
                           <small>
                             {row.flip_level != null && `Lvl ${row.flip_level}`}
-                            {row.signal_date ? ` · ${row.signal_date}` : ""}
+                            {row.signal_date ? ` — ${row.signal_date}` : ""}
                           </small>
                         )}
                         {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
@@ -1273,73 +1352,7 @@ export default function Home() {
             ))}
           </div>
         )}
-      </section>
-      <section className="panel tracker-panel">
-        <p className="kicker">Cross-scan setup tracker</p>
-        <h3>
-          Weekly-profile setups
-          <span className="tracker-info" aria-label="How to read the tracker">
-            <Info size={13} />
-            <span className="info-tooltip">
-              Each row is a weekly-profile setup followed across scans.{"\n"}
-              State: armed = forming (no trigger yet) · triggered = signal confirmed (in the trade) · closed_sl / closed_target = stop or target hit · invalidated = thesis failed · expired = week ended without triggering.{"\n"}
-              E = planned entry (≈ confirmation close) · SL = invalidation extreme + buffer · T = opposite liquidity pool · R:R = target ÷ risk.{"\n"}
-              LIVE = trackable intraday · EOD = NSE, confirm only after close.
-            </span>
-          </span>
-        </h3>
-        <div className="tracker-head-actions">
-          <small className="auto-meta">
-            {trackerSetups.filter((s) => s.state === "armed" || s.state === "triggered").length} active
-            {" · "}
-            {trackerSetups.length} tracked
-          </small>
-          <div className="tracker-groupby" role="group" aria-label="Group tracker results by">
-            <span className="filter-label">Group</span>
-            <div className="filters">
-              {(["none", "symbol", "week", "month"] as const).map((option) => (
-                <button key={option} type="button" className={trackerGroupBy === option ? "active" : ""} onClick={() => setTrackerGroupBy(option)}>
-                  {option === "none" ? "Off" : option === "symbol" ? "Symbol" : option === "week" ? "Week" : "Month"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button type="button" className="test-button" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }}>
-            {trackerWatchlistOnly ? "Watchlist only" : "All setups"}
-          </button>
-        </div>
-        {trackerAlerts.length > 0 && (
-          <div className="tracker-alerts">
-            {trackerAlerts.map((a, i) => (
-              <span key={i} className={`alert ${a.kind}`}>
-                {a.symbol} {a.kind.replaceAll("_", " ")}
-                {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="tracker-list">
-          {trackerSetups.length === 0 ? (
-            <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
-          ) : trackerGroupBy === "none" ? (
-            trackerSetups.map(renderTrackerRow)
-          ) : (
-            trackerGroups!.map((group) => (
-              <div key={group.key} className="tracker-group">
-                <div className="tracker-group-head">
-                  <span className="tracker-group-label">{group.label}</span>
-                  <span className="tracker-group-count">{group.items.length}</span>
-                  {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
-                  {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
-                </div>
-                <div className="tracker-group-items">
-                  {group.items.map(renderTrackerRow)}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-        </section>
+</details>
         {chart && (
           <TradingViewChartModal
             key={chart.symbol}
@@ -1353,3 +1366,4 @@ export default function Home() {
     </main>
   );
 }
+
