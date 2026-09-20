@@ -209,7 +209,7 @@ export default function IPOPage() {
           <h1>IPO tracker · since listing</h1>
         </div>
         <div className="top-actions">
-          <button className="scan-now" type="button" onClick={refreshAll} disabled={loading}>
+          <button className="scan-now" type="button" onClick={refreshAll} disabled={loading} title="Refresh IPO performance from the local database">
             <RefreshCw size={14} className={loading ? "spin" : undefined} />
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -222,11 +222,11 @@ export default function IPOPage() {
       <section className="auto-scan">
         <span className="auto-title"><Rocket size={14} /> Automation</span>
         {status?.running ? (
-          <button className="test-button stop" type="button" onClick={() => runScanner("stop")} disabled={scanning}>Stop IPO scan</button>
+          <button className="test-button stop" type="button" onClick={() => runScanner("stop")} disabled={scanning} title="Stop the automatic IPO detection scanner">Stop IPO scan</button>
         ) : (
           <>
-            <button className="test-button" type="button" onClick={() => runScanner("start")} disabled={scanning}>Start IPO scan</button>
-            <button className="test-button" type="button" onClick={() => runScanner("run-once")} disabled={scanning}>Scan now</button>
+            <button className="test-button" type="button" onClick={() => runScanner("start")} disabled={scanning} title="Start automatic IPO detection (runs on a schedule)">Start IPO scan</button>
+            <button className="test-button" type="button" onClick={() => runScanner("run-once")} disabled={scanning} title="Run IPO detection once immediately (bhavcopy scan)">Scan now</button>
           </>
         )}
         <small className="auto-meta">
@@ -316,6 +316,7 @@ export default function IPOPage() {
               setMaxPct("");
               setNeverAbove(false);
             }}
+            title="Clear all active filters"
           >
             Clear filters
           </button>

@@ -1,5 +1,5 @@
 {
-  "candle_3_closure": true,
+  "candle_3_closure": false,
   "classic_expansion_sweep": false,
   "consolidation_reversal_sweep": false,
   "daily_bias_invalidation": false,

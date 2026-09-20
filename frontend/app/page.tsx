@@ -32,6 +32,28 @@ type ScheduleStatus = {
   last_error: string | null;
   run_count: number;
 };
+type SilverBulletSignal = {
+  id: string;
+  symbol: string;
+  direction: "bullish" | "bearish";
+  signal_time: string;
+  range_high: number;
+  range_low: number;
+  entry: number;
+  stop_loss: number;
+  target: number;
+  note: string;
+};
+type SilverBulletStatus = {
+  running: boolean;
+  symbols: string[];
+  signals: SilverBulletSignal[];
+  last_check_at: string | null;
+  next_check_at: string | null;
+  last_error: string | null;
+  run_count: number;
+  scan_date: string | null;
+};
 type StrategyFlag = { name: string; label: string; group: string; enabled: boolean; runnable: boolean; description?: string | null };
 type StrategyRow = {
   symbol: string;
@@ -114,7 +136,7 @@ const WEEKLY_PROFILE_DAYS: Record<string, string> = {
 };
 
 const baseSymbol = (symbol: string) => symbol.split(":").pop() ?? symbol;
-const isCommodity = (symbol: string) => /(?:NATURALGAS|UKOIL|USOIL|XAUUSD|XAGUSD|COPPER|SILVER|GOLD)/i.test(symbol);
+const isCommodity = (symbol: string) => /(?:COMEX|NYMEX|CBOT|MCX|NATURALGAS|NATGAS|UKOIL|USOIL|XAUUSD|XAGUSD|COPPER|SILVER|GOLD|CRUDE|PLATINUM|PALLADIUM|WHEAT|CORN|SOYBEAN|COCOA|COFFEE|SUGAR|COTTON)/i.test(symbol);
 const matchesScope_check = (item: { symbol: string; session: string; scope?: string }, scope: WatchScope) => {
   const symbol = item.symbol.toUpperCase();
   const base = baseSymbol(symbol);
@@ -304,6 +326,9 @@ export default function Home() {
     gated: boolean;
   } | null>(null);
   const [schedule, setSchedule] = useState<ScheduleStatus | null>(null);
+    const [silverBullet, setSilverBullet] = useState<SilverBulletStatus | null>(null);
+  const [silverBulletLoading, setSilverBulletLoading] = useState(false);
+    const announcedSilverBulletRef = useRef<Set<string>>(new Set());
   const [intervalMinutes, setIntervalMinutes] = useState("15");
   const [countdown, setCountdown] = useState(0);
   const announcedScanRef = useRef<string | null>(null);
@@ -315,6 +340,7 @@ export default function Home() {
   const [strategyScanning, setStrategyScanning] = useState(false);
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
   const [strategyDateNote, setStrategyDateNote] = useState<string | null>(null);
+  const [dateTransition, setDateTransition] = useState(false);
   const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
@@ -423,6 +449,60 @@ export default function Home() {
     }
   };
 
+  const startSilverBullet = async () => {
+    if (silverBulletLoading) return;
+    setSilverBulletLoading(true);
+    try {
+      const commodities = selected.filter((symbol) => isCommodity(symbol));
+      const response = await fetch(`${API}/api/silver-bullet/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: commodities }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "Could not start Silver Bullet scanner");
+      setSilverBullet(data);
+      setMessage(commodities.length ? "AM Silver Bullet live scanner started" : "Select commodity symbols first");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not start Silver Bullet scanner");
+    } finally {
+      setSilverBulletLoading(false);
+    }
+  };
+
+  const stopSilverBullet = async () => {
+    try {
+      const response = await fetch(`${API}/api/silver-bullet/stop`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "Could not stop Silver Bullet scanner");
+      setSilverBullet(data);
+      setMessage("AM Silver Bullet scanner stopped");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not stop Silver Bullet scanner");
+    }
+  };
+
+  const testSilverBullet = async (dateOverride = strategyAnchorDate) => {
+    if (silverBulletLoading) return;
+    setSilverBulletLoading(true);
+    try {
+      const commodities = selected.filter((symbol) => isCommodity(symbol));
+      const response = await fetch(`${API}/api/silver-bullet/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anchor_date: dateOverride, symbols: commodities }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "Could not test Silver Bullet date");
+      setSilverBullet(data);
+      setMessage(`Silver Bullet test complete for ${dateOverride}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not test Silver Bullet date");
+    } finally {
+      setSilverBulletLoading(false);
+    }
+  };
+
   const changeInterval = (value: string) => {
     setIntervalMinutes(value);
     if (schedule?.running) startSchedule(Number(value));
@@ -512,17 +592,23 @@ export default function Home() {
       current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
     }
     const next = current.toISOString().slice(0, 10);
+    setDateTransition(true);
+    window.setTimeout(() => setDateTransition(false), 520);
     setStrategyAnchorDate(next);
     if (autoRunOnDateChange) {
       runStrategyScan(next);
+      if (next < localDate()) testSilverBullet(next);
     } else {
       setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
     }
   };
 
   const handleStrategyDateChange = (next: string) => {
+    setDateTransition(true);
+    window.setTimeout(() => setDateTransition(false), 520);
     setStrategyAnchorDate(next);
     if (autoRunOnDateChange) runStrategyScan(next);
+    if (autoRunOnDateChange && next < localDate()) testSilverBullet(next);
   };
 
   useEffect(() => {
@@ -643,6 +729,34 @@ export default function Home() {
     return () => window.clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schedule?.running, schedule?.next_run_at]);
+
+  useEffect(() => {
+    fetch(`${API}/api/silver-bullet`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data: SilverBulletStatus) => setSilverBullet(data))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!silverBullet?.running) return;
+    const poll = () => {
+      fetch(`${API}/api/silver-bullet`, { cache: "no-store" })
+        .then((response) => response.json())
+        .then((data: SilverBulletStatus) => setSilverBullet(data))
+        .catch(() => {});
+    };
+    poll();
+    const id = window.setInterval(poll, 15000);
+    return () => window.clearInterval(id);
+  }, [silverBullet?.running]);
+
+  useEffect(() => {
+    for (const signal of silverBullet?.signals ?? []) {
+      if (announcedSilverBulletRef.current.has(signal.id)) continue;
+      announcedSilverBulletRef.current.add(signal.id);
+      playAlertSound(true);
+    }
+  }, [silverBullet?.signals]);
 
   // Ring the UI alert when a fresh scan reports Tier A activity — mirrors the
   // old terminal winsound alert (double-chirp for Tier A + liquidity event).
@@ -804,9 +918,54 @@ export default function Home() {
           {loading ? "Scanning…" : "Run scan"}
         </button>
         {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` · last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` · ${selected.length} selected symbols` : " · full watchlist"}</small>}
-      </section>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", flex: "1 1 320px", minWidth: 0 }}>
         <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
+      </section>
+              <section className="auto-scan" aria-label="AM Silver Bullet live scanner">
+                <span className="auto-title"><Timer size={14} /> AM Silver Bullet</span>
+                {silverBullet?.running ? (
+                  <>
+                    <button className="test-button stop" type="button" onClick={stopSilverBullet}>Stop live scan</button>
+                    <span className="auto-live"><span className="pulse" />{silverBullet.signals.length ? `${silverBullet.signals.length} alert(s)` : "WATCHING 10:00–11:00 NY"}</span>
+                  </>
+                ) : (
+                  <>
+                    <button className="test-button" type="button" onClick={startSilverBullet} disabled={silverBulletLoading}>
+                      {silverBulletLoading && <RefreshCw size={12} className="spin" />}
+                      {silverBulletLoading ? "Loading…" : "Start live scan"}
+                    </button>
+                    <button className="test-button" type="button" onClick={() => testSilverBullet()} disabled={silverBulletLoading}>
+                      {silverBulletLoading && <RefreshCw size={12} className="spin" />}
+                      {silverBulletLoading ? "Loading…" : `Test ${strategyAnchorDate}`}
+                    </button>
+                  </>
+                )}
+                {silverBullet?.last_error && <small className="auto-meta silver-bullet-failure" title={`Failure: ${silverBullet.last_error}`}>Failure: {silverBullet.last_error}</small>}
+                {silverBullet?.scan_date && !silverBullet.running && <small className="auto-meta">Showing {silverBullet.scan_date}</small>}
+              </section>
+            {silverBulletLoading || silverBullet?.scan_date ? (
+              <section className={`panel silver-bullet-results${dateTransition ? " date-refresh" : ""}`} style={{ marginBottom: 16 }}>
+                <div className="panel-heading"><span>AM Silver Bullet alerts</span><small>New York session · commodities only</small></div>
+                {silverBulletLoading ? (
+                  <div className="silver-bullet-loading" role="status" aria-live="polite">
+                    <RefreshCw size={15} className="spin" />
+                    <span>Loading Silver Bullet results…</span>
+                  </div>
+                ) : silverBullet?.signals.length ? (
+                  <div className="tracker-list">
+                    {silverBullet.signals.slice().reverse().map((signal) => (
+                      <div key={signal.id} className={`signal-chip ${signal.direction === "bullish" ? "bull" : "bear"}`}>
+                        {signal.direction === "bullish" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                        <strong>{signal.symbol}</strong>
+                        <small>Trigger={signal.entry} · Time={new Date(signal.signal_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} NY</small>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="date-note">No valid Silver Bullet setup for {silverBullet?.scan_date}.</p>
+                )}
+              </section>
+            ) : null}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", flex: "1 1 320px", minWidth: 0 }}>
         {dateNote && <p className="date-note">Testing date: {dateNote.requested}{dateNote.reason ? ` was unavailable (${dateNote.reason}); using ${dateNote.resolved}.` : ` using ${dateNote.resolved}.`}</p>}
         {syncSummary && (
           <div className="history-results">
@@ -819,7 +978,7 @@ export default function Home() {
         )}
       </div>
       </section>
-      <section className="panel strategy-panel">
+      <section className={`panel strategy-panel${dateTransition ? " date-refresh" : ""}`}>
          <div className="panel-heading">
            <span>Strategy profiles</span>
            <div className="panel-heading-actions">

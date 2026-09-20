@@ -8,9 +8,10 @@ import os
 import re
 import sys
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +64,15 @@ class StrategyFlagUpdate(BaseModel):
 
 class ScheduleStartRequest(BaseModel):
     interval_minutes: int = Field(ge=1, le=1440)
+    symbols: list[str] | None = Field(default=None, max_length=500)
+
+
+class SilverBulletStartRequest(BaseModel):
+    symbols: list[str] | None = Field(default=None, max_length=500)
+
+
+class SilverBulletTestRequest(BaseModel):
+    anchor_date: date
     symbols: list[str] | None = Field(default=None, max_length=500)
 
 
@@ -420,6 +430,130 @@ class ScanScheduler:
                 self.scanning = False
 
 
+class SilverBulletLiveScanner:
+    """Poll commodity 15-minute bars during the New York AM Silver Bullet window."""
+
+    NEW_YORK = ZoneInfo("America/New_York")
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task[None] | None = None
+        self.symbols: list[str] | None = None
+        self.signals: list[dict[str, Any]] = []
+        self.last_check_at: str | None = None
+        self.next_check_at: str | None = None
+        self.last_error: str | None = None
+        self.run_count = 0
+        self.scan_date: str | None = None
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "running": self.task is not None and not self.task.done(),
+            "symbols": self.symbols or [],
+            "signals": self.signals,
+            "last_check_at": self.last_check_at,
+            "next_check_at": self.next_check_at,
+            "last_error": self.last_error,
+            "run_count": self.run_count,
+            "scan_date": self.scan_date,
+        }
+
+    def start(self, symbols: list[str] | None) -> dict[str, Any]:
+        self.stop()
+        requested = [str(value).strip().upper() for value in (symbols or []) if str(value).strip()]
+        if not requested:
+            from silver_bullet import is_commodity_symbol
+
+            requested = [
+                str(entry["symbol"]).upper()
+                for entry in service.watchlist()
+                if is_commodity_symbol(str(entry.get("symbol", "")))
+            ]
+        self.symbols = list(dict.fromkeys(requested))
+        self.signals = []
+        self.last_error = None
+        self.scan_date = date.today().isoformat()
+        self.task = asyncio.create_task(self._loop())
+        return self.status()
+
+    async def test(self, anchor_date: date, symbols: list[str] | None) -> dict[str, Any]:
+        self.stop()
+        requested = [str(value).strip().upper() for value in (symbols or []) if str(value).strip()]
+        if not requested:
+            from silver_bullet import is_commodity_symbol
+
+            requested = [
+                str(entry["symbol"]).upper()
+                for entry in service.watchlist()
+                if is_commodity_symbol(str(entry.get("symbol", "")))
+            ]
+        self.symbols = list(dict.fromkeys(requested))
+        self.signals = []
+        self.scan_date = anchor_date.isoformat()
+        historical_now = datetime.combine(anchor_date, time(11, 0), tzinfo=self.NEW_YORK)
+        await self._scan(anchor_date, historical_now)
+        return self.status()
+
+    def stop(self) -> dict[str, Any]:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+        self.task = None
+        self.symbols = None
+        self.next_check_at = None
+        self.scan_date = None
+        return self.status()
+
+    async def _loop(self) -> None:
+        while True:
+            await self._check()
+            seconds = 60 - (datetime.now(self.NEW_YORK).second % 60)
+            self.next_check_at = (datetime.now().astimezone() + timedelta(seconds=seconds)).isoformat()
+            await asyncio.sleep(max(1, seconds))
+
+    async def _check(self) -> None:
+        from market_data.sources import tradingview_source
+        from silver_bullet import evaluate_am_silver_bullet
+
+        now = datetime.now(self.NEW_YORK)
+        self.last_check_at = now.isoformat()
+        if not (10 <= now.hour < 11):
+            self.last_error = None
+            return
+        await self._scan(now.date(), now)
+
+    async def _scan(self, scan_date: date, now: datetime) -> None:
+        from market_data.sources import tradingview_source
+        from silver_bullet import evaluate_am_silver_bullet
+
+        fresh: list[dict[str, Any]] = []
+        failures: list[str] = []
+        for symbol in self.symbols or []:
+            try:
+                rows = await asyncio.to_thread(
+                    tradingview_source.fetch_timeframe,
+                    symbol,
+                    scan_date,
+                    scan_date,
+                    "15m",
+                    symbol.split(":", 1)[0] if ":" in symbol else None,
+                )
+                if not rows:
+                    failures.append(f"{symbol}: TradingView returned 0 15m bars for {scan_date}")
+                    continue
+                signal = evaluate_am_silver_bullet(symbol, rows, trading_date=scan_date, now=now)
+                if signal is None:
+                    continue
+                payload = asdict(signal)
+                payload["id"] = f"{signal.symbol}|{signal.direction}|{signal.signal_time}"
+                fresh.append(payload)
+            except Exception as exc:
+                failures.append(f"{symbol}: {exc}")
+        known = {str(item.get("id")) for item in self.signals}
+        self.signals = [*self.signals, *(item for item in fresh if item["id"] not in known)]
+        self.signals = self.signals[-100:]
+        self.last_error = "; ".join(failures) if failures else None
+        self.run_count += 1
+
+
 class IPOScanner:
     """Periodically detect newly-listed NSE stocks from bhavcopy and register them.
 
@@ -518,6 +652,7 @@ ipo_scanner = IPOScanner()
 
 service = ScannerService()
 scheduler = ScanScheduler(service)
+silver_bullet_scanner = SilverBulletLiveScanner()
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -771,6 +906,29 @@ async def start_schedule(request: ScheduleStartRequest) -> dict[str, Any]:
 @app.post("/api/schedule/stop")
 async def stop_schedule() -> dict[str, Any]:
     return scheduler.stop()
+
+
+@app.get("/api/silver-bullet")
+def get_silver_bullet_status() -> dict[str, Any]:
+    return silver_bullet_scanner.status()
+
+
+@app.post("/api/silver-bullet/start")
+async def start_silver_bullet(request: SilverBulletStartRequest) -> dict[str, Any]:
+    return silver_bullet_scanner.start(request.symbols)
+
+
+@app.post("/api/silver-bullet/test")
+async def test_silver_bullet(request: SilverBulletTestRequest) -> dict[str, Any]:
+    try:
+        return await silver_bullet_scanner.test(request.anchor_date, request.symbols)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/silver-bullet/stop")
+async def stop_silver_bullet() -> dict[str, Any]:
+    return silver_bullet_scanner.stop()
 
 
 class IPOScannerRequest(BaseModel):

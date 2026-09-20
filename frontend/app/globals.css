@@ -60,6 +60,7 @@ button, input { font: inherit; }
 
 /* Scan controls card */
 .scan-controls { background: white; border: 1px solid var(--line); border-radius: 6px; padding: var(--gap-md); margin: 0 0 var(--gap-md); display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); }
+.silver-bullet-results { flex: 0 0 100%; width: 100%; }
 
 /* Auto scan */
 .auto-scan { align-items: center; display: flex; flex-wrap: wrap; gap: var(--gap-sm); padding: var(--gap-md); background: #fdfdfc; border: 1px solid var(--line); border-radius: 6px; margin: 0 0 var(--gap-md); }
@@ -68,6 +69,7 @@ button, input { font: inherit; }
 .auto-live { align-items: center; color: var(--teal); display: inline-flex; font: 500 11px 'DM Mono', monospace; letter-spacing: 1px; }
 .auto-live .pulse { margin-right: 6px; }
 .auto-meta { color: var(--muted); font: 10px 'DM Mono', monospace; }
+.silver-bullet-failure { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Sync summary block */
 .history-results { display: flex; flex-direction: column; gap: 4px; width: 100%; margin: 0 0 var(--gap-sm); }
@@ -278,6 +280,13 @@ footer { color: var(--muted); font: 10px 'DM Mono', monospace; margin-top: var(-
 .signal-chip small { color: var(--muted); font: 9px 'DM Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signal-chip.bull { border-left: 3px solid var(--teal); }
 .signal-chip.bear { border-left: 3px solid var(--coral); }
+.silver-bullet-loading { align-items: center; color: var(--muted); display: flex; font: 11px 'DM Mono', monospace; gap: 8px; min-height: 48px; padding: 8px 12px; }
+.date-refresh { animation: date-refresh 520ms ease-out; }
+@keyframes date-refresh {
+  0% { opacity: .45; transform: translateY(5px); }
+  60% { opacity: 1; transform: translateY(0); box-shadow: 0 0 0 3px rgba(32, 140, 132, .12); }
+  100% { box-shadow: none; }
+}
 .bias-badges { display: inline-flex; gap: 3px; margin-left: 6px; flex-shrink: 0; flex-wrap: wrap; }
 .bias-badge { display: inline-block; font: 600 9px 'DM Mono', monospace; padding: 2px 5px; border-radius: 3px; letter-spacing: 0.05em; }
 .bias-badge.bias-bull { background: #dcefe8; color: #206c63; }
