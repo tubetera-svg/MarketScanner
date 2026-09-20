@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
+import { useStatusFlash } from "../components/useStatusFlash";
 import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
@@ -365,6 +366,7 @@ export default function Home() {
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
   const [strategyDateNote, setStrategyDateNote] = useState<string | null>(null);
   const [dateTransition, setDateTransition] = useState(false);
+  const statusFlash = useStatusFlash(message);
   const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
@@ -526,7 +528,12 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Could not test Silver Bullet date");
       setSilverBullet(data);
-      setMessage(`Silver Bullet test complete for ${dateOverride}`);
+      const hits = Array.isArray(data?.signals) ? data.signals.length : 0;
+      setMessage(
+        hits
+          ? `✦ Silver Bullet test complete for ${dateOverride} — ${hits} setup${hits === 1 ? "" : "s"} locked in ✦`
+          : `✦ Silver Bullet test complete for ${dateOverride} — no setups, market stayed quiet ✦`,
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not test Silver Bullet date");
     } finally {
@@ -922,7 +929,7 @@ export default function Home() {
               <span className={`market-chip ${markets.forex_commodities ? "open" : "closed"}`}>FX · CMDTY {markets.forex_commodities ? "OPEN" : "CLOSED"}</span>
             </>
           )}
-          <div className="status"><span className="pulse" />{message}</div>
+          <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
         </div>
       </header>
 

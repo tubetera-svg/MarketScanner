@@ -46,6 +46,15 @@ export const resolveTvSymbol = async (symbol: string): Promise<TvResolution> => 
 export const tvChartUrl = (symbol: string) =>
   `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
 
+const symbolFromLink = (link: string | null | undefined, fallback: string) => {
+  if (!link) return fallback;
+  try {
+    return new URL(link).searchParams.get("symbol") || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 /** Build a TradingView widgetembed URL. Shared across the app. */
 export const tradingViewWidgetUrl = (
   link: string | null | undefined,
@@ -53,13 +62,7 @@ export const tradingViewWidgetUrl = (
   timeframe = "D",
   indicators: string[] = [],
 ) => {
-  let chartSymbol = symbol;
-  try {
-    const parsed = link ? new URL(link) : null;
-    chartSymbol = parsed?.searchParams.get("symbol") || symbol;
-  } catch {
-    // Fall back to the result symbol when a provider URL is malformed.
-  }
+  const chartSymbol = symbolFromLink(link, symbol);
   const params = new URLSearchParams({
     symbol: chartSymbol,
     interval: timeframe,
@@ -121,7 +124,7 @@ export default function TradingViewChartModal({
   // otherwise the raw app symbol exactly like the old inline popup did —
   // the widget itself is the source of truth for whether a symbol exists.
   const chartSymbol = sourceLink
-    ? symbol ?? ""
+    ? symbolFromLink(sourceLink, symbol ?? "")
     : preset ?? resolved ?? symbol ?? "";
 
   useEffect(() => {

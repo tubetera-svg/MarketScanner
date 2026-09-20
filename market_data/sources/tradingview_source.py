@@ -113,7 +113,18 @@ def fetch_timeframe(
 
     span_days = (end_date - start_date).days + 1
     bars_per_day = {"15m": 30, "1h": 8, "4h": 2, "1d": 1, "1w": 0.2}[normalized_timeframe]
-    n_bars = min(max(int(span_days * bars_per_day * 2 + 10), 30), 5000)
+    # Bars the caller explicitly asked for (2x headroom for holidays/weekends).
+    requested_bars = int(span_days * bars_per_day * 2 + 10)
+    # tvDatafeed can only return the most recent `n_bars` ending *now*, so a fetch
+    # for an older session must additionally reach from today back to `start_date`.
+    # Without this the requested day sits before the returned window and every bar
+    # is filtered out (0 rows in range) — e.g. a Silver Bullet date test for a
+    # session that happened a few days ago. 24h FX/commodity markets print
+    # ~96 15m / 24 1h / 6 4h bars per weekday, hence the separate gap rate.
+    gap_bars_per_day = {"15m": 96, "1h": 24, "4h": 6, "1d": 1, "1w": 0.2}[normalized_timeframe]
+    reach_days = max(0, (date.today() - start_date).days) + 1
+    reach_bars = int(reach_days * gap_bars_per_day * 1.3) + 10
+    n_bars = min(max(requested_bars, reach_bars, 30), 5000)
 
     log.info("Fetching %s:%s %s bars (%d) for %s..%s",
              exchange_name, sym, normalized_timeframe, n_bars, start_date.isoformat(), end_date.isoformat())

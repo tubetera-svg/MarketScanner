@@ -10,6 +10,7 @@ import pandas as pd
 
 
 NEW_YORK = ZoneInfo("America/New_York")
+INDIA = ZoneInfo("Asia/Kolkata")
 COMMODITY_SYMBOL_RE = re.compile(
     r"(?:GOLD|XAU|SILVER|XAG|OIL|CRUDE|NATURALGAS|NATGAS|COPPER|PLATINUM|PALLADIUM|"
     r"WHEAT|CORN|SOYBEAN|COCOA|COFFEE|SUGAR|COTTON)",
@@ -44,8 +45,9 @@ def _timestamp(value: object) -> pd.Timestamp | None:
     if pd.isna(parsed):
         return None
     if parsed.tzinfo is None:
-        # TradingView timestamps are exchange-local in some tvDatafeed builds.
-        parsed = parsed.tz_localize(NEW_YORK)
+        # The market-data layer stores TradingView bars as naive IST wall time.
+        # Attach IST before converting so the NY session window stays correct.
+        parsed = parsed.tz_localize(INDIA)
     return parsed.tz_convert(NEW_YORK)
 
 

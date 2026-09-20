@@ -1,6 +1,7 @@
 "use client";
 
 import TradingViewChartModal, { type ChartTarget } from "../../components/TradingViewChartModal";
+import { useStatusFlash } from "../../components/useStatusFlash";
 
 // IPO tracker: reads NSE IPO metadata + live performance from the local API.
 // Data loads from the local SQLite store on mount/refresh.
@@ -65,6 +66,7 @@ export default function IPOPage() {
   const [items, setItems] = useState<PerformanceItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Load IPO performance from the local database.");
+  const statusFlash = useStatusFlash(message);
   const [status, setStatus] = useState<ScannerStatus | null>(null);
   const [scanning, setScanning] = useState(false);
   const [query, setQuery] = useState("");
@@ -213,7 +215,7 @@ export default function IPOPage() {
             <RefreshCw size={14} className={loading ? "spin" : undefined} />
             {loading ? "Loading…" : "Refresh"}
           </button>
-          <div className="status"><span className="pulse" />{message}</div>
+          <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
           <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
           <a className="top-link" href="/"><ArrowLeft size={12} /> Scanner</a>
         </div>

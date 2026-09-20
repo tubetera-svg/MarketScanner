@@ -41,3 +41,26 @@ General:
 - Keep explanations concise and direct.
 
 (This file supersedes ad-hoc instructions — follow it on every task.)
+
+
+# Cline Agent Instructions
+
+## Output verbosity
+
+- Keep responses concise.
+- Do not repeat the user's request.
+- Do not provide detailed reasoning or internal chain-of-thought.
+- Summarize tool results instead of dumping raw output.
+- When running commands, prefer concise commands and suppress unnecessary output.
+- Only show relevant errors, warnings, and changed files.
+- After completing a task, provide a short summary of:
+  - What changed
+  - Files changed
+  - Any remaining issues
+
+## Terminal output
+
+- Avoid commands that produce large amounts of output.
+- Use quiet/silent flags when available.
+- Pipe large output through filters such as `head`, `tail`, `grep`, or `Select-Object`.
+- Do not print entire files when inspecting them; inspect only relevant sections.
