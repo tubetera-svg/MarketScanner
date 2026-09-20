@@ -117,6 +117,30 @@ const localDate = (offsetDays = 0) => {
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const SYNC_BATCH_SIZE = 500;
+const apiErrorMessage = (detail: unknown, fallback: string) => {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const error = item as { msg?: unknown; loc?: unknown };
+        const location = Array.isArray(error.loc) ? error.loc.filter((part) => part !== "body").join(".") : "";
+        const message = typeof error.msg === "string" ? error.msg : JSON.stringify(item);
+        return location ? `${location}: ${message}` : message;
+      }
+      return String(item);
+    }).filter(Boolean);
+    if (messages.length) return messages.join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    const error = detail as { error?: unknown; message?: unknown };
+    if (typeof error.error === "string" && error.error.trim()) return error.error;
+    if (typeof error.message === "string" && error.message.trim()) return error.message;
+    return JSON.stringify(detail);
+  }
+  return fallback;
+};
 const niftyIndexes = ["NSE:NIFTY", "NSE:BANKNIFTY", "NSE:FINNIFTY", "NSE:MIDCPNIFTY", "NSE:NIFTYNXT50", "NSE:INDIAVIX"];
 const nifty50 = ["ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ_AUTO", "BAJFINANCE", "BAJAJFINSV", "BEL", "BHARTIARTL", "BPCL", "BRITANNIA", "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL", "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDUNILVR", "ICICIBANK", "INDUSINDBK", "INFY", "ITC", "JIOFIN", "JSWSTEEL", "KOTAKBANK", "LT", "M&M", "MARUTI", "MAXHEALTH", "NESTLEIND", "NTPC", "ONGC", "POWERGRID", "RELIANCE", "SBILIFE", "SBIN", "SHRIRAMFIN", "SUNPHARMA", "TATACONSUM", "TATAMOTORS", "TATASTEEL", "TCS", "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO"];
 const sectorSymbols: Record<Exclude<WatchScope, "All" | "Nifty indexes" | "Nifty 50" | "Commodities" | "Forex" | "F&O" | "Crypto">, string[]> = {
@@ -385,28 +409,35 @@ export default function Home() {
     setLoading(true);
     setMessage("Synchronizing market data...");
     try {
-      const response = await fetch(`${API}/api/market-data/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbols: selected,
-          anchor_date: anchorDate,
-          start_date: syncStartDate || undefined,
-          end_date: anchorDate || undefined,
-          gate_market_hours: true,
-          use_aliases: true,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Data sync failed");
-      const results: { symbol: string; source: string; notes?: string[]; fetched_new?: number; rows?: number }[] = data.results ?? [];
+      const results: { symbol: string; source: string; notes?: string[]; fetched_new?: number; rows?: number }[] = [];
+      let summaryData: { anchor_date: string; start_date?: string | null; end_date?: string | null; lookback_days: number } | null = null;
+      for (let batchStart = 0; batchStart < selected.length; batchStart += SYNC_BATCH_SIZE) {
+        const symbols = selected.slice(batchStart, batchStart + SYNC_BATCH_SIZE);
+        setMessage(`Synchronizing market data... ${Math.min(batchStart + symbols.length, selected.length)}/${selected.length}`);
+        const response = await fetch(`${API}/api/market-data/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbols,
+            anchor_date: anchorDate,
+            start_date: syncStartDate || undefined,
+            end_date: anchorDate || undefined,
+            gate_market_hours: true,
+            use_aliases: true,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(apiErrorMessage(data.detail, "Data sync failed"));
+        summaryData ??= data;
+        results.push(...(data.results ?? []));
+      }
       const synced = results.filter((row) => !row.notes?.some((note: string) => note.startsWith("sync failed"))).length;
       const failed = results.filter((row) => row.notes?.some((note: string) => note.startsWith("sync failed"))).length;
       const gated = results.some((row) => row.notes?.some((note: string) => note.includes("market still open") || note.includes("last completed session")));
-      setSyncSummary({ anchor_date: data.anchor_date, lookback_days: data.lookback_days, results, synced, failed, gated });
+      setSyncSummary({ ...summaryData!, results, synced, failed, gated });
       setMessage(
         `Sync complete — ${synced} ok, ${failed} failed` +
-        `${gated ? " (some deferred: market still open)" : ""} · ${data.lookback_days}d window`,
+        `${gated ? " (some deferred: market still open)" : ""} · ${summaryData!.lookback_days}d window`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Data sync failed");
