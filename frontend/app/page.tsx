@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, ExternalLink, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -373,9 +373,44 @@ export default function Home() {
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
+  const [activeSection, setActiveSection] = useState<"scan" | "alerts" | "strategies" | "tracker">("scan");
+  const [scanProgress, setScanProgress] = useState<string | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({
+    scan: null,
+    alerts: null,
+    strategies: null,
+    tracker: null,
+  });
+
+  const scrollToSection = (section: "scan" | "alerts" | "strategies" | "tracker") => {
+    setActiveSection(section);
+    sectionRefs.current[section]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+            const id = entry.target.id;
+            if (id in sectionRefs.current) {
+              setActiveSection(id as "scan" | "alerts" | "strategies" | "tracker");
+            }
+          }
+        }
+      },
+      { rootMargin: "-80px 0px -60% 0px", threshold: [0, 0.3, 0.5, 1] }
+    );
+    Object.values(sectionRefs.current).forEach((el) => el && observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+
   const [inventoryNow, setInventoryNow] = useState(() => Date.now());
   const [chart, setChart] = useState<ChartTarget | null>(null);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const commandPaletteRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!activeTooltip) return;
@@ -390,6 +425,34 @@ export default function Home() {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [activeTooltip]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((open) => !open);
+        setCommandPaletteQuery("");
+      }
+      if (event.key === "Escape") {
+        setCommandPaletteOpen(false);
+        setActiveTooltip(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (commandPaletteOpen) {
+      document.body.style.overflow = "hidden";
+      setTimeout(() => commandPaletteRef.current?.querySelector("input")?.focus(), 0);
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [commandPaletteOpen]);
   const openTradingViewChart = (event: React.MouseEvent<HTMLAnchorElement>, row: StrategyRow) => {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
     event.preventDefault();
@@ -607,6 +670,8 @@ export default function Home() {
 
   const runStrategyScan = async (dateOverride = strategyAnchorDate) => {
     setStrategyScanning(true);
+    const enabledStrategies = strategies.filter((f) => f.enabled && f.runnable).length;
+    setScanProgress(`Scanning ${selected.length} symbol${selected.length !== 1 ? "s" : ""} across ${enabledStrategies} strateg${enabledStrategies !== 1 ? "ies" : "y"}...`);
     setMessage("Running strategy profiles...");
     try {
       const response = await fetch(`${API}/api/strategy-scan`, {
@@ -628,8 +693,10 @@ export default function Home() {
       const exits = alerts.filter((a) => a.kind === "closed_sl" || a.kind === "closed_target").length;
       setStrategyDateNote(`Testing date ${data.resolved_date ?? dateOverride}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} — ${groups.length} strategies — ${bulls} bull / ${bears} bear matches`);
       setMessage(`Strategy scan complete - ${bulls} bullish, ${bears} bearish${trig ? ` - ${trig} new trigger(s)` : ""}${exits ? ` - ${exits} exit(s)` : ""}`);
+      setScanProgress(null);
       await loadTracker(selected);
     } catch (error) {
+      setScanProgress(null);
       setMessage(error instanceof Error ? error.message : "Strategy scan failed");
     } finally {
       setStrategyScanning(false);
@@ -829,6 +896,7 @@ export default function Home() {
 
   const runScan = async () => {
     setLoading(true);
+    setScanProgress(`Scanning ${selected.length} symbol${selected.length !== 1 ? "s" : ""}...`);
     setMessage("Scanning selected symbols...");
     try {
       const response = await fetch(`${API}/api/scan`, {
@@ -840,8 +908,10 @@ export default function Home() {
       if (!response.ok) throw new Error(data.detail ?? "Scan failed");
       setSetups(data.results ?? []);
       setScannedAt(data.scanned_at ?? null);
+      setScanProgress(null);
       setMessage("Scan complete");
     } catch (error) {
+      setScanProgress(null);
       setMessage(error instanceof Error ? error.message : "Scan failed");
     } finally {
       setLoading(false);
@@ -902,20 +972,85 @@ export default function Home() {
       );
   }, [trackerSetups, trackerGroupBy]);
 
+  const commandPaletteItems = useMemo(() => {
+    const items: { id: string; label: string; category: string; action: () => void; keywords: string[] }[] = [];
+
+    for (const item of watchlist) {
+      items.push({
+        id: `symbol:${item.symbol}`,
+        label: item.symbol,
+        category: "Watchlist",
+        action: () => {
+          const el = document.querySelector(`.check-row input[value="${item.symbol}"]`) as HTMLInputElement | null;
+          el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          el?.focus();
+        },
+        keywords: [item.symbol.toLowerCase(), item.session?.toLowerCase() ?? "", item.scope?.toLowerCase() ?? ""],
+      });
+    }
+
+    for (const flag of strategies) {
+      items.push({
+        id: `strategy:${flag.name}`,
+        label: flag.label,
+        category: "Strategy",
+        action: () => {
+          const el = document.querySelector(`.strategy-chip-wrap button[title="${flag.name}"]`) as HTMLElement | null;
+          el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          el?.focus();
+        },
+        keywords: [flag.label.toLowerCase(), flag.name.toLowerCase(), flag.group.toLowerCase()],
+      });
+    }
+
+    items.push(
+      { id: "action:scan", label: "Run scan", category: "Action", action: () => { if (!loading && selected.length > 0) runScan(); }, keywords: ["run", "scan", "start"] },
+      { id: "action:strategies", label: "Run strategies", category: "Action", action: () => { if (!strategyScanning && selected.length > 0) runStrategyScan(); }, keywords: ["run", "strategies", "profiles"] },
+      { id: "action:live", label: "Start live scan", category: "Action", action: () => { if (!silverBulletLoading) startSilverBullet(); }, keywords: ["start", "live", "silver", "bullet"] },
+      { id: "action:sync", label: "Sync market data", category: "Action", action: () => { if (!loading && selected.length > 0) syncData(); }, keywords: ["sync", "market", "data"] }
+    );
+
+    return items;
+  }, [watchlist, strategies, loading, selected.length, strategyScanning, silverBulletLoading]);
+
+  const filteredCommandPaletteItems = useMemo(() => {
+    if (!commandPaletteQuery.trim()) return commandPaletteItems;
+    const query = commandPaletteQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    return commandPaletteItems.filter((item) =>
+      query.every((q) =>
+        item.label.toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q) ||
+        item.keywords.some((k) => k.includes(q))
+      )
+    );
+  }, [commandPaletteItems, commandPaletteQuery]);
+
+  const handleCommandPaletteSelect = (item: typeof commandPaletteItems[0]) => {
+    item.action();
+    setCommandPaletteOpen(false);
+    setCommandPaletteQuery("");
+  };
+
   const renderTrackerRow = (setup: TrackedSetup) => {
     const sentiment = sentimentOf(setup.direction);
+    const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(setup.symbol)}`;
     return (
       <div key={`${setup.symbol}|${setup.profile}|${setup.week}`} className={`tracker-row ${setup.state} sentiment-${sentiment}`}>
         <strong>{setup.symbol}</strong>
         <span className="profile">{setup.profile}</span>
         <span className={`badge ${sentiment === "bull" ? "bullish" : sentiment === "bear" ? "bearish" : "neutral"}`}>{SENTIMENT_LABEL[sentiment]}</span>
         <span className={`signal-state ${setup.state}`}>{setup.state}</span>
-        {setup.entry != null && (
-          <small>
-            E {setup.entry}{setup.sl != null ? ` — SL ${setup.sl}` : ""}{setup.target != null ? ` — T ${setup.target}` : ""}{setup.rr != null ? ` — R:R ${setup.rr}` : ""}
-          </small>
-        )}
-        {setup.track_mode && <span className="signal-track">{setup.track_mode === "live" ? "LIVE" : "EOD"}</span>}
+        <span className="meta-line">
+          {setup.entry != null && (
+            <small>
+              E {setup.entry}{setup.sl != null ? ` — SL ${setup.sl}` : ""}{setup.target != null ? ` — T ${setup.target}` : ""}{setup.rr != null ? ` — R:R ${setup.rr}` : ""}
+            </small>
+          )}
+          {setup.track_mode && <span className={`signal-track ${setup.track_mode === "live" ? "live" : ""}`}>{setup.track_mode === "live" ? "LIVE" : "EOD"}</span>}
+        </span>
+        <a className="chart-link symbol-link" href={tvUrl} target="_blank" rel="noopener noreferrer" title="View chart on TradingView" aria-label={`View ${setup.symbol} chart on TradingView`}>
+          <ExternalLink size={12} />
+        </a>
         <small className="week">
           {setup.state === "triggered"
             ? (setup.triggered_date ?? setup.events?.find((e) => e.state === "triggered")?.date ?? setup.last_seen)
@@ -948,11 +1083,21 @@ export default function Home() {
         </div>
       </header>
 
+      <nav className="section-nav" role="navigation" aria-label="Section navigation">
+        <div className="section-nav-inner">
+          <button type="button" className={`section-nav-item${activeSection === "scan" ? " active" : ""}`} onClick={() => scrollToSection("scan")}>Scan</button>
+          <button type="button" className={`section-nav-item${activeSection === "alerts" ? " active" : ""}`} onClick={() => scrollToSection("alerts")}>Alerts</button>
+          <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}>Strategies</button>
+          <button type="button" className={`section-nav-item${activeSection === "tracker" ? " active" : ""}`} onClick={() => scrollToSection("tracker")}>Tracker</button>
+          <span className="section-nav-hint">⌘K Command palette</span>
+        </div>
+      </nav>
+
       <div className="workspace">
         <aside className="controls panel">
           <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => setWatchScopes(["All"])}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => setWatchScopes((current) => current.includes(opt) ? current.filter((s) => s !== opt) : [...current, opt])}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
-<section className="scan-controls" style={{ justifyContent: "space-between" }}>
+<section className="scan-controls" style={{ justifyContent: "space-between" }} id="scan" ref={(el) => { sectionRefs.current.scan = el; }}>
         <section className="auto-scan">
         <span className="auto-title"><Timer size={14} /> Auto-scan</span>
         <select id="auto-interval" aria-label="Auto-scan interval" value={intervalMinutes} onChange={(event) => changeInterval(event.target.value)}>
@@ -968,8 +1113,9 @@ export default function Home() {
         )}
         <button className="scan-now" type="button" onClick={runScan} disabled={loading || selected.length === 0}>
           <RefreshCw size={14} className={loading ? "spin" : undefined} />
-          {loading ? "Scanning—" : "Run scan"}
+          {loading ? (scanProgress ? scanProgress : "Scanning—") : "Run scan"}
         </button>
+        {loading && scanProgress && <span className="scan-progress">{scanProgress}</span>}
         {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` — last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` — ${selected.length} selected symbols` : " — full watchlist"}</small>}
         <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
       </section>
@@ -996,7 +1142,7 @@ export default function Home() {
                 {silverBullet?.scan_date && !silverBullet.running && <small className="auto-meta">Showing {silverBullet.scan_date}</small>}
               </section>
             {silverBulletLoading || silverBullet?.scan_date ? (
-              <section className={`panel silver-bullet-results${dateTransition ? " date-refresh" : ""}`} style={{ marginBottom: 16 }}>
+              <section className={`panel silver-bullet-results${dateTransition ? " date-refresh" : ""}`} id="alerts" ref={(el) => { sectionRefs.current.alerts = el; }} style={{ marginBottom: 16 }}>
                 <div className="panel-heading"><span>AM Silver Bullet alerts</span><small>New York session — commodities only</small></div>
                 {silverBulletLoading ? (
                   <div className="silver-bullet-loading" role="status" aria-live="polite">
@@ -1030,7 +1176,7 @@ export default function Home() {
           </div>
         )}
       </div>
-      </section>      <section className="panel tracker-panel">
+      </section>      <section className="panel tracker-panel" id="tracker" ref={(el) => { sectionRefs.current.tracker = el; }}>
         <p className="kicker">Cross-scan setup tracker</p>
         <h3>
           Weekly-profile setups
@@ -1096,15 +1242,16 @@ export default function Home() {
           )}
         </div>
         </section>
-<details className="panel strategy-panel">
+<details className="panel strategy-panel" id="strategies" ref={(el) => { sectionRefs.current.strategies = el; }}>
   <summary className="panel-heading">
     <span>Strategy profiles</span>
     <div className="panel-heading-actions">
       <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
       <button className="test-button button-primary" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
         <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
-        {strategyScanning ? "Scanning—" : "Run strategies"}
+        {strategyScanning ? (scanProgress ? scanProgress : "Scanning—") : "Run strategies"}
       </button>
+      {strategyScanning && scanProgress && <span className="scan-progress">{scanProgress}</span>}
     </div>
   </summary>
           <div className="protected-swings-bar">
@@ -1169,19 +1316,23 @@ export default function Home() {
               })()}
             </div>
             <div className="filters">
-              {strategies.filter((flag) => flag.group === "Core" && flag.name !== "protected_swings").map((flag) => (
-                <span key={flag.name} className="strategy-chip-wrap">
-                  <button type="button" title={flag.name} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
-                    {flag.label}
-                  </button>
-                  {flag.description && (
-                    <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
-                      <Info size={12} />
-                      <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
-                    </span>
-                  )}
-                </span>
-              ))}
+              {strategies.filter((flag) => flag.group === "Core" && flag.name !== "protected_swings").map((flag) => {
+                const matchCount = strategyGroups.find((g) => g.strategy === flag.name) ? (strategyGroups.find((g) => g.strategy === flag.name)!.bull_count + strategyGroups.find((g) => g.strategy === flag.name)!.bear_count) : 0;
+                return (
+                  <span key={flag.name} className="strategy-chip-wrap">
+                    <button type="button" title={flag.name} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
+                      {flag.label}
+                    </button>
+                    {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
+                    {flag.description && (
+                      <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
+                        <Info size={12} />
+                        <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           </div>
           <div className="strategy-group">
@@ -1201,22 +1352,26 @@ export default function Home() {
               })()}
             </div>
             <div className="filters">
-              {strategies.filter((flag) => flag.group === "Weekly profiles").map((flag) => (
-                <span key={flag.name} className="strategy-chip-wrap">
-                  <button type="button" title={flag.runnable ? flag.name : `${flag.name} — blocked by the master switch`} disabled={!flag.runnable} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
-                    {flag.label}
-                    {flag.group === "Weekly profiles" && WEEKLY_PROFILE_DAYS[flag.name] && (
-                      <span className="day-marker" aria-label={`Requires weekdays: ${WEEKLY_PROFILE_DAYS[flag.name]}`}>{WEEKLY_PROFILE_DAYS[flag.name]}</span>
+              {strategies.filter((flag) => flag.group === "Weekly profiles").map((flag) => {
+                const matchCount = strategyGroups.find((g) => g.strategy === flag.name) ? (strategyGroups.find((g) => g.strategy === flag.name)!.bull_count + strategyGroups.find((g) => g.strategy === flag.name)!.bear_count) : 0;
+                return (
+                  <span key={flag.name} className="strategy-chip-wrap">
+                    <button type="button" title={flag.runnable ? flag.name : `${flag.name} — blocked by the master switch`} disabled={!flag.runnable} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
+                      {flag.label}
+                      {flag.group === "Weekly profiles" && WEEKLY_PROFILE_DAYS[flag.name] && (
+                        <span className="day-marker" aria-label={`Requires weekdays: ${WEEKLY_PROFILE_DAYS[flag.name]}`}>{WEEKLY_PROFILE_DAYS[flag.name]}</span>
+                      )}
+                    </button>
+                    {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
+                    {flag.description && (
+                      <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
+                        <Info size={12} />
+                        <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
+                      </span>
                     )}
-                  </button>
-                  {flag.description && (
-                    <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
-                      <Info size={12} />
-                      <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
-                    </span>
-                  )}
-                </span>
-              ))}
+                  </span>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1368,6 +1523,46 @@ export default function Home() {
             chart={chart}
             onClose={() => setChart(null)}
           />
+        )}
+        {commandPaletteOpen && (
+          <div className="command-palette-backdrop" onClick={() => { setCommandPaletteOpen(false); setCommandPaletteQuery(""); }}>
+            <div className="command-palette" ref={commandPaletteRef} onClick={(e) => e.stopPropagation()}>
+              <div className="command-palette-header">
+                <label htmlFor="command-palette-input" className="command-palette-label">
+                  <SearchX size={14} />
+                  <span>Command</span>
+                  <kbd className="command-palette-kbd">⌘K</kbd>
+                </label>
+                <input
+                  id="command-palette-input"
+                  type="text"
+                  className="command-palette-input"
+                  value={commandPaletteQuery}
+                  onChange={(e) => setCommandPaletteQuery(e.target.value)}
+                  placeholder="Search symbols, strategies, actions..."
+                  autoFocus
+                />
+              </div>
+              <div className="command-palette-results" role="listbox">
+                {filteredCommandPaletteItems.length === 0 ? (
+                  <div className="command-palette-empty">No matches for "{commandPaletteQuery}"</div>
+                ) : (
+                  filteredCommandPaletteItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="command-palette-item"
+                      role="option"
+                      onClick={() => handleCommandPaletteSelect(item)}
+                    >
+                      <span className="command-palette-item-label">{item.label}</span>
+                      <span className="command-palette-item-category">{item.category}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         )}
         </main>
       </div>
