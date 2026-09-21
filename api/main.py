@@ -434,9 +434,11 @@ class SilverBulletLiveScanner:
     """Poll commodity 15-minute bars during the New York AM Silver Bullet window."""
 
     NEW_YORK = ZoneInfo("America/New_York")
+    AUTO_CHECK_SECONDS = 30 * 60  # how often to confirm the live scan is running
 
     def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
+        self.auto_task: asyncio.Task[None] | None = None
         self.symbols: list[str] | None = None
         self.signals: list[dict[str, Any]] = []
         self.last_check_at: str | None = None
@@ -444,6 +446,50 @@ class SilverBulletLiveScanner:
         self.last_error: str | None = None
         self.run_count = 0
         self.scan_date: str | None = None
+
+    def start_auto_schedule(self) -> None:
+        if self.auto_task is None or self.auto_task.done():
+            self.auto_task = asyncio.create_task(self._auto_loop())
+
+    def _seconds_until_next_auto_check(self, now: datetime) -> float:
+        """Seconds to the next 30-minute check inside the New York AM window.
+
+        Before 10:00 New York -> sleep until 10:00. After 11:00 New York -> the
+        window is over, so sleep until 10:00 the next day.
+        """
+        window_start = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        window_end = window_start + timedelta(hours=1)
+        if now >= window_end:
+            return max(1.0, (window_start + timedelta(days=1) - now).total_seconds())
+        if now < window_start:
+            return max(1.0, (window_start - now).total_seconds())
+        return float(self.AUTO_CHECK_SECONDS)
+
+    async def _auto_loop(self) -> None:
+        """Confirm every 30 minutes that a live scan is running in the NY AM window.
+
+        The scan itself is unchanged (1-minute bar polling inside 10:00-11:00 NY);
+        this loop only decides *whether* a live scan should be running. It is a
+        fallback: an already running scan is never interrupted. Once 11:00 New
+        York has passed it stops checking for the day and waits for the next one.
+        """
+        while True:
+            try:
+                now = datetime.now(self.NEW_YORK)
+                if 10 <= now.hour < 11:
+                    stale = (
+                        self.task is not None
+                        and not self.task.done()
+                        and self.scan_date != now.date().isoformat()
+                    )
+                    if self.task is None or self.task.done() or stale:
+                        self.start(None)
+                await asyncio.sleep(max(1.0, self._seconds_until_next_auto_check(now)))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # keep the fallback alive across transient failures
+                self.last_error = f"auto-check: {exc.__class__.__name__}: {exc}"
+                await asyncio.sleep(60)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -505,7 +551,7 @@ class SilverBulletLiveScanner:
     async def _loop(self) -> None:
         while True:
             await self._check()
-            seconds = 60 - (datetime.now(self.NEW_YORK).second % 60)
+            seconds = 180 - (datetime.now(self.NEW_YORK).second % 180)
             self.next_check_at = (datetime.now().astimezone() + timedelta(seconds=seconds)).isoformat()
             await asyncio.sleep(max(1, seconds))
 
@@ -654,6 +700,20 @@ service = ScannerService()
 scheduler = ScanScheduler(service)
 silver_bullet_scanner = SilverBulletLiveScanner()
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
+
+
+@app.on_event("startup")
+async def start_silver_bullet_auto_schedule() -> None:
+    silver_bullet_scanner.start_auto_schedule()
+
+
+@app.on_event("shutdown")
+async def stop_silver_bullet_auto_schedule() -> None:
+    if silver_bullet_scanner.auto_task is not None:
+        silver_bullet_scanner.auto_task.cancel()
+        silver_bullet_scanner.auto_task = None
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Database, ExternalLink, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, ChevronRight, Database, ExternalLink, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -1120,7 +1120,12 @@ export default function Home() {
         <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
       </section>
               <section className="auto-scan" aria-label="AM Silver Bullet live scanner">
-                <span className="auto-title"><Timer size={14} /> AM Silver Bullet</span>
+                <span className="auto-title info-title"><Timer size={14} /> AM Silver Bullet
+                  <span className="info-trigger" aria-label="Info: AM Silver Bullet" role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === "silver_bullet" ? null : "silver_bullet")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTooltip(activeTooltip === "silver_bullet" ? null : "silver_bullet"); } }}>
+                    <Info size={12} />
+                    <span className={`info-tooltip${activeTooltip === "silver_bullet" ? " open" : ""}`}>Checks the New York 10:00–11:00 AM window for a confirmed commodity setup. Signals use the range break for entry, stop, and target.</span>
+                  </span>
+                </span>
                 {silverBullet?.running ? (
                   <>
                     <button className="test-button stop button-secondary" type="button" onClick={stopSilverBullet}>Stop live scan</button>
@@ -1242,9 +1247,12 @@ export default function Home() {
           )}
         </div>
         </section>
-<details className="panel strategy-panel" id="strategies" ref={(el) => { sectionRefs.current.strategies = el; }}>
+<details className="panel strategy-panel" id="strategies" open ref={(el) => { sectionRefs.current.strategies = el; }}>
   <summary className="panel-heading">
-    <span>Strategy profiles</span>
+    <span className="strategy-panel-title">
+      <ChevronRight size={14} className="strategy-panel-status-icon" aria-hidden="true" />
+      <span>Strategy profiles</span>
+    </span>
     <div className="panel-heading-actions">
       <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
       <button className="test-button button-primary" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
@@ -1266,6 +1274,10 @@ export default function Home() {
            >
              Protected Swings{strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " ?" : ""}
            </button>
+           <span className="info-trigger" aria-label="Info: Protected Swings" role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === "protected_swings" ? null : "protected_swings")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTooltip(activeTooltip === "protected_swings" ? null : "protected_swings"); } }}>
+             <Info size={12} />
+             <span className={`info-tooltip${activeTooltip === "protected_swings" ? " open" : ""}`}>Tracks confirmed protected swing highs and lows. A signal appears only on the confirmation session; anticipated swings do not trigger trades.</span>
+           </span>
            <select
              id="protected-swing-timeframe"
              value={protectedSwingTimeframe}
