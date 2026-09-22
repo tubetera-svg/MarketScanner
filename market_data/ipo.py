@@ -466,6 +466,95 @@ def sync_new_ipos(
     }
 
 
+def _load_watchlist_symbols() -> set[str]:
+    """Return all symbols currently in watchlist.txt (upper-case)."""
+    if not WATCHLIST_PATH.exists():
+        return set()
+    with WATCHLIST_PATH.open("r", encoding="utf-8") as f:
+        return {line.strip().upper() for line in f if line.strip() and not line.startswith("#")}
+
+
+def _save_watchlist_symbols(symbols: set[str]) -> None:
+    """Overwrite watchlist.txt with the given symbol set (sorted)."""
+    WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with WATCHLIST_PATH.open("w", encoding="utf-8") as f:
+        for sym in sorted(symbols):
+            f.write(f"{sym}\n")
+
+
+def _load_watchlist_categories() -> dict[str, dict[str, str]]:
+    try:
+        return json.loads(CATEGORIES_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_watchlist_categories(categories: dict[str, dict[str, str]]) -> None:
+    CATEGORIES_PATH.write_text(
+        json.dumps(dict(sorted(categories.items())), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def remove_from_watchlist(symbol: str) -> bool:
+    """Remove a symbol from watchlist.txt. Returns True if was present and removed."""
+    sym = str(symbol).strip().upper()
+    symbols = _load_watchlist_symbols()
+    if sym in symbols:
+        symbols.discard(sym)
+        _save_watchlist_symbols(symbols)
+        log.info("Removed %s from watchlist.txt", sym)
+        return True
+    return False
+
+
+def remove_from_categories(symbol: str) -> bool:
+    """Remove a symbol from watchlist_categories.json. Returns True if was present and removed."""
+    sym = str(symbol).strip().upper()
+    categories = _load_watchlist_categories()
+    if sym in categories:
+        del categories[sym]
+        _save_watchlist_categories(categories)
+        log.info("Removed %s from watchlist_categories.json", sym)
+        return True
+    return False
+
+
+def remove_ipo_completely(
+    symbol: str,
+    *,
+    db_path: Optional[Path | str] = None,
+) -> dict:
+    """Remove an IPO symbol from watchlist, categories, and all DB tables.
+
+    Returns summary of what was removed.
+    """
+    from . import database
+    from .config import SOURCE_NSE
+
+    sym = str(symbol).strip().upper()
+    removed = {
+        "watchlist": False,
+        "categories": False,
+        "ohlc_daily": 0,
+        "ohlc_no_data": 0,
+        "ipo_metadata": 0,
+        "tv_symbol_cache": 0,
+    }
+
+    removed["watchlist"] = remove_from_watchlist(sym)
+    removed["categories"] = remove_from_categories(sym)
+
+    db_removed = database.remove_symbol_data(sym, source=SOURCE_NSE, db_path=db_path)
+    removed.update(db_removed)
+
+    for table, count in db_removed.items():
+        if count:
+            log.info("Deleted %d %s rows for %s", count, table, sym)
+
+    return removed
+
+
 __all__ = [
     "IPO_SCOPE",
     "backfill_ipo_history",
@@ -475,6 +564,9 @@ __all__ = [
     "load_entries",
     "register_ipo",
     "register_ipos",
+    "remove_from_watchlist",
+    "remove_from_categories",
+    "remove_ipo_completely",
     "run_ipo_backfill",
     "sync_new_ipos",
 ]

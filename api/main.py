@@ -26,6 +26,7 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
 from market_data.routes import router as market_data_router  # noqa: E402
 from market_data.service import ensure_backdate_data  # noqa: E402
+from market_data.liquidity_screener import screen_all_ipos, remove_symbol_everywhere  # noqa: E402
 
 
 class ScanRequest(BaseModel):
@@ -1014,6 +1015,49 @@ async def stop_ipo_scanner() -> dict[str, Any]:
 @app.post("/api/ipo-scan/run-once")
 async def run_ipo_scan_once() -> dict[str, Any]:
     return await asyncio.to_thread(ipo_scanner.run_once)
+
+
+class LiquidityScreenRequest(BaseModel):
+    lookback_days: int = Field(default=60, ge=1, le=250)
+    auto_remove: bool = False
+
+
+@app.get("/api/ipo-liquidity/status")
+async def get_liquidity_status() -> dict[str, Any]:
+    """Get cached/latest liquidity screening results."""
+    # Could add persistent storage later; for now just indicate endpoint exists
+    return {"status": "ready", "endpoints": ["/api/ipo-liquidity/screen", "/api/ipo-liquidity/remove"]}
+
+
+@app.post("/api/ipo-liquidity/screen")
+async def run_liquidity_screen(request: LiquidityScreenRequest) -> dict[str, Any]:
+    """Screen all IPO-scope symbols for liquidity and market presence.
+
+    Returns screening results for each symbol. If auto_remove=true, symbols
+    with REMOVE decision are purged from watchlist, categories, and database.
+    """
+    try:
+        results = await asyncio.to_thread(
+            screen_all_ipos,
+            lookback_days=request.lookback_days,
+            auto_remove=request.auto_remove,
+        )
+        return {"count": len(results), "results": results}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/ipo-liquidity/remove")
+async def remove_illiquid_symbol(request: WatchlistRemoveRequest) -> dict[str, Any]:
+    """Manually remove a symbol from watchlist, categories, and all DB tables."""
+    try:
+        removed = await asyncio.to_thread(
+            remove_symbol_everywhere,
+            request.symbol,
+        )
+        return {"symbol": request.symbol.upper(), "removed": removed}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/markets")

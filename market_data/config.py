@@ -144,3 +144,15 @@ def save_symbol_aliases(aliases: dict[str, list[str]]) -> None:
         if norm_vals:
             cleaned[norm_key] = norm_vals
     SYMBOL_ALIASES_PATH.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
+
+
+# --- IPO Liquidity Screener thresholds ---
+# All values in INR Crores unless noted otherwise
+LIQUID_AVG_DAILY_VALUE_CR = float(os.environ.get("LIQUID_AVG_DAILY_VALUE_CR", "1.0"))
+BORDERLINE_AVG_DAILY_VALUE_CR = float(os.environ.get("BORDERLINE_AVG_DAILY_VALUE_CR", "0.25"))
+LIQUID_MAX_ZERO_DAYS = int(os.environ.get("LIQUID_MAX_ZERO_DAYS", "1"))
+BORDERLINE_MAX_ZERO_DAYS = int(os.environ.get("BORDERLINE_MAX_ZERO_DAYS", "4"))
+MARKET_CAP_MIN_CR = float(os.environ.get("MARKET_CAP_MIN_CR", "100.0"))
+FREE_FLOAT_MIN_PCT = float(os.environ.get("FREE_FLOAT_MIN_PCT", "15.0"))
+BID_ASK_SPREAD_MAX_PCT = float(os.environ.get("BID_ASK_SPREAD_MAX_PCT", "2.0"))
+LIQUIDITY_LOOKBACK_DAYS = int(os.environ.get("LIQUIDITY_LOOKBACK_DAYS", "60"))

@@ -21,7 +21,7 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from .config import db_path as resolve_db_path
+from .config import db_path as resolve_db_path, SOURCE_NSE
 
 log = logging.getLogger(__name__)
 
@@ -776,4 +776,85 @@ def _to_date_text(value: date | str) -> str:
     text = str(value).strip()
     date.fromisoformat(text)  # validate 'YYYY-MM-DD'
     return text
+
+
+def remove_all_no_data_for_symbol(
+    source: str,
+    symbol: str,
+    exchange: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> int:
+    """Delete ALL ohlc_no_data rows for a symbol (all dates).
+
+    Used when permanently removing a symbol from tracking.
+    Returns number of rows removed.
+    """
+    with _WRITE_LOCK:
+        conn = connect(db_path)
+        try:
+            sql = "DELETE FROM ohlc_no_data WHERE source = ? AND symbol = ?"
+            params: list[object] = [str(source).strip().upper(), str(symbol).strip().upper()]
+            if exchange:
+                sql += " AND exchange = ?"
+                params.append(str(exchange).strip().upper())
+            cursor = conn.execute(sql, params)
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+
+def remove_symbol_data(
+    symbol: str,
+    source: str = SOURCE_NSE,
+    exchange: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> dict:
+    """Remove ALL data for a symbol across ohlc_daily, ohlc_no_data, ipo_metadata.
+
+    Returns dict with counts per table.
+    """
+    sym = str(symbol).strip().upper()
+    src = str(source).strip().upper()
+    exch = str(exchange).strip().upper() if exchange else None
+
+    ohlc_deleted = delete_ohlc(symbols=[sym], source=src, exchange=exch, db_path=db_path)
+    no_data_deleted = remove_all_no_data_for_symbol(src, sym, exch, db_path=db_path)
+    ipo_deleted = remove_ipo_metadata(sym, db_path=db_path)
+    tv_deleted = remove_tv_symbol(sym, db_path=db_path)
+
+    return {
+        "ohlc_daily": ohlc_deleted,
+        "ohlc_no_data": no_data_deleted,
+        "ipo_metadata": ipo_deleted,
+        "tv_symbol_cache": tv_deleted,
+    }
+
+
+__all__ = [
+    "connect",
+    "init_db",
+    "upsert_ohlc",
+    "query_ohlc",
+    "query_ohlc_multi",
+    "query_ohlc_page",
+    "distinct_symbols",
+    "existing_dates",
+    "mark_no_data",
+    "clear_no_data",
+    "no_data_dates",
+    "count_rows",
+    "delete_ohlc",
+    "distinct_values",
+    "date_range",
+    "rows_per_source",
+    "upsert_ipo_metadata",
+    "query_ipo_metadata",
+    "remove_ipo_metadata",
+    "remove_all_no_data_for_symbol",
+    "remove_symbol_data",
+    "upsert_tv_symbol",
+    "query_tv_symbol",
+    "remove_tv_symbol",
+]
 

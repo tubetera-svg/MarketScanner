@@ -34,6 +34,22 @@ type PerformanceItem = {
   pct_vs_listing: number | null;
 };
 
+type LiquidityScreenResult = {
+  symbol: string;
+  liquidity_tier: "LIQUID" | "BORDERLINE" | "ILLIQUID" | "N/A";
+  flags: string[];
+  decision: "ADD" | "KEEP" | "WATCH" | "REMOVE";
+  reason: string;
+  removed?: {
+    watchlist: boolean;
+    categories: boolean;
+    ohlc_daily: number;
+    ohlc_no_data: number;
+    ipo_metadata: number;
+    tv_symbol_cache: number;
+  };
+};
+
 type ScannerStatus = {
   running: boolean;
   interval_minutes: number;
@@ -69,6 +85,8 @@ export default function IPOPage() {
   const statusFlash = useStatusFlash(message);
   const [status, setStatus] = useState<ScannerStatus | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [screening, setScreening] = useState(false);
+  const [screenResults, setScreenResults] = useState<LiquidityScreenResult[] | null>(null);
   const [query, setQuery] = useState("");
   const [year, setYear] = useState("all");
   const [bucket, setBucket] = useState<PerfBucket>("all");
@@ -203,6 +221,29 @@ export default function IPOPage() {
     }
   };
 
+  const runLiquidityScreen = async (autoRemove: boolean): Promise<void> => {
+    setScreening(true);
+    setScreenResults(null);
+    try {
+      const response = await fetch(`${API}/api/ipo-liquidity/screen`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lookback_days: 60, auto_remove: autoRemove }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      setScreenResults(payload.results ?? []);
+      const removedCount = (payload.results ?? []).filter((r: LiquidityScreenResult) => r.decision === "REMOVE").length;
+      setMessage(`Liquidity screen complete: ${payload.count} symbols, ${removedCount} removed${autoRemove ? " (auto-removed)" : " (dry-run)"}`);
+      await loadPerformance(true);
+    } catch (error) {
+      setMessage(`Liquidity screen failed: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setScreening(false);
+    }
+  };
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -231,6 +272,17 @@ export default function IPOPage() {
             <button className="test-button" type="button" onClick={() => runScanner("run-once")} disabled={scanning} title="Run IPO detection once immediately (bhavcopy scan)">Scan now</button>
           </>
         )}
+        <div className="auto-separator" />
+        <span className="auto-title"><SearchX size={14} /> Liquidity Screen</span>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+          <button className="test-button" type="button" onClick={() => runLiquidityScreen(false)} disabled={screening || scanning} title="Screen all IPO-scope symbols for liquidity (dry-run, no removal)">
+            <SearchX size={14} /> Screen (dry-run)
+          </button>
+          <button className="test-button stop" type="button" onClick={() => runLiquidityScreen(true)} disabled={screening || scanning} title="Screen and auto-remove illiquid IPOs">
+            <SearchX size={14} /> Screen & Auto-Remove
+          </button>
+          {screening && <span className="pulse" style={{ marginLeft: 8 }} />}
+        </div>
         <small className="auto-meta">
           {status?.running ? `RUNNING · every ${status.interval_minutes ?? 60} min` : "IPO detection idle"}
           {status ? ` · lookback ${status.lookback_days ?? 7}d` : ""}
@@ -324,6 +376,50 @@ export default function IPOPage() {
           </button>
         )}
       </section>
+
+      {screenResults && (
+        <section className="panel strategy-panel">
+          <div className="panel-heading">
+            <span>Liquidity screen results</span>
+            <div className="panel-heading-actions">
+              <small>{screenResults.length} symbols screened</small>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Tier</th>
+                  <th>Decision</th>
+                  <th>Flags</th>
+                  <th>Reason</th>
+                  <th>Removed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {screenResults.map((item) => {
+                  const removedInfo = item.removed ? (
+                    <span className="badge bias-bear">
+                      OHLC: {item.removed.ohlc_daily}, IPO: {item.removed.ipo_metadata}, WL: {item.removed.watchlist ? "yes" : "no"}
+                    </span>
+                  ) : "—";
+                  return (
+                    <tr key={item.symbol} style={{ backgroundColor: item.decision === "REMOVE" ? "#3a2a2a" : item.decision === "WATCH" ? "#3a3a2a" : item.decision === "KEEP" ? "#2a3a2a" : "transparent" }}>
+                      <td><strong>{item.symbol}</strong></td>
+                      <td><span className={`badge ${item.liquidity_tier === "LIQUID" ? "bias-bull" : item.liquidity_tier === "BORDERLINE" ? "bias-neutral" : item.liquidity_tier === "ILLIQUID" ? "bias-bear" : ""}`}>{item.liquidity_tier}</span></td>
+                      <td><span className={`badge ${item.decision === "KEEP" ? "bias-bull" : item.decision === "WATCH" ? "bias-neutral" : item.decision === "REMOVE" ? "bias-bear" : "bias-bull"}`}>{item.decision}</span></td>
+                      <td>{item.flags.join(", ") || "—"}</td>
+                      <td className="muted" style={{ maxWidth: 400, whiteSpace: "normal" }}>{item.reason}</td>
+                      <td>{removedInfo}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className="panel strategy-panel">
         <div className="panel-heading">

@@ -106,8 +106,9 @@ def fetch_daily(
         if not all([symbol_col, series_col, open_col, high_col, low_col, close_col]):
             continue
 
+        # Include EQ (regular), BE (trade-to-trade), BZ (illiquid) series
         match = df[
-            (df[series_col].astype(str).str.strip().str.upper() == "EQ")
+            (df[series_col].astype(str).str.strip().str.upper().isin({"EQ", "BE", "BZ"}))
             & (df[symbol_col].astype(str).str.strip().str.upper().isin(wanted))
         ]
         if match.empty:
