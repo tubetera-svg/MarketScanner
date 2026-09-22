@@ -1,5 +1,5 @@
 {
-  "candle_3_closure": false,
+  "candle_3_closure": true,
   "classic_expansion_sweep": false,
   "consolidation_reversal_sweep": false,
   "daily_bias_invalidation": true,
@@ -9,8 +9,8 @@
   "intraweek_reversal_sweep": false,
   "midweek_reversal_sweep": false,
   "multi_timeframe_bias": false,
-  "points_of_interest": false,
-  "propulsion_blocks": false,
+  "points_of_interest": true,
+  "propulsion_blocks": true,
   "protected_swings": true,
   "tgif_setup_sweep": false,
   "thursday_counter_sweep": false

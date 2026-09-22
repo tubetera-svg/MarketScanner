@@ -8,7 +8,7 @@ import os
 import re
 import sys
 from dataclasses import asdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 from zoneinfo import ZoneInfo
@@ -435,6 +435,8 @@ class SilverBulletLiveScanner:
     """Poll commodity 15-minute bars during the New York AM Silver Bullet window."""
 
     NEW_YORK = ZoneInfo("America/New_York")
+    AM_WINDOW_START_HOUR = 10  # 10:00 New York: AM Silver Bullet window opens
+    AM_WINDOW_END_HOUR = 11  # 11:00 New York: window closed, live scan retires
     AUTO_CHECK_SECONDS = 30 * 60  # how often to confirm the live scan is running
 
     def __init__(self) -> None:
@@ -456,15 +458,22 @@ class SilverBulletLiveScanner:
         """Seconds to the next 30-minute check inside the New York AM window.
 
         Before 10:00 New York -> sleep until 10:00. After 11:00 New York -> the
-        window is over, so sleep until 10:00 the next day.
+        window is over, so sleep until 10:00 the next day. The delta is measured
+        in UTC because subtracting two datetimes that share a tzinfo uses wall
+        clock, not elapsed time: across the March DST change a "day" is 23 real
+        hours, which would wake this check at 11:00 New York and skip the whole
+        morning window.
         """
-        window_start = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        window_start = now.replace(
+            hour=self.AM_WINDOW_START_HOUR, minute=0, second=0, microsecond=0
+        )
         window_end = window_start + timedelta(hours=1)
         if now >= window_end:
-            return max(1.0, (window_start + timedelta(days=1) - now).total_seconds())
-        if now < window_start:
-            return max(1.0, (window_start - now).total_seconds())
-        return float(self.AUTO_CHECK_SECONDS)
+            window_start += timedelta(days=1)
+        elif now >= window_start:
+            return float(self.AUTO_CHECK_SECONDS)
+        remaining = window_start.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+        return max(1.0, remaining.total_seconds())
 
     async def _auto_loop(self) -> None:
         """Confirm every 30 minutes that a live scan is running in the NY AM window.
@@ -477,7 +486,7 @@ class SilverBulletLiveScanner:
         while True:
             try:
                 now = datetime.now(self.NEW_YORK)
-                if 10 <= now.hour < 11:
+                if self.AM_WINDOW_START_HOUR <= now.hour < self.AM_WINDOW_END_HOUR:
                     stale = (
                         self.task is not None
                         and not self.task.done()
@@ -518,7 +527,9 @@ class SilverBulletLiveScanner:
         self.symbols = list(dict.fromkeys(requested))
         self.signals = []
         self.last_error = None
-        self.scan_date = date.today().isoformat()
+        # The session is anchored to New York wall time (DST aware), so the scan
+        # date must come from New York too — not from the host's local date.
+        self.scan_date = datetime.now(self.NEW_YORK).date().isoformat()
         self.task = asyncio.create_task(self._loop())
         return self.status()
 
@@ -551,21 +562,31 @@ class SilverBulletLiveScanner:
 
     async def _loop(self) -> None:
         while True:
-            await self._check()
+            now = await self._check()
+            if now.hour >= self.AM_WINDOW_END_HOUR:
+                # 11:00 New York has passed: the AM window is over for this
+                # session, so retire the live scan (status "running" -> False)
+                # instead of idling all day. _auto_loop re-arms it at the next
+                # 10:00 New York.
+                self.next_check_at = None
+                return
             seconds = 180 - (datetime.now(self.NEW_YORK).second % 180)
-            self.next_check_at = (datetime.now().astimezone() + timedelta(seconds=seconds)).isoformat()
+            self.next_check_at = (datetime.now(self.NEW_YORK) + timedelta(seconds=seconds)).isoformat()
             await asyncio.sleep(max(1, seconds))
 
-    async def _check(self) -> None:
-        from market_data.sources import tradingview_source
-        from silver_bullet import evaluate_am_silver_bullet
+    async def _check(self) -> datetime:
+        """Scan once if New York wall time is inside the AM window; return ``now``.
 
+        The caller retires the scan once the window has closed, so the 10:00-11:00
+        New York session is never scanned outside its own hours.
+        """
         now = datetime.now(self.NEW_YORK)
         self.last_check_at = now.isoformat()
-        if not (10 <= now.hour < 11):
+        if now.hour < self.AM_WINDOW_START_HOUR or now.hour >= self.AM_WINDOW_END_HOUR:
             self.last_error = None
-            return
+            return now
         await self._scan(now.date(), now)
+        return now
 
     async def _scan(self, scan_date: date, now: datetime) -> None:
         from market_data.sources import tradingview_source
