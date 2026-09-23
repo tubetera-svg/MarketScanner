@@ -228,6 +228,11 @@ def run_scan(
     for execution in executions:
         bullish = _records(execution.bullish)
         bearish = _records(execution.bearish)
+        all_results = bullish + bearish
+        has_live = any(
+            str(row.get("track_mode", "")).lower() == "live"
+            for row in all_results
+        )
         groups.append(
             {
                 "strategy": execution.name,
@@ -237,6 +242,7 @@ def run_scan(
                 "bear_count": len(bearish),
                 "bullish": bullish,
                 "bearish": bearish,
+                "has_live_data": has_live,
             }
         )
 

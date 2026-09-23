@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, ChevronRight, Database, ExternalLink, Info, Plus, RefreshCw, Rocket, SearchX, Timer } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, ChevronRight, Database, ExternalLink, Info, Plus, RefreshCw, Rocket, SearchX, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -108,7 +108,7 @@ type TrackerAlert = {
   target: number | null;
   rr: number | null;
 };
-type StrategyGroup = { strategy: string; label: string; total: number; bull_count: number; bear_count: number; bullish: StrategyRow[]; bearish: StrategyRow[] };
+type StrategyGroup = { strategy: string; label: string; total: number; bull_count: number; bear_count: number; bullish: StrategyRow[]; bearish: StrategyRow[]; has_live_data: boolean };
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
 
 const localDate = (offsetDays = 0) => {
@@ -733,6 +733,7 @@ export default function Home() {
       current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
     }
     const next = current.toISOString().slice(0, 10);
+    if (next > localDate()) return;
     setDateTransition(true);
     window.setTimeout(() => setDateTransition(false), 520);
     setStrategyAnchorDate(next);
@@ -745,11 +746,14 @@ export default function Home() {
   };
 
   const handleStrategyDateChange = (next: string) => {
+    if (!next || next > localDate()) return;
     setDateTransition(true);
     window.setTimeout(() => setDateTransition(false), 520);
     setStrategyAnchorDate(next);
-    if (autoRunOnDateChange) runStrategyScan(next);
-    if (includeSilverBulletTests && autoRunOnDateChange && next < localDate()) testSilverBullet(next);
+    if (autoRunOnDateChange) {
+      runStrategyScan(next);
+      if (includeSilverBulletTests && next < localDate()) testSilverBullet(next);
+    }
   };
 
   useEffect(() => {
@@ -1375,10 +1379,12 @@ export default function Home() {
             <div className="filters">
               {strategies.filter((flag) => flag.group === "Core" && flag.name !== "protected_swings").map((flag) => {
                 const matchCount = strategyGroups.find((g) => g.strategy === flag.name) ? (strategyGroups.find((g) => g.strategy === flag.name)!.bull_count + strategyGroups.find((g) => g.strategy === flag.name)!.bear_count) : 0;
+                const hasLive = strategyGroups.find((g) => g.strategy === flag.name)?.has_live_data ?? false;
                 return (
                   <span key={flag.name} className="strategy-chip-wrap">
                     <button type="button" title={flag.name} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
                       {flag.label}
+                      {hasLive && <span className="live-data-badge" style={{ marginLeft: 4 }}><Zap size={9} /> LIVE</span>}
                     </button>
                     {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
                     {flag.description && (
@@ -1411,6 +1417,7 @@ export default function Home() {
             <div className="filters">
               {strategies.filter((flag) => flag.group === "Weekly profiles").map((flag) => {
                 const matchCount = strategyGroups.find((g) => g.strategy === flag.name) ? (strategyGroups.find((g) => g.strategy === flag.name)!.bull_count + strategyGroups.find((g) => g.strategy === flag.name)!.bear_count) : 0;
+                const hasLive = strategyGroups.find((g) => g.strategy === flag.name)?.has_live_data ?? false;
                 return (
                   <span key={flag.name} className="strategy-chip-wrap">
                     <button type="button" title={flag.runnable ? flag.name : `${flag.name} — blocked by the master switch`} disabled={!flag.runnable} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
@@ -1418,6 +1425,7 @@ export default function Home() {
                       {flag.group === "Weekly profiles" && WEEKLY_PROFILE_DAYS[flag.name] && (
                         <span className="day-marker" aria-label={`Requires weekdays: ${WEEKLY_PROFILE_DAYS[flag.name]}`}>{WEEKLY_PROFILE_DAYS[flag.name]}</span>
                       )}
+                      {hasLive && <span className="live-data-badge" style={{ marginLeft: 4 }}><Zap size={9} /> LIVE</span>}
                     </button>
                     {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
                     {flag.description && (
@@ -1444,13 +1452,13 @@ export default function Home() {
           >
             <ArrowLeft size={14} />
           </button>
-          <input id="strategy-date" type="date" value={strategyAnchorDate} onChange={(event) => handleStrategyDateChange(event.target.value)} />
+          <input id="strategy-date" type="date" value={strategyAnchorDate} max={localDate()} onChange={(event) => handleStrategyDateChange(event.target.value)} />
           <button
             className="date-arrow"
             type="button"
             aria-label="Next day"
             onClick={() => shiftStrategyDate(1)}
-            disabled={strategyScanning}
+            disabled={strategyScanning || strategyAnchorDate >= localDate()}
           >
             <ArrowRight size={14} />
           </button>

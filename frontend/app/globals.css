@@ -349,6 +349,9 @@ details > summary::-webkit-details-marker { display: none; }
 .signal-track { display: inline-block; font: 8px 'DM Mono', monospace; padding: 1px 4px; border-radius: 3px; background: #e7eef4; color: #2f6f9e; text-transform: uppercase; }
 .signal-track.live { background: #e3f1ea; color: #1f7a55; }
 
+/* Strategy-level live data indicator */
+.live-data-badge { align-items: center; background: #e3f1ea; border: 1px solid #bfe3d2; border-radius: 3px; color: #1f7a55; display: inline-flex; font: 600 9px 'DM Mono', monospace; gap: 3px; padding: 2px 6px; text-transform: uppercase; letter-spacing: .5px; }
+
 /* Cross-scan setup tracker panel */
 .tracker-panel { display: flex; flex-direction: column; gap: var(--gap-sm); margin: 0 0 var(--gap-md); padding: var(--gap-md); border-left: 3px solid var(--blue); order: 1; }
 .tracker-panel .kicker { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.08em; margin: 0; }

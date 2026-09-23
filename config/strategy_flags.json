@@ -1,17 +1,17 @@
 {
   "candle_3_closure": true,
   "classic_expansion_sweep": true,
-  "consolidation_reversal_sweep": false,
+  "consolidation_reversal_sweep": true,
   "daily_bias_invalidation": true,
-  "daily_fvg_sweep": false,
-  "ema5_sweep": false,
-  "inside_bar_pattern_daily_sweep": false,
+  "daily_fvg_sweep": true,
+  "ema5_sweep": true,
+  "inside_bar_pattern_daily_sweep": true,
   "intraweek_reversal_sweep": true,
   "midweek_reversal_sweep": true,
-  "multi_timeframe_bias": false,
+  "multi_timeframe_bias": true,
   "points_of_interest": true,
   "propulsion_blocks": true,
   "protected_swings": true,
-  "tgif_setup_sweep": false,
-  "thursday_counter_sweep": false
+  "tgif_setup_sweep": true,
+  "thursday_counter_sweep": true
 }

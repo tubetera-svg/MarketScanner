@@ -437,7 +437,7 @@ class SilverBulletLiveScanner:
     NEW_YORK = ZoneInfo("America/New_York")
     AM_WINDOW_START_HOUR = 10  # 10:00 New York: AM Silver Bullet window opens
     AM_WINDOW_END_HOUR = 11  # 11:00 New York: window closed, live scan retires
-    AUTO_CHECK_SECONDS = 30 * 60  # how often to confirm the live scan is running
+    AUTO_CHECK_SECONDS = 60 * 60  # how often to confirm the live scan is running (hourly)
 
     def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
@@ -455,7 +455,7 @@ class SilverBulletLiveScanner:
             self.auto_task = asyncio.create_task(self._auto_loop())
 
     def _seconds_until_next_auto_check(self, now: datetime) -> float:
-        """Seconds to the next 30-minute check inside the New York AM window.
+        """Seconds to the next hourly check inside the New York AM window.
 
         Before 10:00 New York -> sleep until 10:00. After 11:00 New York -> the
         window is over, so sleep until 10:00 the next day. The delta is measured
@@ -476,7 +476,7 @@ class SilverBulletLiveScanner:
         return max(1.0, remaining.total_seconds())
 
     async def _auto_loop(self) -> None:
-        """Confirm every 30 minutes that a live scan is running in the NY AM window.
+        """Confirm hourly that a live scan is running in the NY AM window.
 
         The scan itself is unchanged (1-minute bar polling inside 10:00-11:00 NY);
         this loop only decides *whether* a live scan should be running. It is a
@@ -726,11 +726,6 @@ service = ScannerService()
 scheduler = ScanScheduler(service)
 silver_bullet_scanner = SilverBulletLiveScanner()
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
-
-
-@app.on_event("startup")
-async def start_silver_bullet_auto_schedule() -> None:
-    silver_bullet_scanner.start_auto_schedule()
 
 
 @app.on_event("shutdown")
@@ -1012,7 +1007,8 @@ async def stop_schedule() -> dict[str, Any]:
 
 
 @app.get("/api/silver-bullet")
-def get_silver_bullet_status() -> dict[str, Any]:
+async def get_silver_bullet_status() -> dict[str, Any]:
+    silver_bullet_scanner.start_auto_schedule()
     return silver_bullet_scanner.status()
 
 
