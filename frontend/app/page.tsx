@@ -371,6 +371,7 @@ export default function Home() {
   const [includeSilverBulletTests, setIncludeSilverBulletTests] = useState(true);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
+  const [crossScanTrackerEnabled, setCrossScanTrackerEnabled] = useState(false);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
   const [activeSection, setActiveSection] = useState<"scan" | "alerts" | "strategies" | "tracker">("scan");
@@ -629,6 +630,26 @@ export default function Home() {
     if (typeof data.weekly_profiles_master_enabled === "boolean") setWeeklyMasterOn(data.weekly_profiles_master_enabled);
   };
 
+  const toggleCrossScanTracker = async () => {
+    const next = !crossScanTrackerEnabled;
+    setCrossScanTrackerEnabled(next);
+    try {
+      const response = await fetch(`${API}/api/cross-scan-tracker`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "Could not update tracker setting");
+      setCrossScanTrackerEnabled(data.cross_scan_tracker_enabled ?? next);
+      setMessage(`Cross-scan setup tracker ${next ? "ON" : "OFF"}`);
+      if (next) loadTracker(selected).catch(() => {});
+    } catch (error) {
+      setCrossScanTrackerEnabled(!next);
+      setMessage(error instanceof Error ? error.message : "Could not update tracker setting");
+    }
+  };
+
   const toggleStrategy = async (flag: StrategyFlag) => {
     const nextEnabled = !flag.enabled;
     setStrategies((current) => current.map((item) => (item.name === flag.name ? { ...item, enabled: nextEnabled } : item)));
@@ -694,7 +715,7 @@ export default function Home() {
       setStrategyDateNote(`Testing date ${data.resolved_date ?? dateOverride}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} — ${groups.length} strategies — ${bulls} bull / ${bears} bear matches`);
       setMessage(`Strategy scan complete - ${bulls} bullish, ${bears} bearish${trig ? ` - ${trig} new trigger(s)` : ""}${exits ? ` - ${exits} exit(s)` : ""}`);
       setScanProgress(null);
-      await loadTracker(selected);
+      if (crossScanTrackerEnabled) await loadTracker(selected);
     } catch (error) {
       setScanProgress(null);
       setMessage(error instanceof Error ? error.message : "Strategy scan failed");
@@ -739,8 +760,17 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!trackerWatchlistOnly) loadTracker().catch(() => {});
+    fetch(`${API}/api/cross-scan-tracker`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data: { cross_scan_tracker_enabled?: boolean }) => {
+        if (typeof data.cross_scan_tracker_enabled === "boolean") setCrossScanTrackerEnabled(data.cross_scan_tracker_enabled);
+      })
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!trackerWatchlistOnly && crossScanTrackerEnabled) loadTracker().catch(() => {});
+  }, [crossScanTrackerEnabled]);
 
   // Tick every second so the commodity inventory-report countdown stays live.
   useEffect(() => {
@@ -803,7 +833,7 @@ export default function Home() {
       const initialScopes: WatchScope[] = ["Commodities"];
       const initialSymbols = symbols.filter((item: WatchSymbol) => matchesScopes_check(item, initialScopes)).map((item: WatchSymbol) => item.symbol);
       setSelected(initialSymbols);
-      loadTracker(initialSymbols).catch(() => {});
+      if (crossScanTrackerEnabled) loadTracker(initialSymbols).catch(() => {});
       if (scheduleData) setSchedule(scheduleData);
       setMessage("Ready to scan");
     }).catch(() => setMessage("API unavailable. Start FastAPI on port 8000."));
@@ -1196,6 +1226,14 @@ export default function Home() {
           </span>
         </h3>
         <div className="tracker-head-actions">
+          <label className="tracker-toggle" title="Track weekly-profile setups across scans (persisted)">
+            <input
+              type="checkbox"
+              checked={crossScanTrackerEnabled}
+              onChange={toggleCrossScanTracker}
+            />
+            Cross-scan tracker
+          </label>
           <small className="auto-meta">
             {trackerSetups.filter((s) => s.state === "armed" || s.state === "triggered").length} active
             {" — "}
@@ -1205,47 +1243,54 @@ export default function Home() {
             <span className="filter-label">Group</span>
             <div className="filters">
               {(["none", "symbol", "week", "month"] as const).map((option) => (
-                <button key={option} type="button" className={`${trackerGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setTrackerGroupBy(option)}>
+                <button key={option} type="button" className={`${trackerGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setTrackerGroupBy(option)} disabled={!crossScanTrackerEnabled}>
                   {option === "none" ? "Off" : option === "symbol" ? "Symbol" : option === "week" ? "Week" : "Month"}
                 </button>
               ))}
             </div>
           </div>
-          <button type="button" className="test-button button-secondary" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }}>
+          <button type="button" className="test-button button-secondary" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }} disabled={!crossScanTrackerEnabled}>
             {trackerWatchlistOnly ? "Watchlist only" : "All setups"}
           </button>
         </div>
-        {trackerAlerts.length > 0 && (
-          <div className="tracker-alerts">
-            {trackerAlerts.map((a, i) => (
-              <span key={i} className={`alert ${a.kind}`}>
-                {a.symbol} {a.kind.replaceAll("_", " ")}
-                {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
-              </span>
-            ))}
-          </div>
+        {!crossScanTrackerEnabled && (
+          <div className="empty small-empty"><SearchX size={14} /> Cross-scan tracker is off — enable the toggle to follow weekly-profile setups across scans.</div>
         )}
-        <div className="tracker-list">
-          {trackerSetups.length === 0 ? (
-            <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
-          ) : trackerGroupBy === "none" ? (
-            trackerSetups.map(renderTrackerRow)
-          ) : (
-            trackerGroups!.map((group) => (
-              <div key={group.key} className="tracker-group">
-                <div className="tracker-group-head">
-                  <span className="tracker-group-label">{group.label}</span>
-                  <span className="tracker-group-count">{group.items.length}</span>
-                  {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
-                  {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
-                </div>
-                <div className="tracker-group-items">
-                  {group.items.map(renderTrackerRow)}
-                </div>
+        {crossScanTrackerEnabled && (
+          <>
+            {trackerAlerts.length > 0 && (
+              <div className="tracker-alerts">
+                {trackerAlerts.map((a, i) => (
+                  <span key={i} className={`alert ${a.kind}`}>
+                    {a.symbol} {a.kind.replaceAll("_", " ")}
+                    {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
+                  </span>
+                ))}
               </div>
-            ))
-          )}
-        </div>
+            )}
+            <div className="tracker-list">
+              {trackerSetups.length === 0 ? (
+                <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
+              ) : trackerGroupBy === "none" ? (
+                trackerSetups.map(renderTrackerRow)
+              ) : (
+                trackerGroups!.map((group) => (
+                  <div key={group.key} className="tracker-group">
+                    <div className="tracker-group-head">
+                      <span className="tracker-group-label">{group.label}</span>
+                      <span className="tracker-group-count">{group.items.length}</span>
+                      {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
+                      {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
+                    </div>
+                    <div className="tracker-group-items">
+                      {group.items.map(renderTrackerRow)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
         </section>
 <details className="panel strategy-panel" id="strategies" open ref={(el) => { sectionRefs.current.strategies = el; }}>
   <summary className="panel-heading">

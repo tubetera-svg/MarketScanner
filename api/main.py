@@ -979,6 +979,23 @@ def repair_weekly_profile_tracker() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class CrossScanTrackerUpdate(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/cross-scan-tracker")
+def get_cross_scan_tracker() -> dict[str, Any]:
+    """Return whether the cross-scan setup tracker is enabled."""
+    return strategy_bridge.get_tracker_settings()
+
+
+@app.put("/api/cross-scan-tracker")
+def update_cross_scan_tracker(request: CrossScanTrackerUpdate) -> dict[str, Any]:
+    """Toggle the cross-scan setup tracker on/off (persisted)."""
+    settings = strategy_bridge.set_cross_scan_tracker(request.enabled)
+    return settings
+
+
 @app.get("/api/schedule")
 def get_schedule() -> dict[str, Any]:
     return scheduler.status()

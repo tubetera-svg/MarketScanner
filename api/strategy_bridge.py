@@ -19,6 +19,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 ALL_STRATEGY_PATH = ROOT / "src" / "all_strategy.py"
 FLAGS_PATH = ROOT / "config" / "strategy_flags.json"
+TRACKER_FLAGS_PATH = ROOT / "config" / "tracker_flags.json"
 OUTPUT_DIR = ROOT / "strategy_outputs"
 INFO_PATH = ROOT / "config" / "strategy_info.txt"
 
@@ -82,6 +83,33 @@ def _read_overrides() -> dict[str, bool]:
 
 def _write_overrides(overrides: dict[str, bool]) -> None:
     FLAGS_PATH.write_text(json.dumps(overrides, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_tracker_flags() -> dict[str, bool]:
+    try:
+        data = json.loads(TRACKER_FLAGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key).strip(): bool(value) for key, value in data.items()}
+
+
+def _write_tracker_flags(flags: dict[str, bool]) -> None:
+    TRACKER_FLAGS_PATH.write_text(
+        json.dumps(flags, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def get_tracker_settings() -> dict[str, bool]:
+    return {"cross_scan_tracker_enabled": bool(_read_tracker_flags().get("cross_scan_tracker_enabled", False))}
+
+
+def set_cross_scan_tracker(enabled: bool) -> dict[str, bool]:
+    flags = _read_tracker_flags()
+    flags["cross_scan_tracker_enabled"] = bool(enabled)
+    _write_tracker_flags(flags)
+    return {"cross_scan_tracker_enabled": flags["cross_scan_tracker_enabled"]}
 
 
 def _load_strategy_descriptions() -> dict[str, str]:
@@ -215,36 +243,39 @@ def run_scan(
     combined_path = _write_combined(groups, resolved_date)
 
     tracker_alerts: list[dict[str, Any]] = []
-    store = ProfileTrackerStore()
-    for execution in executions:
-        if execution.name not in _WEEKLY_NAMES:
-            continue
-        rows: list[dict[str, Any]] = []
-        for side in (execution.bullish, execution.bearish):
-            for rec in _records(side):
-                if rec.get("profile") and rec.get("state"):
-                    rows.append(rec)
-        if not rows:
-            continue
+    tracker_active_count = 0
+    if _read_tracker_flags().get("cross_scan_tracker_enabled", False):
+        store = ProfileTrackerStore()
+        for execution in executions:
+            if execution.name not in _WEEKLY_NAMES:
+                continue
+            rows: list[dict[str, Any]] = []
+            for side in (execution.bullish, execution.bearish):
+                for rec in _records(side):
+                    if rec.get("profile") and rec.get("state"):
+                        rows.append(rec)
+            if not rows:
+                continue
 
-        def price_fn(symbol: str, as_of: date) -> Optional[dict[str, float]]:
-            try:
-                daily = module._fetch_daily_from_bhavcopy(
-                    symbol=symbol, as_of_date=as_of, max_lookback_days=10
-                )
-            except Exception:
-                return None
-            if daily is None or daily.empty:
-                return None
-            last = daily.iloc[-1]
-            return {
-                "high": float(last["High"]),
-                "low": float(last["Low"]),
-                "close": float(last["Close"]),
-            }
+            def price_fn(symbol: str, as_of: date) -> Optional[dict[str, float]]:
+                try:
+                    daily = module._fetch_daily_from_bhavcopy(
+                        symbol=symbol, as_of_date=as_of, max_lookback_days=10
+                    )
+                except Exception:
+                    return None
+                if daily is None or daily.empty:
+                    return None
+                last = daily.iloc[-1]
+                return {
+                    "high": float(last["High"]),
+                    "low": float(last["Low"]),
+                    "close": float(last["Close"]),
+                }
 
-        result = store.ingest(rows, resolved_date, price_fn)
-        tracker_alerts.extend(result.get("alerts", []))
+            result = store.ingest(rows, resolved_date, price_fn)
+            tracker_alerts.extend(result.get("alerts", []))
+        tracker_active_count = len(store.active())
 
     return {
         "results": groups,
@@ -254,7 +285,7 @@ def run_scan(
         "combined_file": combined_path,
         "scanned_at": pd.Timestamp.now().isoformat(),
         "tracker_alerts": tracker_alerts,
-        "tracker_active_count": len(store.active()),
+        "tracker_active_count": tracker_active_count,
     }
 
 

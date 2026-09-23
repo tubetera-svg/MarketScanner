@@ -354,6 +354,8 @@ details > summary::-webkit-details-marker { display: none; }
 .tracker-panel .kicker { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.08em; margin: 0; }
 .tracker-panel h3 { font-size: 15px; letter-spacing: -0.3px; margin: 0; display: flex; align-items: center; gap: 6px; }
 .tracker-head-actions { align-items: center; display: flex; gap: var(--gap-sm); justify-content: space-between; flex-wrap: wrap; }
+.tracker-toggle { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 5px; white-space: nowrap; }
+.tracker-toggle input { min-height: 0; padding: 0; }
 .tracker-info { position: relative; display: inline-flex; align-items: center; color: var(--muted); cursor: pointer; }
 .tracker-info:hover { color: var(--ink); }
 .tracker-alerts .alert { font: 10px 'DM Mono', monospace; padding: 3px 7px; border-radius: 3px; }
