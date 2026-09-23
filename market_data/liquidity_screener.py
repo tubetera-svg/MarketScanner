@@ -255,10 +255,14 @@ def screen_symbol(
     }
 
 
-def remove_symbol_everywhere(symbol: str, db_path: Optional[Path | str] = None) -> dict:
+def remove_symbol_everywhere(
+    symbol: str,
+    db_path: Optional[Path | str] = None,
+) -> dict:
     """Remove symbol from watchlist, categories, and all DB tables.
 
-    Returns summary of what was removed.
+    Returns summary of what was removed. (Unconditional removal: the five-part
+    IPO eligibility gate is for *adding*, not deleting.)
     """
     sym = symbol.strip().upper()
     removed = {"watchlist": False, "categories": False, "ohlc_daily": 0, "ohlc_no_data": 0, "ipo_metadata": 0, "tv_symbol_cache": 0}

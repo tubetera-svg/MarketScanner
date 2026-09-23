@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import pickle
-import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -30,25 +29,29 @@ sys.path.insert(0, str(ROOT / "src"))
 
 CACHE_DIR = ROOT / "data" / "bhavcopy_cache"
 
-# Series that can host a genuine equity IPO. Government-securities (GB/GS/SG),
-# ETFs and other debt series are excluded.
-IPO_SERIES = {"EQ", "SM", "ST", "BE"}
+# The shared IPO eligibility gate (market_data.ipo) owns these rules:
+# the main-board EQ series and the non-equity instrument families (rights
+# entitlements, dated government securities, Sovereign Gold Bonds, ETFs/funds).
+from market_data import database, ipo as ipo_service  # noqa: E402
 
-# Non-IPO instruments that nonetheless trade in an equity-like series:
-#   * rights entitlements  -> 'MPEL-RE', 'DUCON-RE1' (series ST/BE)
-#   * govt security codes  -> '610GS2031', '697GR2034' (defence-in-depth)
-NON_IPO_SYMBOL_RE = re.compile(r"(?:-RE\d*$)|(?:^\d{2,3}(?:GS|GR|SG)\d{4}$)")
+IPO_SERIES = set(ipo_service.MAIN_BOARD_SERIES)
+NON_IPO_SYMBOL_RE = ipo_service.NON_IPO_SYMBOL_RE
 
 
 def is_ipo_candidate(symbol: str, quote: dict) -> bool:
-    """True when a freshly-appeared symbol looks like a genuine equity IPO."""
-    if str(quote.get("series", "")).upper() not in IPO_SERIES:
-        return False
-    return not NON_IPO_SYMBOL_RE.search(str(symbol).strip().upper())
+    """True when a freshly-appeared symbol looks like a genuine equity IPO.
+
+    Delegates to ``market_data.ipo.ipo_ineligibility_reason``: NSE -> main-board
+    equity master -> ``EQ`` series -> not a bond/SGB/ETF/fund/rights family.
+    Trading activity and liquidity for a candidate are still validated later by
+    ``validate_tracked_ipo``.
+    """
+    return ipo_service.ipo_ineligibility_reason(
+        symbol, series=str(quote.get("series", "")) or None
+    ) is None
 
 
 import all_strategy as mod  # noqa: E402
-from market_data import database, ipo as ipo_service  # noqa: E402
 
 
 def load_bhavcopy(trade_date: date):
@@ -220,11 +223,18 @@ def run_rebuild() -> None:
 def register_and_store(state: dict) -> None:
     for sym in state["new_registered"]:
         first = state["ipos"][sym]
-        ipo_service.register_ipo({
-            "symbol": f"NSE:{sym}", "exchange": "NSE", "source": "NSE",
-            "listing_date": first["listing_date"],
-            "listing_price": first.get("open"),
-        })
+        try:
+            ipo_service.register_ipo({
+                "symbol": f"NSE:{sym}", "exchange": "NSE", "source": "NSE",
+                "listing_date": first["listing_date"],
+                "listing_price": first.get("open"),
+                "series": first.get("series"),
+            })
+        except ValueError as exc:
+            # Eligibility gate rejected the candidate (bond/SGB/ETF/fund/rights
+            # or non-EQ series) - never let it into the IPO tracker.
+            state["ipos"].pop(sym, None)
+            print(f"  skipped {sym}: {exc}")
     known = set(state["ipos"])
     rows = [r for r in state["ohlc"] if str(r["symbol"]).split(":", 1)[-1] in known]
     if rows:
@@ -341,8 +351,11 @@ def scrub_renames_and_flickers() -> None:
 
 
 def _drop_tracked(symbols: list[str]) -> None:
-    """Remove symbols from ipo_metadata, ohlc, watchlist and categories."""
+    """Remove symbols from ipo_metadata, ohlc, watchlist and categories.
+    Deletion is unconditional — there is no protection gate on removal.
+    """
     import json
+    drop: list[str] = list(symbols)
     candidates = [s for s in symbols if database.remove_ipo_metadata(s)]
     database.delete_ohlc(symbols=symbols, source="NSE")
     base = {s.split(":", 1)[-1].strip().upper() for s in symbols}
@@ -361,10 +374,12 @@ def _drop_tracked(symbols: list[str]) -> None:
 def scrub_non_ipo_instruments() -> None:
     """Drop tracked entries that are not genuine equity IPOs.
 
-    Catches two classes the detection filter can miss in older data:
-      * rights entitlements trading in equity-like series (ST/BE)
-      * govt-securities codes that leaked in before series filtering
-    Uses the cached bhavcopy to confirm the series each symbol traded under.
+    Catches the classes the historical detection filter could miss:
+      * rights entitlements (ST/BE series)   -> ANOND-RE, DUCON-RE1
+      * govt-securities / SGB codes          -> 628GS2032, SGBDEC26
+      * ETFs and index funds                 -> BANKETFADD, LIQUIDBETA
+    Uses the cached bhavcopy (when present) to confirm the series each symbol
+    traded under; the instrument-family test comes from market_data.ipo.
     """
     series_by_symbol: dict[str, set[str]] = {}
     for p in sorted(CACHE_DIR.glob("*.pkl")):
@@ -384,7 +399,7 @@ def scrub_non_ipo_instruments() -> None:
         qualified = str(meta["symbol"])
         base = qualified.split(":", 1)[-1].strip().upper()
         observed = series_by_symbol.get(base)
-        if NON_IPO_SYMBOL_RE.search(base) or (
+        if ipo_service.ipo_family_ineligibility_reason(base) or (
                 observed and not (observed & IPO_SERIES)):
             to_drop.append(qualified)
     _drop_tracked(to_drop)
@@ -477,11 +492,16 @@ def main() -> None:
     # Register new IPOs (watchlist + categories + ipo_metadata).
     for sym in state["new_registered"]:
         first = state["ipos"][sym]
-        ipo_service.register_ipo({
-            "symbol": f"NSE:{sym}", "exchange": "NSE", "source": "NSE",
-            "listing_date": first["listing_date"],
-            "listing_price": first.get("open"),
-        })
+        try:
+            ipo_service.register_ipo({
+                "symbol": f"NSE:{sym}", "exchange": "NSE", "source": "NSE",
+                "listing_date": first["listing_date"],
+                "listing_price": first.get("open"),
+                "series": first.get("series"),
+            })
+        except ValueError as exc:
+            state["ipos"].pop(sym, None)
+            print(f"  skipped {sym}: {exc}")
 
     if args.no_backfill:
         return

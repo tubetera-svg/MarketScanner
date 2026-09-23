@@ -16,6 +16,34 @@ Key functions
   its category (scope=IPO) in ``config/watchlist_categories.json`` and persist
   IPO metadata in the ``ipo_metadata`` table.
 
+Eligibility gate (what counts as an IPO here)
+--------------------------------------------
+A candidate is only ever reported/registered when *all* of these hold:
+
+1. **NSE** - the qualified symbol is ``NSE:<BASE>`` (this module only scans the
+   NSE bhavcopy).
+2. **Equity** - the symbol is present in the NSE main-board equity master
+   (``EQUITY_L.csv`` via ``market_data.equity_master``), which by construction
+   excludes ETFs/index funds, Sovereign Gold Bonds, dated government securities
+   and rights entitlements. When the master cannot be fetched (offline), a
+   symbol-pattern fallback (``NON_IPO_SYMBOL_RE``) is used instead.
+3. **Main board** - the bhavcopy series is ``EQ`` (never SME ``SM``/``ST``,
+   trade-to-trade ``BE``/``BZ``, debt ``GB``/``GS``/``SG``, ``IV``/``RR``/``E1``).
+4. **Traded recently** - it appears in the bhavcopy (which only lists symbols
+   that traded) on at least ``IPO_MIN_ACTIVE_RATIO`` of the scanned sessions
+   since its first appearance.
+5. **Liquidity threshold** - average daily traded value since listing is at
+   least ``IPO_MIN_AVG_DAILY_VALUE_CR`` crore (sourced from bhavcopy
+   ``TURNOVER_LACS``, else ``volume * close``).
+
+``discover_new_ipos`` applies the whole gate to every candidate; ``register_ipo``
+re-applies the instrument-type part (1-3) so a non-equity instrument can never
+enter the IPO tracker even if it is registered directly. Deletion of tracked
+entries (e.g. delisting / symbol rename / family reclassification) is handled
+by the backfill/scrub scripts and the liquidity screener and is NOT gated by
+these five conditions - this eligibility logic is for *adding*, not deleting.
+
+
 Important limitation (behavioural contract)
 ------------------------------------------
 Discovery is only meaningful when the ``known_symbols`` baseline excludes the
@@ -31,13 +59,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import database
-from .config import SOURCE_NSE, source_enabled
+from . import database, equity_master
+from .config import (
+    IPO_MIN_ACTIVE_RATIO,
+    IPO_MIN_AVG_DAILY_VALUE_CR,
+    LIQUIDITY_LOOKBACK_DAYS,
+    SOURCE_NSE,
+    source_enabled,
+)
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +81,32 @@ WATCHLIST_PATH = ROOT_DIR / "config" / "watchlist.txt"
 CATEGORIES_PATH = ROOT_DIR / "config" / "watchlist_categories.json"
 
 IPO_SCOPE = "IPO"
+
+# --- eligibility constants -------------------------------------------------
+#: Bhavcopy series that can host a genuine *main-board* equity IPO. SME (SM/ST),
+#: trade-to-trade (BE/BZ), debt (GB/GS/SG) and IV/RR/E1 are never eligible.
+MAIN_BOARD_SERIES = frozenset({"EQ"})
+
+#: Non-equity instrument families that still trade in the ``EQ`` series, used as
+#: the offline fallback when the NSE equity master is unavailable. Deliberately
+#: narrow (e.g. no bare ``LIC``/``ICICI`` prefixes) so real equities such as
+#: ``LICHSGFIN`` or ``ICICIGI`` are never excluded:
+#:   * rights entitlements      -> ANOND-RE, DUCON-RE1
+#:   * dated govt securities    -> 628GS2032, 74GS2035, 79GR2024
+#:   * sovereign gold bonds     -> SGBDEC26, SGBOCT27VI
+#:   * ETFs / index funds       -> BANKETFADD, NIF10GETF, LIQUIDBETA, NIFTYBEES
+NON_IPO_SYMBOL_RE = re.compile(
+    r"(?:"
+    r"-RE\d*$"
+    r"|^\d{1,3}(?:GS|GR|SG)\d{4}[A-Z]?$"
+    r"|^SGB[A-Z]{3}\d{2}[A-Z]{0,2}$"
+    r"|ETF[A-Z]{0,3}\d{0,4}$"
+    r"|GETF$"
+    r"|BEES$"
+    r"|BETA$"
+    r"|ADD$"
+    r")"
+)
 
 _all_strategy = None
 
@@ -103,11 +164,106 @@ def known_symbols_from_bhavcopy(trade_date: date) -> set[str]:
     return result
 
 
-def _bhavcopy_rows(trade_date: date) -> dict[str, dict]:
-    """Map base-symbol -> {open, high, low, close, volume} for EQ rows on a date.
+def ipo_family_ineligibility_reason(symbol: str) -> Optional[str]:
+    """Return why ``symbol`` is not a main-board equity instrument, else ``None``.
 
-    Returns an empty dict when the file is unavailable. Column resolution mirrors
-    ``nse_source.fetch_daily`` so both code paths agree on field names.
+    Pattern-only check (no network): catches instrument families that trade in
+    the ``EQ`` series but are not equity IPOs - rights entitlements, dated
+    government securities, Sovereign Gold Bonds and ETFs/index funds.
+    """
+    base = str(symbol).strip().upper().split(":", 1)[-1]
+    if not base:
+        return "empty symbol"
+    if NON_IPO_SYMBOL_RE.search(base):
+        return (
+            f"'{base}' is a non-equity instrument "
+            "(bond / SGB / ETF-fund / rights entitlement)"
+        )
+    return None
+
+
+def ipo_ineligibility_reason(
+    symbol: str,
+    *,
+    series: Optional[str] = None,
+    equity_master_map: Optional[dict[str, str]] = None,
+    allow_master_lookup: bool = True,
+) -> Optional[str]:
+    """Return the reason ``symbol`` cannot be an NSE main-board IPO, else ``None``.
+
+    Conditions 1-3 of the module docstring: NSE exchange, main-board ``EQ``
+    series, and equity-instrument membership verified against the NSE equity
+    master (with the pattern fallback when the master is unavailable).
+    """
+    raw = str(symbol).strip().upper()
+    if ":" in raw and raw.split(":", 1)[0] != "NSE":
+        return f"exchange '{raw.split(':', 1)[0]}' is not NSE"
+    base = raw.split(":", 1)[-1]
+    if not base:
+        return "empty symbol"
+
+    if series is not None and str(series).strip().upper() not in MAIN_BOARD_SERIES:
+        return f"series '{str(series).strip().upper()}' is not main-board EQ"
+
+    family_reason = ipo_family_ineligibility_reason(base)
+    if family_reason:
+        return family_reason
+
+    master = equity_master_map
+    if master is None and allow_master_lookup:
+        master = equity_master.load_equity_master()
+    if master:
+        master_series = master.get(base)
+        if master_series is None:
+            return f"'{base}' is not in the NSE main-board equity master"
+        if master_series != "EQ":
+            return f"'{base}' is master series '{master_series}', not main-board EQ"
+    return None
+
+
+def is_ipo_eligible(symbol: str, **kwargs) -> bool:
+    """True when ``symbol`` may be treated as an NSE main-board equity IPO."""
+    return ipo_ineligibility_reason(symbol, **kwargs) is None
+
+
+def ipo_trading_ineligibility_reason(
+    *,
+    traded_sessions: int,
+    total_sessions: int,
+    avg_daily_value_cr: Optional[float],
+    min_active_ratio: float = IPO_MIN_ACTIVE_RATIO,
+    min_avg_daily_value_cr: float = IPO_MIN_AVG_DAILY_VALUE_CR,
+) -> Optional[str]:
+    """Return why a candidate fails the traded-recently/liquidity gate, else ``None``.
+
+    ``traded_sessions``/``total_sessions`` come from the bhavcopy scan (the file
+    only lists symbols that actually traded). Missing turnover data means the
+    liquidity test is skipped rather than failed.
+    """
+    if total_sessions > 0:
+        ratio = traded_sessions / total_sessions
+        if ratio < min_active_ratio:
+            return (
+                f"traded on {traded_sessions}/{total_sessions} sessions "
+                f"(needs >= {min_active_ratio:.0%})"
+            )
+    if avg_daily_value_cr is not None and avg_daily_value_cr < min_avg_daily_value_cr:
+        return (
+            f"avg daily traded value Rs.{avg_daily_value_cr:.2f} cr "
+            f"< Rs.{min_avg_daily_value_cr:.2f} cr"
+        )
+    return None
+
+
+def _bhavcopy_rows(trade_date: date) -> dict[str, dict]:
+    """Map base-symbol -> EQ quote on a date.
+
+    Fields: ``open``, ``high``, ``low``, ``close``, ``volume``, ``series`` and
+    ``turnover_cr`` (daily traded value in rupees crore, from bhavcopy
+    ``TURNOVER_LACS`` when present, else ``volume * close``). Only ``EQ`` series
+    rows are returned (NSE main board). Returns an empty dict when the file is
+    unavailable. Column resolution mirrors ``nse_source.fetch_daily`` so both
+    code paths agree on field names.
     """
     df = _download_bhavcopy(trade_date)
     out: dict[str, dict] = {}
@@ -123,6 +279,7 @@ def _bhavcopy_rows(trade_date: date) -> dict[str, dict]:
     low_col = find(cols, ["LOW_PRICE", "LOW"])
     close_col = find(cols, ["CLOSE_PRICE", "CLOSE"])
     volume_col = find(cols, ["TTL_TRD_QNTY", "TOTAL_TRADED_QUANTITY", "VOLUME"])
+    turnover_col = find(cols, ["TURNOVER_LACS"])
     if not all([symbol_col, series_col, open_col, high_col, low_col, close_col]):
         return out
     subset = df[df[series_col].astype(str).str.strip().str.upper() == "EQ"]
@@ -131,12 +288,24 @@ def _bhavcopy_rows(trade_date: date) -> dict[str, dict]:
         if not text:
             continue
         try:
+            close = float(record[close_col])
+            volume = float(record[volume_col]) if volume_col else None
+            turnover_cr = None
+            if turnover_col:
+                try:
+                    turnover_cr = float(record[turnover_col]) / 100.0
+                except (TypeError, ValueError):
+                    turnover_cr = None
+            if turnover_cr is None and volume is not None and close:
+                turnover_cr = volume * close / 1e7
             out[text] = {
                 "open": float(record[open_col]),
                 "high": float(record[high_col]),
                 "low": float(record[low_col]),
-                "close": float(record[close_col]),
-                "volume": float(record[volume_col]) if volume_col else None,
+                "close": close,
+                "volume": volume,
+                "turnover_cr": turnover_cr,
+                "series": "EQ",
             }
         except (TypeError, ValueError):
             continue
@@ -149,6 +318,7 @@ def discover_new_ipos(
     *,
     known_symbols: Optional[Iterable[str]] = None,
     db_path: Optional[Path | str] = None,
+    include_rejected: bool = False,
 ) -> list[dict]:
     """Scan bhavcopy in [start_date, end_date] for newly-appearing EQ symbols.
 
@@ -158,6 +328,12 @@ def discover_new_ipos(
 
     listing_date is that first appearance date; listing_price is the OPEN price
     on that day.
+
+    Every candidate must pass the full eligibility gate described in the module
+    docstring (NSE / main-board equity / EQ series / traded recently / liquidity
+    threshold). Rejected candidates are logged and dropped; pass
+    ``include_rejected=True`` to also receive them as entries flagged
+    ``"eligible": False`` with a ``"reject_reason"``.
 
     Known-symbols contract: for correct results pass a baseline snapshot (see
     module docstring). If ``known_symbols`` is None the baseline is derived from
@@ -179,35 +355,78 @@ def discover_new_ipos(
 
     first_seen: dict[str, date] = {}
     price_on_first: dict[str, float] = {}
+    # base -> {"first_index": int, "traded": int, "value_sum": float, "value_days": int}
+    # first_index is the 0-based index of the listing day among scanned sessions,
+    # so "sessions since listing" can be derived even when the symbol stops
+    # trading (the bhavcopy only lists symbols that traded).
+    window_stats: dict[str, dict] = {}
     mod = _load_all_strategy()
     current = start_date
+    scanned = 0
     holidays = set(getattr(mod, "NSE_HOLIDAYS", set()))
     while current <= end_date:
         if current.weekday() < 5 and current not in holidays:
             rows = _bhavcopy_rows(current)
+            scanned += 1
             for base, quote in rows.items():
                 if base in baseline:
                     continue
                 if base not in first_seen:
                     first_seen[base] = current
                     price_on_first[base] = quote["open"]
+                stats = window_stats.setdefault(
+                    base,
+                    {"first_index": scanned - 1, "traded": 0, "value_sum": 0.0,
+                     "value_days": 0},
+                )
+                # The bhavcopy only lists symbols that actually traded today.
+                stats["traded"] += 1
+                turnover = quote.get("turnover_cr")
+                if turnover is not None:
+                    stats["value_sum"] += float(turnover)
+                    stats["value_days"] += 1
         current += timedelta(days=1)
 
-    results = [
-        {
+    master = equity_master.load_equity_master()
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    for base in sorted(first_seen, key=lambda b: (first_seen[b], b)):
+        stats = window_stats.get(base, {})
+        value_days = int(stats.get("value_days", 0))
+        avg_value_cr = (stats.get("value_sum", 0.0) / value_days) if value_days else None
+        sessions_since_listing = max(scanned - int(stats.get("first_index", 0)), 1)
+        reason = ipo_ineligibility_reason(
+            f"NSE:{base}", series="EQ", equity_master_map=master
+        )
+        if not reason:
+            reason = ipo_trading_ineligibility_reason(
+                traded_sessions=int(stats.get("traded", 0)),
+                total_sessions=sessions_since_listing,
+                avg_daily_value_cr=avg_value_cr,
+            )
+        entry = {
             "symbol": f"NSE:{base}",
             "exchange": "NSE",
             "source": SOURCE_NSE,
             "listing_date": first_seen[base].isoformat(),
             "listing_price": price_on_first[base],
+            "eligible": reason is None,
         }
-        for base in sorted(first_seen, key=lambda b: first_seen[b])
-    ]
+        if reason:
+            entry["reject_reason"] = reason
+            rejected.append(entry)
+            log.info("IPO candidate %s rejected: %s", base, reason)
+        else:
+            accepted.append(entry)
+
     log.info(
-        "IPO discovery %s..%s: %d new candidate(s)", start_date.isoformat(),
-        end_date.isoformat(), len(results),
+        "IPO discovery %s..%s: %d eligible, %d rejected",
+        start_date.isoformat(),
+        end_date.isoformat(),
+        len(accepted),
+        len(rejected),
     )
-    return results
+    return accepted + rejected if include_rejected else accepted
 
 
 def backfill_ipo_history(
@@ -285,10 +504,19 @@ def register_ipo(
 
     ``entry`` must contain symbol, listing_date and listing_price (as produced by
     discover_new_ipos). Returns a summary dict.
+
+    Raises ``ValueError`` when the symbol is not an NSE main-board equity
+    (bonds / SGB / ETFs / funds / rights entitlements / SME / non-EQ series), so
+    this class of instrument can never enter the IPO tracker even when
+    registered directly. ``entry["series"]`` is honoured when supplied.
     """
     symbol = str(entry["symbol"]).strip().upper()
     listing_date = str(entry["listing_date"]).strip()
     listing_price = entry.get("listing_price")
+
+    reason = ipo_ineligibility_reason(symbol, series=entry.get("series"))
+    if reason:
+        raise ValueError(f"{symbol} is not an eligible NSE main-board IPO: {reason}")
 
     existing = {sym.upper() for sym, _ in load_entries()}
     if symbol not in existing:
@@ -340,8 +568,24 @@ def register_ipos(
     *,
     db_path: Optional[Path | str] = None,
 ) -> list[dict]:
-    """Register multiple IPO entries (see register_ipo). Returns per-symbol summary."""
-    return [register_ipo(entry, db_path=db_path) for entry in entries]
+    """Register multiple IPO entries (see register_ipo). Returns per-symbol summary.
+
+    Ineligible symbols are skipped (never partially written) and reported as
+    ``{"symbol": ..., "registered": False, "reason": ...}`` so a batch scan
+    cannot be aborted by one bad candidate.
+    """
+    summaries: list[dict] = []
+    for entry in entries:
+        try:
+            summary = register_ipo(entry, db_path=db_path)
+        except ValueError as exc:
+            symbol = str(entry.get("symbol", "")).strip().upper()
+            log.info("IPO registration skipped for %s: %s", symbol, exc)
+            summaries.append({"symbol": symbol, "registered": False, "reason": str(exc)})
+            continue
+        summary["registered"] = True
+        summaries.append(summary)
+    return summaries
 
 
 def ipo_performance(
@@ -446,11 +690,21 @@ def sync_new_ipos(
     db_path: Optional[Path | str] = None,
 ) -> dict:
     """Discover new NSE IPOs, register them in watchlist/categories/db, then
-    optionally backfill their OHLC history. Returns a combined summary."""
+    optionally backfill their OHLC history. Returns a combined summary.
+
+    ``skipped`` lists every candidate the eligibility gate rejected (with the
+    reason); only eligible candidates are registered.
+    """
     candidates = discover_new_ipos(
-        start_date, end_date, known_symbols=known_symbols, db_path=db_path
+        start_date,
+        end_date,
+        known_symbols=known_symbols,
+        db_path=db_path,
+        include_rejected=True,
     )
-    registered = register_ipos(candidates, db_path=db_path) if candidates else []
+    eligible = [item for item in candidates if item.get("eligible", True)]
+    skipped = [item for item in candidates if not item.get("eligible", True)]
+    registered = register_ipos(eligible, db_path=db_path) if eligible else []
     backfill_summary = (
         run_ipo_backfill(db_path=db_path)
         if backfill
@@ -459,7 +713,8 @@ def sync_new_ipos(
     # backfill only covers symbols already in ipo_metadata (registered above)
     return {
         "window": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
-        "discovered": candidates,
+        "discovered": eligible,
+        "skipped": skipped,
         "registered": registered,
         "backfill": backfill_summary,
         "known_symbols_provided": bool(known_symbols),
@@ -527,11 +782,9 @@ def remove_ipo_completely(
 ) -> dict:
     """Remove an IPO symbol from watchlist, categories, and all DB tables.
 
-    Returns summary of what was removed.
+    Returns summary of what was removed. (Unconditional removal: the five-part
+    eligibility gate is for *adding* IPOs, not deleting - see module docstring.)
     """
-    from . import database
-    from .config import SOURCE_NSE
-
     sym = str(symbol).strip().upper()
     removed = {
         "watchlist": False,
@@ -557,9 +810,15 @@ def remove_ipo_completely(
 
 __all__ = [
     "IPO_SCOPE",
+    "MAIN_BOARD_SERIES",
+    "NON_IPO_SYMBOL_RE",
     "backfill_ipo_history",
     "discover_new_ipos",
+    "ipo_family_ineligibility_reason",
+    "ipo_ineligibility_reason",
     "ipo_performance",
+    "ipo_trading_ineligibility_reason",
+    "is_ipo_eligible",
     "known_symbols_from_bhavcopy",
     "load_entries",
     "register_ipo",

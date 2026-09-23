@@ -532,6 +532,10 @@ def read_ipo_metadata() -> dict:
 def discover_ipos(request: IPODiscoverRequest) -> dict:
     """Scan bhavcopy for newly-listed NSE stocks in a window.
 
+    Candidates must pass the IPO eligibility gate (NSE -> main-board equity
+    master -> EQ series -> traded recently -> liquidity threshold); rejects are
+    returned under ``skipped`` with their reason.
+
     If ``register`` is true the discovered IPOs are added to the watchlist,
     category file (scope=IPO) and ipo_metadata table, optionally followed by an
     OHLC backfill. When discovery needs a realistic baseline, callers may pass
@@ -548,11 +552,15 @@ def discover_ipos(request: IPODiscoverRequest) -> dict:
             return result
         # Read-only discovery (no registration/backfill).
         candidates = ipo_service.discover_new_ipos(
-            request.start_date, request.end_date, known_symbols=None
+            request.start_date, request.end_date, known_symbols=None,
+            include_rejected=True,
         )
+        eligible = [item for item in candidates if item.get("eligible", True)]
+        skipped = [item for item in candidates if not item.get("eligible", True)]
         return {"window": {"start_date": request.start_date.isoformat(),
                            "end_date": request.end_date.isoformat()},
-                "discovered": candidates}
+                "discovered": eligible,
+                "skipped": skipped}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # unexpected – log full traceback

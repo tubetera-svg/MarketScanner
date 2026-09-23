@@ -17,6 +17,26 @@ def _flags(monkeypatch):
     monkeypatch.setenv("FETCH_NSE_DATA", "true")
 
 
+#: Symbols the eligibility gate treats as *main-board equities* in tests. Every
+#: other symbol is "not in the master", so the family patterns decide.
+_MASTER = {
+    symbol: "EQ"
+    for symbol in (
+        "NEWIPO", "ALREADY", "ANOTHER", "EXIST", "NEW1", "NEW2", "XYZ",
+        "RELIANCE", "TATASTEEL", "JETFREIGHT", "ICICIGI", "LICHSGFIN", "REALCO",
+        "LOWLIQ", "FLICKER",
+    )
+} | {"BETA": "EQ"}
+
+
+@pytest.fixture(autouse=True)
+def _equity_master(monkeypatch):
+    """Stub the NSE equity master so tests never touch the network."""
+    monkeypatch.setattr(
+        ipo_mod.equity_master, "load_equity_master", lambda **kwargs: dict(_MASTER)
+    )
+
+
 @pytest.fixture()
 def tmp_ipo_files(tmp_path, monkeypatch):
     """Redirect watchlist/categories IO to a throwaway dir."""
@@ -28,8 +48,14 @@ def tmp_ipo_files(tmp_path, monkeypatch):
     return watch, cat
 
 
-def bhavcopy_frame(symbols: dict[str, float]) -> pd.DataFrame:
-    """Build a mock EQ-only bhavcopy DataFrame."""
+def bhavcopy_frame(
+    symbols: dict[str, float], volumes: dict[str, float] | None = None
+) -> pd.DataFrame:
+    """Build a mock EQ-only bhavcopy DataFrame.
+
+    ``volumes`` optionally overrides the traded quantity per symbol (used by the
+    liquidity-threshold tests).
+    """
     rows = []
     for sym, open_price in symbols.items():
         rows.append(
@@ -40,7 +66,7 @@ def bhavcopy_frame(symbols: dict[str, float]) -> pd.DataFrame:
                 "HIGH_PRICE": open_price + 2,
                 "LOW_PRICE": open_price - 2,
                 "CLOSE_PRICE": open_price + 1,
-                "TTL_TRD_QNTY": 100000,
+                "TTL_TRD_QNTY": (volumes or {}).get(sym, 100000),
             }
         )
     return pd.DataFrame(rows)
@@ -112,8 +138,12 @@ def test_discover_new_ipos_basic(monkeypatch):
 def test_discover_skips_known_and_tracks_first_day(monkeypatch):
     start = date(2026, 2, 9)  # a Monday
     frames = {
-        start: bhavcopy_frame({"EXIST": 30.0, "NEW1": 10.0}),
-        start + timedelta(days=1): bhavcopy_frame({"EXIST": 31.0, "NEW1": 11.0, "NEW2": 5.0}),
+        start: bhavcopy_frame({"EXIST": 30.0, "NEW1": 10.0},
+                              volumes={"NEW1": 1_000_000}),
+        start + timedelta(days=1): bhavcopy_frame(
+            {"EXIST": 31.0, "NEW1": 11.0, "NEW2": 5.0},
+            volumes={"NEW1": 1_000_000, "NEW2": 5_000_000},  # clear liquidity gate
+        ),
     }
     monkeypatch.setattr(ipo_mod, "_download_bhavcopy", lambda d: frames.get(d))
     found = ipo_mod.discover_new_ipos(start, start + timedelta(days=1), known_symbols={"EXIST"})
@@ -181,6 +211,8 @@ def test_register_ipo_idempotent(monkeypatch, tmp_ipo_files, tmp):
 def test_known_symbols_from_bhavcopy(monkeypatch):
     frame = bhavcopy_frame({"AAA": 1.0, "BBB": 2.0})
     frame = pd.concat(
+
+
         [frame, pd.DataFrame([{"SYMBOL": "NON", "SERIES": "BE", "OPEN_PRICE": 3.0}])],
         ignore_index=True,
     )
@@ -189,7 +221,7 @@ def test_known_symbols_from_bhavcopy(monkeypatch):
     assert symbols == {"AAA", "BBB"}  # BE series excluded
 
 
-def row_dict(source, symbol, exchange, day, close=100.0):
+def row_dict(source, symbol, exchange, day, close=100.0, volume=12345.0):
     return {
         "source": source,
         "symbol": symbol,
@@ -199,7 +231,7 @@ def row_dict(source, symbol, exchange, day, close=100.0):
         "high": close + 2,
         "low": close - 2,
         "close": close,
-        "volume": 12345.0,
+        "volume": volume,
     }
 
 
@@ -223,3 +255,169 @@ def test_ipo_performance(tmp):
     assert item["high_since_listing"] == 122.0  # max(high=close+2) across bars
     assert item["low_since_listing"] == 88.0    # min(low=close-2) across bars
     assert item["pct_vs_listing"] == 20.0
+
+
+# ------------------------------------------------------------------ eligibility
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "NSE:628GS2032",      # dated government security
+        "NSE:74GS2035",
+        "NSE:SGBDEC26",       # sovereign gold bond
+        "NSE:SGBOCT27VI",
+        "NSE:BANKETFADD",     # ETF add-on plan
+        "NSE:GOLDETFADD",
+        "NSE:ITETFADD",
+        "NSE:NIF10GETF",      # index fund
+        "NSE:NIF5GETF",
+        "NSE:NIFITETF",
+        "NSE:SILVRETF",
+        "NSE:LIQUIDBETA",     # fund basket
+        "NSE:ANOND-RE",       # rights entitlement
+        "NSE:DUCON-RE1",
+        "NSE:JAYKAY-RE1",
+        "NSE:MPEL-RE",
+        "NSE:RATNA-RE",
+        "NSE:VHLTD-RE1",
+    ],
+)
+def test_ineligibility_flags_every_flagged_family(symbol):
+    assert ipo_mod.ipo_ineligibility_reason(symbol), symbol
+    assert ipo_mod.is_ipo_eligible(symbol) is False
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["NSE:RELIANCE", "NSE:TATASTEEL", "NSE:JETFREIGHT", "NSE:ICICIGI", "NSE:LICHSGFIN"],
+)
+def test_ineligibility_allows_real_equities(symbol):
+    assert ipo_mod.ipo_ineligibility_reason(symbol) is None
+
+
+def test_ineligibility_enforces_nse_and_eq_series():
+    assert "not NSE" in (ipo_mod.ipo_ineligibility_reason("BSE:RELIANCE") or "")
+    assert "main-board EQ" in (
+        ipo_mod.ipo_ineligibility_reason("NSE:NEWIPO", series="SM") or ""
+    )
+    assert ipo_mod.ipo_ineligibility_reason("NSE:NEWIPO", series="EQ") is None
+
+
+def test_ineligibility_uses_equity_master_when_available():
+    reason = ipo_mod.ipo_ineligibility_reason(
+        "NSE:UNLISTEDCO", equity_master_map={"RELIANCE": "EQ"}
+    )
+    assert reason and "equity master" in reason
+    # Master unavailable (offline) -> only the pattern fallback applies.
+    assert ipo_mod.ipo_ineligibility_reason(
+        "NSE:UNLISTEDCO", equity_master_map={}
+    ) is None
+    assert ipo_mod.ipo_ineligibility_reason(
+        "NSE:GOLDETFADD", equity_master_map={}
+    ) is not None
+
+
+def _seed_recent_bars(symbol: str, tmp, n: int = 20,
+                      close: float = 100.0, volume: float = 100000.0) -> None:
+    """Write `n` trading-day OHLC bars for `symbol` in the recent window (lookback
+    from today). Each bar is vol*close = 1 cr, comfortably above the 0.25 cr
+    liquidity floor."""
+    today = date.today()
+    rows = []
+    offset = 0
+    placed = 0
+    while placed < n:
+        d = today - timedelta(days=offset)
+        offset += 1
+        if d.weekday() >= 5:  # Sat/Sun -> skip (market closed)
+            continue
+        rows.append(row_dict("NSE", symbol, "NSE", d, close=close, volume=volume))
+        placed += 1
+    database.upsert_ohlc(rows, db_path=tmp)
+
+
+# ---------------------------------------------------------------- deletion guard
+
+def test_discover_drops_non_equity_instruments(monkeypatch):
+    start = date(2026, 3, 2)  # a Monday
+    frame = bhavcopy_frame(
+        {
+            "REALCO": 100.0,
+            "GOLDETFADD": 61.0,
+            "628GS2032": 99.0,
+            "SGBDEC26": 15000.0,
+            "ANOND-RE": 246.0,
+        }
+    )
+    monkeypatch.setattr(ipo_mod, "_download_bhavcopy", lambda d: frame)
+    accepted = ipo_mod.discover_new_ipos(start, start, known_symbols={"IGNORED"})
+    assert [item["symbol"] for item in accepted] == ["NSE:REALCO"]
+    assert accepted[0]["eligible"] is True
+
+    detailed = ipo_mod.discover_new_ipos(
+        start, start, known_symbols={"IGNORED"}, include_rejected=True
+    )
+    rejected = {item["symbol"]: item for item in detailed if not item["eligible"]}
+    assert set(rejected) == {
+        "NSE:GOLDETFADD", "NSE:628GS2032", "NSE:SGBDEC26", "NSE:ANOND-RE",
+    }
+    assert all(item["reject_reason"] for item in rejected.values())
+
+
+def test_discover_enforces_liquidity_threshold(monkeypatch):
+    start = date(2026, 3, 2)
+    frame = bhavcopy_frame({"LOWLIQ": 100.0}, volumes={"LOWLIQ": 1000})
+    monkeypatch.setattr(ipo_mod, "_download_bhavcopy", lambda d: frame)
+    found = ipo_mod.discover_new_ipos(
+        start, start, known_symbols={"IGNORED"}, include_rejected=True
+    )
+    assert found and found[0]["eligible"] is False
+    assert "avg daily traded value" in found[0]["reject_reason"]
+
+
+def test_discover_enforces_traded_recently(monkeypatch):
+    start = date(2026, 3, 2)  # Monday .. Thursday
+    other = bhavcopy_frame({"OTHER": 100.0})
+    frames = {
+        start: bhavcopy_frame({"FLICKER": 100.0}),
+        start + timedelta(days=1): other,
+        start + timedelta(days=2): other,
+        start + timedelta(days=3): other,
+    }
+    monkeypatch.setattr(ipo_mod, "_download_bhavcopy", lambda d: frames.get(d))
+    found = ipo_mod.discover_new_ipos(
+        start, start + timedelta(days=3), known_symbols={"IGNORED"},
+        include_rejected=True,
+    )
+    flicker = next(item for item in found if item["symbol"] == "NSE:FLICKER")
+    assert flicker["eligible"] is False
+    assert "traded on" in flicker["reject_reason"]
+
+
+def test_register_ipo_rejects_non_equity_instrument(tmp_ipo_files, tmp):
+    watch, _cat = tmp_ipo_files
+    for symbol in ("NSE:GOLDETFADD", "NSE:628GS2032", "NSE:SGBDEC26", "NSE:ANOND-RE"):
+        with pytest.raises(ValueError):
+            ipo_mod.register_ipo(
+                {"symbol": symbol, "listing_date": "2026-01-05", "listing_price": 10.0},
+                db_path=tmp,
+            )
+    assert watch.read_text(encoding="utf-8") == ""
+    assert database.query_ipo_metadata(db_path=tmp) == []
+
+
+def test_register_ipos_skips_ineligible_without_aborting(monkeypatch, tmp_ipo_files, tmp):
+    monkeypatch.setattr(ipo_mod, "load_entries", lambda: [])
+    summaries = ipo_mod.register_ipos(
+        [
+            {"symbol": "NSE:GOLDETFADD", "listing_date": "2026-01-05",
+             "listing_price": 61.0},
+            {"symbol": "NSE:NEWIPO", "listing_date": "2026-01-05",
+             "listing_price": 100.0},
+        ],
+        db_path=tmp,
+    )
+    assert summaries[0]["registered"] is False and summaries[0]["reason"]
+    assert summaries[1]["registered"] is True
+    assert [row["symbol"] for row in database.query_ipo_metadata(db_path=tmp)] == [
+        "NSE:NEWIPO"
+    ]

@@ -156,3 +156,14 @@ MARKET_CAP_MIN_CR = float(os.environ.get("MARKET_CAP_MIN_CR", "100.0"))
 FREE_FLOAT_MIN_PCT = float(os.environ.get("FREE_FLOAT_MIN_PCT", "15.0"))
 BID_ASK_SPREAD_MAX_PCT = float(os.environ.get("BID_ASK_SPREAD_MAX_PCT", "2.0"))
 LIQUIDITY_LOOKBACK_DAYS = int(os.environ.get("LIQUIDITY_LOOKBACK_DAYS", "60"))
+
+# --- IPO eligibility gate ---
+# A newly-listed candidate must be an NSE *main-board equity* (EQ series, present
+# in the NSE equity master), must have traded recently, and must clear a minimum
+# average daily traded value before it may be registered as an IPO.
+IPO_MIN_AVG_DAILY_VALUE_CR = float(
+    os.environ.get("IPO_MIN_AVG_DAILY_VALUE_CR", str(BORDERLINE_AVG_DAILY_VALUE_CR))
+)
+IPO_MIN_ACTIVE_RATIO = float(os.environ.get("IPO_MIN_ACTIVE_RATIO", "0.5"))
+IPO_MASTER_REFRESH_DAYS = int(os.environ.get("IPO_MASTER_REFRESH_DAYS", "1"))
+

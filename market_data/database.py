@@ -386,6 +386,34 @@ def existing_dates(
         conn.close()
 
 
+def distinct_dates(
+    source: str,
+    start_date: Optional[date | str] = None,
+    end_date: Optional[date | str] = None,
+    *,
+    db_path: Optional[Path | str] = None,
+) -> list[str]:
+    """Sorted distinct 'YYYY-MM-DD' dates stored for ``source`` in the range.
+
+    Used as the market-session denominator for the "traded recently" check of
+    the IPO eligibility / deletion-protection gate.
+    """
+    clauses = ["source = ?"]
+    params: list[object] = [str(source).strip().upper()]
+    if start_date is not None:
+        clauses.append("date >= ?")
+        params.append(_to_date_text(start_date))
+    if end_date is not None:
+        clauses.append("date <= ?")
+        params.append(_to_date_text(end_date))
+    sql = f"SELECT DISTINCT date FROM ohlc_daily WHERE {' AND '.join(clauses)} ORDER BY date"
+    conn = connect(db_path)
+    try:
+        return [str(row[0]) for row in conn.execute(sql, params)]
+    finally:
+        conn.close()
+
+
 def mark_no_data(rows: Sequence[dict], db_path: Optional[Path | str] = None) -> int:
     """Remember dates where the upstream source confirmed there is no bar.
 
@@ -838,6 +866,7 @@ __all__ = [
     "query_ohlc",
     "query_ohlc_multi",
     "query_ohlc_page",
+    "distinct_dates",
     "distinct_symbols",
     "existing_dates",
     "mark_no_data",

@@ -638,6 +638,10 @@ class IPOScanner:
       ipo_metadata). OHLC backfill is NOT run automatically to avoid bulk
       downloads; callers can trigger ``/api/market-data/ipo/backfill`` explicitly
       (per repo convention to ask before long-running work).
+    - Candidates must pass the IPO eligibility gate in ``market_data.ipo``
+      (NSE -> main-board equity master -> ``EQ`` series -> traded recently ->
+      liquidity threshold), so bonds, Sovereign Gold Bonds, ETFs/funds and
+      rights entitlements are never registered.
     """
 
     def __init__(self, lookback_days: int = 7) -> None:

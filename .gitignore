@@ -39,6 +39,7 @@ strategy_outputs/
 
 # IPO backfill cache + run logs (large, regenerable)
 data/bhavcopy_cache/
+data/nse_equity_master.csv
 data/*.log
 
 # OS / editor
