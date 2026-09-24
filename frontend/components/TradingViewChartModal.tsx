@@ -154,6 +154,16 @@ export default function TradingViewChartModal({
     };
   }, [symbol, sourceLink, preset]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   // Advisory only: negative lookup (not a failure) shows a hint above the
   // widget, never instead of it — restoring the old always-render behaviour.
   const unlistedHint = !sourceLink && !preset && !resolving && !lookupFailed && resolved === null;

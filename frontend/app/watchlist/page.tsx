@@ -6,7 +6,7 @@
 // trigger NSE/TradingView requests.
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
+import { Activity, ArrowLeft, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
 import { useStatusFlash } from "../../components/useStatusFlash";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -120,6 +120,7 @@ export default function WatchlistPage() {
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
   const pickerRef = useRef<HTMLDetailsElement>(null);
 
   // Native <details> doesn't close on outside click; do that here so the
@@ -455,6 +456,7 @@ export default function WatchlistPage() {
             {deleting ? "Deleting…" : "Delete data"}
           </button>
           <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
+          <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
           <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
           <a className="top-link" href="/"><ArrowLeft size={12} /> Scanner</a>
         </div>
@@ -482,19 +484,30 @@ export default function WatchlistPage() {
               <div className="watchlist-row" key={symbol}>
                 {editingSymbol === symbol ? (
                   <div className="watchlist-edit">
-                    <input aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
+                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                      Symbol
+                      <input aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
+                    </label>
                     {classificationFields.map(({ key, label, placeholder }) => (
-                      <input
-                        key={key}
-                        aria-label={`${label} for ${symbol}`}
-                        value={editClassification[key] ?? ""}
-                        onChange={(event) => setEditClassification((current) => ({ ...current, [key]: event.target.value }))}
-                        placeholder={placeholder}
-                      />
+                      <label key={key} style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                        {label}
+                        <input
+                          key={key}
+                          aria-label={`${label} for ${symbol}`}
+                          value={editClassification[key] ?? ""}
+                          onChange={(event) => setEditClassification((current) => ({ ...current, [key]: event.target.value }))}
+                          placeholder={placeholder}
+                        />
+                      </label>
                     ))}
-                    <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
-                    <button className="test-button" type="button" onClick={saveEdit}>Save</button>
-                    <button className="test-button" type="button" onClick={cancelEdit}>Cancel</button>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                      Aliases
+                      <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
+                    </label>
+                    <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flex: "1 1 100%", marginTop: 6 }}>
+                      <button className="test-button" type="button" onClick={saveEdit}>Save</button>
+                      <button className="test-button button-secondary" type="button" onClick={cancelEdit}>Cancel</button>
+                    </div>
                   </div>
                 ) : (
                   <div className="watchlist-view">
@@ -526,16 +539,28 @@ export default function WatchlistPage() {
           </summary>
           <div className="symbol-menu">
             <div className="symbol-list">
+              <input
+                aria-label="Filter symbols in picker"
+                className="manage-search"
+                style={{ marginBottom: 6, minHeight: 28, fontSize: 11 }}
+                placeholder="Filter symbols…"
+                value={pickerQuery}
+                onChange={(e) => setPickerQuery(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+              />
               <label className="symbol-row master">
                 <input aria-label="Select all symbols" type="checkbox" checked={allSelected} onChange={toggleAllSymbols} />
                 {allSelected ? "Select none" : "Select all"}
               </label>
-              {allSymbols.map((symbol) => (
+              {allSymbols.filter((s) => s.toLowerCase().includes(pickerQuery.toLowerCase())).map((symbol) => (
                 <label key={symbol} className="symbol-row">
                   <input type="checkbox" checked={selectedSymbols.has(symbol)} onChange={() => toggleSymbol(symbol)} />
                   {symbol}
                 </label>
               ))}
+              {allSymbols.length > 0 && allSymbols.filter((s) => s.toLowerCase().includes(pickerQuery.toLowerCase())).length === 0 && (
+                <span className="symbol-row muted">No symbols match.</span>
+              )}
               {allSymbols.length === 0 && <span className="symbol-row muted">Watchlist unavailable.</span>}
             </div>
           </div>

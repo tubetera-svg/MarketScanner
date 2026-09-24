@@ -7,7 +7,7 @@ import { useStatusFlash } from "../../components/useStatusFlash";
 // Data loads from the local SQLite store on mount/refresh.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowDown, ArrowUp, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
+import { Activity, ArrowLeft, ArrowDown, ArrowUp, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -257,6 +257,7 @@ export default function IPOPage() {
             {loading ? "Loading…" : "Refresh"}
           </button>
           <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
+          <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
           <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
           <a className="top-link" href="/"><ArrowLeft size={12} /> Scanner</a>
         </div>
@@ -405,7 +406,7 @@ export default function IPOPage() {
                     </span>
                   ) : "—";
                   return (
-                    <tr key={item.symbol} style={{ backgroundColor: item.decision === "REMOVE" ? "#3a2a2a" : item.decision === "WATCH" ? "#3a3a2a" : item.decision === "KEEP" ? "#2a3a2a" : "transparent" }}>
+                    <tr key={item.symbol} style={{ backgroundColor: item.decision === "REMOVE" ? "#fdf4f1" : item.decision === "WATCH" ? "#fef9ee" : item.decision === "KEEP" ? "#f3faf7" : "transparent" }}>
                       <td><strong>{item.symbol}</strong></td>
                       <td><span className={`badge ${item.liquidity_tier === "LIQUID" ? "bias-bull" : item.liquidity_tier === "BORDERLINE" ? "bias-neutral" : item.liquidity_tier === "ILLIQUID" ? "bias-bear" : ""}`}>{item.liquidity_tier}</span></td>
                       <td><span className={`badge ${item.decision === "KEEP" ? "bias-bull" : item.decision === "WATCH" ? "bias-neutral" : item.decision === "REMOVE" ? "bias-bear" : "bias-bull"}`}>{item.decision}</span></td>

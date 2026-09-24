@@ -243,8 +243,8 @@ export default function BacktestPage() {
             <div className="panel-heading">
               <span>Symbols <small>{selectedSymbols.length}/{symbolOptions.length}</small></span>
               <div className="panel-heading-actions">
-                <button className="toggle-text" title="Select visible" onClick={() => setSelectedSymbols((p) => Array.from(new Set([...p, ...visibleSymbols])))}>Sel</button>
-                <button className="toggle-text" title="Clear" onClick={() => setSelectedSymbols([])}>∅</button>
+                <button className="toggle-text" title="Select visible" onClick={() => setSelectedSymbols((p) => Array.from(new Set([...p, ...visibleSymbols])))}>Select visible</button>
+                <button className="toggle-text" title="Clear selection" onClick={() => setSelectedSymbols([])}>Clear</button>
               </div>
             </div>
 
@@ -317,7 +317,7 @@ function ReportView({ label, report, fmt }: { label: string; report: Report; fmt
       </div>
       {report.warnings?.length > 0 && <div className="date-note">{report.warnings.join(" ")}</div>}
 
-      <div className="metrics">
+      <div className="metrics" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
         <Metric icon={<TrendingUp size={16} />} label="Sharpe" value={fmt(m.sharpe)} />
         <Metric icon={<TrendingDown size={16} />} label="Max Drawdown" value={fmt(m.max_drawdown_pct, true)} tone="bear" />
         <Metric label="Win Rate" value={fmt(m.win_rate, true)} />

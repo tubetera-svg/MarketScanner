@@ -411,6 +411,7 @@ export default function Home() {
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = useState(0);
   const commandPaletteRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -433,6 +434,7 @@ export default function Home() {
         event.preventDefault();
         setCommandPaletteOpen((open) => !open);
         setCommandPaletteQuery("");
+        setCommandPaletteActiveIndex(0);
       }
       if (event.key === "Escape") {
         setCommandPaletteOpen(false);
@@ -1123,13 +1125,13 @@ export default function Home() {
           <button type="button" className={`section-nav-item${activeSection === "alerts" ? " active" : ""}`} onClick={() => scrollToSection("alerts")}>Alerts</button>
           <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}>Strategies</button>
           <button type="button" className={`section-nav-item${activeSection === "tracker" ? " active" : ""}`} onClick={() => scrollToSection("tracker")}>Tracker</button>
-          <span className="section-nav-hint">⌘K Command palette</span>
+          <span className="section-nav-hint">Ctrl+K / ⌘K Command palette</span>
         </div>
       </nav>
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => setWatchScopes(["All"])}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => setWatchScopes((current) => current.includes(opt) ? current.filter((s) => s !== opt) : [...current, opt])}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => setWatchScopes(["All"])}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => setWatchScopes((current) => current.includes(opt) ? current.filter((s) => s !== opt) : [...current, opt])}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /><button type="button" aria-pressed={allVisibleSelected} onClick={() => setSelected((current) => { if (allVisibleSelected) { const visible = new Set(filteredWatchlist.map((item) => item.symbol)); return current.filter((symbol) => !visible.has(symbol)); } return Array.from(new Set([...current, ...filteredWatchlist.map((item) => item.symbol)])); })}>{allVisibleSelected ? "Unselect visible" : "Select visible"}</button></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }} id="scan" ref={(el) => { sectionRefs.current.scan = el; }}>
         <section className="auto-scan">
@@ -1215,88 +1217,7 @@ export default function Home() {
           </div>
         )}
       </div>
-      </section>      <section className="panel tracker-panel" id="tracker" ref={(el) => { sectionRefs.current.tracker = el; }}>
-        <p className="kicker">Cross-scan setup tracker</p>
-        <h3>
-          Weekly-profile setups
-          <span className="tracker-info" role="button" tabIndex={0} aria-label="How to read the tracker" onClick={() => setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker'); } }}>
-            <Info size={13} />
-            <span className={`info-tooltip${activeTooltip === 'tracker' ? " open" : ""}`}>
-              Each row is a weekly-profile setup followed across scans.{"\n"}
-              State: armed = forming (no trigger yet) — triggered = signal confirmed (in the trade) — closed_sl / closed_target = stop or target hit — invalidated = thesis failed — expired = week ended without triggering.{"\n"}
-              E = planned entry (— confirmation close) — SL = invalidation extreme + buffer — T = opposite liquidity pool — R:R = target — risk.{"\n"}
-              LIVE = trackable intraday — EOD = NSE, confirm only after close.
-            </span>
-          </span>
-        </h3>
-        <div className="tracker-head-actions">
-          <label className="tracker-toggle" title="Track weekly-profile setups across scans (persisted)">
-            <input
-              type="checkbox"
-              checked={crossScanTrackerEnabled}
-              onChange={toggleCrossScanTracker}
-            />
-            Cross-scan tracker
-          </label>
-          <small className="auto-meta">
-            {trackerSetups.filter((s) => s.state === "armed" || s.state === "triggered").length} active
-            {" — "}
-            {trackerSetups.length} tracked
-          </small>
-          <div className="tracker-groupby" role="group" aria-label="Group tracker results by">
-            <span className="filter-label">Group</span>
-            <div className="filters">
-              {(["none", "symbol", "week", "month"] as const).map((option) => (
-                <button key={option} type="button" className={`${trackerGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setTrackerGroupBy(option)} disabled={!crossScanTrackerEnabled}>
-                  {option === "none" ? "Off" : option === "symbol" ? "Symbol" : option === "week" ? "Week" : "Month"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button type="button" className="test-button button-secondary" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }} disabled={!crossScanTrackerEnabled}>
-            {trackerWatchlistOnly ? "Watchlist only" : "All setups"}
-          </button>
-        </div>
-        {!crossScanTrackerEnabled && (
-          <div className="empty small-empty"><SearchX size={14} /> Cross-scan tracker is off — enable the toggle to follow weekly-profile setups across scans.</div>
-        )}
-        {crossScanTrackerEnabled && (
-          <>
-            {trackerAlerts.length > 0 && (
-              <div className="tracker-alerts">
-                {trackerAlerts.map((a, i) => (
-                  <span key={i} className={`alert ${a.kind}`}>
-                    {a.symbol} {a.kind.replaceAll("_", " ")}
-                    {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="tracker-list">
-              {trackerSetups.length === 0 ? (
-                <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
-              ) : trackerGroupBy === "none" ? (
-                trackerSetups.map(renderTrackerRow)
-              ) : (
-                trackerGroups!.map((group) => (
-                  <div key={group.key} className="tracker-group">
-                    <div className="tracker-group-head">
-                      <span className="tracker-group-label">{group.label}</span>
-                      <span className="tracker-group-count">{group.items.length}</span>
-                      {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
-                      {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
-                    </div>
-                    <div className="tracker-group-items">
-                      {group.items.map(renderTrackerRow)}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-        </section>
-<details className="panel strategy-panel" id="strategies" open ref={(el) => { sectionRefs.current.strategies = el; }}>
+      </section>      <details className="panel strategy-panel" id="strategies" open ref={(el) => { sectionRefs.current.strategies = el; }}>
   <summary className="panel-heading">
     <span className="strategy-panel-title">
       <ChevronRight size={14} className="strategy-panel-status-icon" aria-hidden="true" />
@@ -1312,17 +1233,17 @@ export default function Home() {
     </div>
   </summary>
           <div className="protected-swings-bar">
-           <button
-             type="button"
-             className={`ps-chip${strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " active" : ""}`}
-             onClick={() => {
-               const current = strategies.find((f: StrategyFlag) => f.name === "protected_swings");
-               if (current) toggleStrategy(current);
-             }}
-             title="Toggle Protected Swings strategy"
-           >
-             Protected Swings{strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " ?" : ""}
-           </button>
+            <button
+              type="button"
+              className={`ps-chip${strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " active" : ""}`}
+              onClick={() => {
+                const current = strategies.find((f: StrategyFlag) => f.name === "protected_swings");
+                if (current) toggleStrategy(current);
+              }}
+              title="Toggle Protected Swings strategy"
+            >
+              Protected Swings{strategies.find((f: StrategyFlag) => f.name === "protected_swings")?.enabled ? " ✓" : ""}
+            </button>
            <span className="info-trigger" aria-label="Info: Protected Swings" role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === "protected_swings" ? null : "protected_swings")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTooltip(activeTooltip === "protected_swings" ? null : "protected_swings"); } }}>
              <Info size={12} />
              <span className={`info-tooltip${activeTooltip === "protected_swings" ? " open" : ""}`}>Tracks confirmed protected swing highs and lows. A signal appears only on the confirmation session; anticipated swings do not trigger trades.</span>
@@ -1582,6 +1503,88 @@ export default function Home() {
           </div>
         )}
 </details>
+      <section className="panel tracker-panel" id="tracker" ref={(el) => { sectionRefs.current.tracker = el; }}>
+        <p className="kicker">Cross-scan setup tracker</p>
+        <h3>
+          Weekly-profile setups
+          <span className="tracker-info" role="button" tabIndex={0} aria-label="How to read the tracker" onClick={() => setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker'); } }}>
+            <Info size={13} />
+            <span className={`info-tooltip${activeTooltip === 'tracker' ? " open" : ""}`}>
+              Each row is a weekly-profile setup followed across scans.{"\n"}
+              State: armed = forming (no trigger yet) — triggered = signal confirmed (in the trade) — closed_sl / closed_target = stop or target hit — invalidated = thesis failed — expired = week ended without triggering.{"\n"}
+              E = planned entry (— confirmation close) — SL = invalidation extreme + buffer — T = opposite liquidity pool — R:R = target — risk.{"\n"}
+              LIVE = trackable intraday — EOD = NSE, confirm only after close.
+            </span>
+          </span>
+        </h3>
+        <div className="tracker-head-actions">
+          <label className="tracker-toggle" title="Track weekly-profile setups across scans (persisted)">
+            <input
+              type="checkbox"
+              checked={crossScanTrackerEnabled}
+              onChange={toggleCrossScanTracker}
+            />
+            Cross-scan tracker
+          </label>
+          <small className="auto-meta">
+            {trackerSetups.filter((s) => s.state === "armed" || s.state === "triggered").length} active
+            {" — "}
+            {trackerSetups.length} tracked
+          </small>
+          <div className="tracker-groupby" role="group" aria-label="Group tracker results by">
+            <span className="filter-label">Group</span>
+            <div className="filters">
+              {(["none", "symbol", "week", "month"] as const).map((option) => (
+                <button key={option} type="button" className={`${trackerGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setTrackerGroupBy(option)} disabled={!crossScanTrackerEnabled}>
+                  {option === "none" ? "Off" : option === "symbol" ? "Symbol" : option === "week" ? "Week" : "Month"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button type="button" className="test-button button-secondary" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }} disabled={!crossScanTrackerEnabled}>
+            {trackerWatchlistOnly ? "Watchlist only" : "All setups"}
+          </button>
+        </div>
+        {!crossScanTrackerEnabled && (
+          <div className="empty small-empty"><SearchX size={14} /> Cross-scan tracker is off — enable the toggle to follow weekly-profile setups across scans.</div>
+        )}
+        {crossScanTrackerEnabled && (
+          <>
+            {trackerAlerts.length > 0 && (
+              <div className="tracker-alerts">
+                {trackerAlerts.map((a, i) => (
+                  <span key={i} className={`alert ${a.kind}`}>
+                    {a.symbol} {a.kind.replaceAll("_", " ")}
+                    {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="tracker-list">
+              {trackerSetups.length === 0 ? (
+                <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
+              ) : trackerGroupBy === "none" ? (
+                trackerSetups.map(renderTrackerRow)
+              ) : (
+                trackerGroups!.map((group) => (
+                  <div key={group.key} className="tracker-group">
+                    <div className="tracker-group-head">
+                      <span className="tracker-group-label">{group.label}</span>
+                      <span className="tracker-group-count">{group.items.length}</span>
+                      {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
+                      {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
+                    </div>
+                    <div className="tracker-group-items">
+                      {group.items.map(renderTrackerRow)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+        </section>
+
         {chart && (
           <TradingViewChartModal
             key={chart.symbol}
@@ -1596,14 +1599,31 @@ export default function Home() {
                 <label htmlFor="command-palette-input" className="command-palette-label">
                   <SearchX size={14} />
                   <span>Command</span>
-                  <kbd className="command-palette-kbd">⌘K</kbd>
+                  <kbd className="command-palette-kbd">Ctrl+K / ⌘K</kbd>
                 </label>
                 <input
                   id="command-palette-input"
                   type="text"
                   className="command-palette-input"
                   value={commandPaletteQuery}
-                  onChange={(e) => setCommandPaletteQuery(e.target.value)}
+                  onChange={(e) => {
+                    setCommandPaletteQuery(e.target.value);
+                    setCommandPaletteActiveIndex(0);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setCommandPaletteActiveIndex((i) => Math.min(i + 1, filteredCommandPaletteItems.length - 1));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setCommandPaletteActiveIndex((i) => Math.max(i - 1, 0));
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (filteredCommandPaletteItems[commandPaletteActiveIndex]) {
+                        handleCommandPaletteSelect(filteredCommandPaletteItems[commandPaletteActiveIndex]);
+                      }
+                    }
+                  }}
                   placeholder="Search symbols, strategies, actions..."
                   autoFocus
                 />
@@ -1612,12 +1632,13 @@ export default function Home() {
                 {filteredCommandPaletteItems.length === 0 ? (
                   <div className="command-palette-empty">No matches for "{commandPaletteQuery}"</div>
                 ) : (
-                  filteredCommandPaletteItems.map((item) => (
+                  filteredCommandPaletteItems.map((item, idx) => (
                     <button
                       key={item.id}
                       type="button"
-                      className="command-palette-item"
+                      className={`command-palette-item${idx === commandPaletteActiveIndex ? " active" : ""}`}
                       role="option"
+                      aria-selected={idx === commandPaletteActiveIndex}
                       onClick={() => handleCommandPaletteSelect(item)}
                     >
                       <span className="command-palette-item-label">{item.label}</span>
