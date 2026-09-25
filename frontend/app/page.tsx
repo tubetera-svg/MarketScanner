@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, ChevronRight, Database, ExternalLink, Info, Plus, RefreshCw, Rocket, SearchX, Timer, Zap } from "lucide-react";
+import Navigation from "../components/Navigation";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, Info, Play, Plus, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -612,8 +613,8 @@ export default function Home() {
       const hits = Array.isArray(data?.signals) ? data.signals.length : 0;
       setMessage(
         hits
-          ? `? Silver Bullet test complete for ${dateOverride} — ${hits} setup${hits === 1 ? "" : "s"} locked in ?`
-          : `? Silver Bullet test complete for ${dateOverride} — no setups, market stayed quiet ?`,
+          ? `✓ Silver Bullet test complete for ${dateOverride} — ${hits} setup${hits === 1 ? "" : "s"} locked in`
+          : `✓ Silver Bullet test complete for ${dateOverride} — no setups, market stayed quiet`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not test Silver Bullet date");
@@ -746,6 +747,24 @@ export default function Home() {
       setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
     }
   };
+
+  useEffect(() => {
+    const onShortcutKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        if (!event.repeat && !strategyScanning && selected.length > 0) runStrategyScan();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        shiftStrategyDate(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        shiftStrategyDate(1);
+      }
+    };
+    document.addEventListener("keydown", onShortcutKeyDown);
+    return () => document.removeEventListener("keydown", onShortcutKeyDown);
+  });
 
   const handleStrategyDateChange = (next: string) => {
     if (!next || next > localDate()) return;
@@ -1105,9 +1124,7 @@ export default function Home() {
           <h1>Quant Lens</h1>
         </div>
         <div className="top-actions">
-          <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
-          <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
-          <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
+          <Navigation active="/" />
 
           {markets && (
             <>
@@ -1121,10 +1138,10 @@ export default function Home() {
 
       <nav className="section-nav" role="navigation" aria-label="Section navigation">
         <div className="section-nav-inner">
-          <button type="button" className={`section-nav-item${activeSection === "scan" ? " active" : ""}`} onClick={() => scrollToSection("scan")}>Scan</button>
-          <button type="button" className={`section-nav-item${activeSection === "alerts" ? " active" : ""}`} onClick={() => scrollToSection("alerts")}>Alerts</button>
-          <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}>Strategies</button>
-          <button type="button" className={`section-nav-item${activeSection === "tracker" ? " active" : ""}`} onClick={() => scrollToSection("tracker")}>Tracker</button>
+          <button type="button" className={`section-nav-item${activeSection === "scan" ? " active" : ""}`} onClick={() => scrollToSection("scan")}><Activity size={13} /> Scan</button>
+          <button type="button" className={`section-nav-item${activeSection === "alerts" ? " active" : ""}`} onClick={() => scrollToSection("alerts")}><Zap size={13} /> Alerts</button>
+          <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}><Settings2 size={13} /> Strategies</button>
+          <button type="button" className={`section-nav-item${activeSection === "tracker" ? " active" : ""}`} onClick={() => scrollToSection("tracker")}><Timer size={13} /> Tracker</button>
           <span className="section-nav-hint">Ctrl+K / ⌘K Command palette</span>
         </div>
       </nav>
@@ -1164,17 +1181,17 @@ export default function Home() {
                 </span>
                 {silverBullet?.running ? (
                   <>
-                    <button className="test-button stop button-secondary" type="button" onClick={stopSilverBullet}>Stop live scan</button>
+                    <button className="test-button stop button-secondary" type="button" onClick={stopSilverBullet}><Square size={12} /> Stop live scan</button>
                     <span className="auto-live"><span className="pulse" />{silverBullet.signals.length ? `${silverBullet.signals.length} alert(s)` : "WATCHING 10:00—11:00 NY"}</span>
                   </>
                 ) : (
                   <>
                     <button className="test-button button-primary" type="button" onClick={startSilverBullet} disabled={silverBulletLoading}>
-                      {silverBulletLoading && <RefreshCw size={12} className="spin" />}
+                      {silverBulletLoading ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
                       {silverBulletLoading ? "Loading—" : "Start live scan"}
                     </button>
                     <button className="test-button button-secondary" type="button" onClick={() => testSilverBullet()} disabled={silverBulletLoading}>
-                      {silverBulletLoading && <RefreshCw size={12} className="spin" />}
+                      {silverBulletLoading ? <RefreshCw size={12} className="spin" /> : <CheckCircle2 size={12} />}
                       {silverBulletLoading ? "Loading—" : `Test ${strategyAnchorDate}`}
                     </button>
                   </>
@@ -1225,7 +1242,7 @@ export default function Home() {
     </span>
     <div className="panel-heading-actions">
       <small>{strategies.filter((flag) => flag.enabled).length}/{strategies.length} ON</small>
-      <button className="test-button button-primary" type="button" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
+      <button className="test-button button-primary" type="button" title="Run strategies (Alt+R)" onClick={() => runStrategyScan()} disabled={strategyScanning || selected.length === 0}>
         <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
         {strategyScanning ? (scanProgress ? scanProgress : "Scanning—") : "Run strategies"}
       </button>
@@ -1368,6 +1385,7 @@ export default function Home() {
             className="date-arrow"
             type="button"
             aria-label="Previous day"
+            title="Previous testing day (Alt+Left)"
             onClick={() => shiftStrategyDate(-1)}
             disabled={strategyScanning}
           >
@@ -1378,6 +1396,7 @@ export default function Home() {
             className="date-arrow"
             type="button"
             aria-label="Next day"
+            title="Next testing day (Alt+Right)"
             onClick={() => shiftStrategyDate(1)}
             disabled={strategyScanning || strategyAnchorDate >= localDate()}
           >

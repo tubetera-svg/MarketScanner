@@ -6,8 +6,9 @@
 // trigger NSE/TradingView requests.
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, ArrowLeft, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
+import { Activity, ArrowLeft, Database, Pencil, RefreshCw, Rocket, Save, SearchX, Trash2, X } from "lucide-react";
 import { useStatusFlash } from "../../components/useStatusFlash";
+import Navigation from "../../components/Navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const number = (value: number | null) => value == null ? "-" : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -452,20 +453,18 @@ export default function WatchlistPage() {
             disabled={loading || deleting || selectedSymbols.size === 0}
             title="Delete stored data for the selected symbols (and From/To date range if set)"
           >
-            <RefreshCw size={14} className={deleting ? "spin" : undefined} />
+            <Trash2 size={14} className={deleting ? "spin" : undefined} />
             {deleting ? "Deleting…" : "Delete data"}
           </button>
           <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
-          <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
-          <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
-          <a className="top-link" href="/"><ArrowLeft size={12} /> Scanner</a>
+          <Navigation active="/watchlist" />
         </div>
       </header>
 
       <section className="auto-scan watchlist-manage">
         <span className="auto-title"><Database size={14} /> Manage watchlist</span>
         <button className="seg" type="button" onClick={() => setManaging((current) => !current)}>
-          {managing ? "Hide" : `Show (${allSymbols.length})`}
+          {managing ? <><X size={13} /> Hide</> : <>Show ({allSymbols.length})</>}
         </button>
         {managing && (
           <div className="watchlist-editor">
@@ -505,16 +504,16 @@ export default function WatchlistPage() {
                       <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
                     </label>
                     <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flex: "1 1 100%", marginTop: 6 }}>
-                      <button className="test-button" type="button" onClick={saveEdit}>Save</button>
-                      <button className="test-button button-secondary" type="button" onClick={cancelEdit}>Cancel</button>
+                      <button className="test-button" type="button" onClick={saveEdit}><Save size={13} /> Save</button>
+                      <button className="test-button button-secondary" type="button" onClick={cancelEdit}><X size={13} /> Cancel</button>
                     </div>
                   </div>
                 ) : (
                   <div className="watchlist-view">
                     <span className="wl-symbol"><strong>{symbol}</strong><small>{classificationFields.map(({ key, label }) => classifications[symbol]?.[key] ? `${label}: ${classifications[symbol]?.[key]}` : null).filter(Boolean).join(" · ") || "automatic classification"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
                     <span className="wl-actions">
-                      <button className="test-button" type="button" onClick={() => beginEdit(symbol)}>Edit</button>
-                      <button className="test-button danger" type="button" onClick={() => deleteSymbol(symbol)}>Delete</button>
+                      <button className="test-button" type="button" onClick={() => beginEdit(symbol)}><Pencil size={13} /> Edit</button>
+                      <button className="test-button danger" type="button" onClick={() => deleteSymbol(symbol)}><Trash2 size={13} /> Delete</button>
                     </span>
                   </div>
                 )}

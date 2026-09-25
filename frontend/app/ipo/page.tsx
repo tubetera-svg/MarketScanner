@@ -2,12 +2,13 @@
 
 import TradingViewChartModal, { type ChartTarget } from "../../components/TradingViewChartModal";
 import { useStatusFlash } from "../../components/useStatusFlash";
+import Navigation from "../../components/Navigation";
 
 // IPO tracker: reads NSE IPO metadata + live performance from the local API.
 // Data loads from the local SQLite store on mount/refresh.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, ArrowLeft, ArrowDown, ArrowUp, Database, RefreshCw, Rocket, SearchX } from "lucide-react";
+import { Activity, ArrowLeft, ArrowDown, ArrowUp, Database, Play, RefreshCw, Rocket, SearchX, ScanLine, Square } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -257,20 +258,18 @@ export default function IPOPage() {
             {loading ? "Loading…" : "Refresh"}
           </button>
           <div className={`status${statusFlash ? " status-flash" : ""}`}><span className="pulse" />{message}</div>
-          <a className="top-link" href="/backtest"><Activity size={12} /> Backtest</a>
-          <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
-          <a className="top-link" href="/"><ArrowLeft size={12} /> Scanner</a>
+          <Navigation active="/ipo" />
         </div>
       </header>
 
       <section className="auto-scan">
         <span className="auto-title"><Rocket size={14} /> Automation</span>
         {status?.running ? (
-          <button className="test-button stop" type="button" onClick={() => runScanner("stop")} disabled={scanning} title="Stop the automatic IPO detection scanner">Stop IPO scan</button>
+          <button className="test-button stop" type="button" onClick={() => runScanner("stop")} disabled={scanning} title="Stop the automatic IPO detection scanner"><Square size={13} /> Stop IPO scan</button>
         ) : (
           <>
-            <button className="test-button" type="button" onClick={() => runScanner("start")} disabled={scanning} title="Start automatic IPO detection (runs on a schedule)">Start IPO scan</button>
-            <button className="test-button" type="button" onClick={() => runScanner("run-once")} disabled={scanning} title="Run IPO detection once immediately (bhavcopy scan)">Scan now</button>
+            <button className="test-button" type="button" onClick={() => runScanner("start")} disabled={scanning} title="Start automatic IPO detection (runs on a schedule)"><Play size={13} /> Start IPO scan</button>
+            <button className="test-button" type="button" onClick={() => runScanner("run-once")} disabled={scanning} title="Run IPO detection once immediately (bhavcopy scan)"><ScanLine size={13} /> Scan now</button>
           </>
         )}
         <div className="auto-separator" />

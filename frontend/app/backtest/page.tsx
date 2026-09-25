@@ -13,7 +13,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, ArrowDownRight, ArrowUpRight, Database, Rocket, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, Database, Play, Rocket, TrendingDown, TrendingUp } from "lucide-react";
+import Navigation from "../../components/Navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -165,9 +166,7 @@ export default function BacktestPage() {
           <h1>Strategy Replay</h1>
         </div>
         <div className="top-actions">
-          <a className="top-link" href="/"><Activity size={12} /> Scanner</a>
-          <a className="top-link" href="/watchlist"><Database size={12} /> Database</a>
-          <a className="top-link" href="/ipo"><Rocket size={12} /> IPO</a>
+          <Navigation active="/backtest" />
         </div>
       </header>
 
@@ -277,7 +276,7 @@ export default function BacktestPage() {
           </div>
 
           <button className="scan-now" style={{ marginTop: 14, width: "100%", justifyContent: "center" }} onClick={runBacktest} disabled={running}>
-            {running ? "Running…" : "Run Backtest"}
+            {running ? "Running…" : <><Play size={14} /> Run Backtest</>}
           </button>
           {error && <p className="sync-note" style={{ marginTop: 8 }}><strong>Error:</strong> {error}</p>}
         </aside>
