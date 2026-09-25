@@ -1,10 +1,12 @@
 """Tests for the live AM Silver Bullet scanner's New York session gating.
 
-Covers the two timezone-sensitive behaviours:
+Covers the timezone-sensitive behaviours:
   * the live scan retires once 11:00 New York has passed (it must not report
-    ``running`` for the rest of the day), and
+    ``running`` for the rest of the day),
   * the auto-check sleep is measured in real elapsed time so a DST change
-    cannot shift the wake-up out of the 10:00-11:00 New York window.
+    cannot shift the wake-up out of the 10:00-11:00 New York window, and
+  * the in-window fallback re-arms a stopped scan every few minutes, while a stop
+    the user asked for still holds for the rest of that New York session.
 """
 
 from __future__ import annotations
@@ -67,6 +69,33 @@ def _drive(scanner: SilverBulletLiveScanner) -> dict:
         return scanner.status()
 
     return asyncio.run(run())
+
+
+def _drive_auto_loop(
+    scanner: SilverBulletLiveScanner, monkeypatch, *, iterations: int = 1
+) -> None:
+    """Run the fallback ``_auto_loop`` for ``iterations`` checks, then cancel it.
+
+    The fallback never returns on its own during a session, so the test stops it
+    at its first sleep instead of waiting for the real 3-minute cadence.
+    """
+    real_sleep = asyncio.sleep
+    calls = {"count": 0}
+
+    async def bounded_sleep(_seconds: float) -> None:
+        calls["count"] += 1
+        if calls["count"] >= iterations:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    monkeypatch.setattr("api.main.asyncio.sleep", bounded_sleep)
+
+    async def run() -> None:
+        task = asyncio.ensure_future(scanner._auto_loop())
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
 
 
 def test_live_scan_stops_once_new_york_window_closes(monkeypatch):
@@ -149,4 +178,78 @@ def test_auto_check_sleep_uses_real_time_across_dst_end():
     assert scanner._seconds_until_next_auto_check(
         datetime(2026, 9, 22, 11, 0, tzinfo=NEW_YORK)
     ) == pytest.approx(23 * HOUR)
+
+
+def test_auto_check_cadence_allows_recovery_inside_the_window():
+    """The in-window retry must fit several times into 10:00-11:00 New York.
+
+    An hourly cadence (the old value) could not pick up a scan stopped at 10:1x
+    before the window closed, which silently skipped the rest of the session.
+    """
+    scanner = SilverBulletLiveScanner()
+
+    assert scanner.AUTO_CHECK_SECONDS <= 300
+    assert scanner._seconds_until_next_auto_check(
+        datetime(2026, 9, 22, 10, 30, tzinfo=NEW_YORK)
+    ) == pytest.approx(scanner.AUTO_CHECK_SECONDS)
+
+
+def test_auto_loop_rearms_a_stopped_scan_inside_the_window(monkeypatch):
+    scanner = SilverBulletLiveScanner()
+    arms: list[list[str] | None] = []
+
+    monkeypatch.setattr(
+        "api.main.datetime", _clock(datetime(2026, 9, 22, 10, 7, tzinfo=NEW_YORK))
+    )
+    monkeypatch.setattr(scanner, "start", lambda symbols=None: arms.append(symbols))
+    scanner.stop()  # nothing running: a fresh API process, or a scan that died
+
+    _drive_auto_loop(scanner, monkeypatch, iterations=1)
+
+    assert arms == [None]
+
+
+def test_auto_loop_leaves_a_manually_stopped_scan_alone(monkeypatch):
+    scanner = SilverBulletLiveScanner()
+    arms: list[list[str] | None] = []
+
+    monkeypatch.setattr(
+        "api.main.datetime", _clock(datetime(2026, 9, 22, 10, 7, tzinfo=NEW_YORK))
+    )
+    monkeypatch.setattr(scanner, "start", lambda symbols=None: arms.append(symbols))
+    scanner.stop(manual=True)  # POST /api/silver-bullet/stop
+
+    _drive_auto_loop(scanner, monkeypatch, iterations=1)
+
+    assert arms == []
+    assert scanner.status()["running"] is False
+
+
+def test_auto_loop_rearms_on_the_next_session_after_a_manual_stop(monkeypatch):
+    scanner = SilverBulletLiveScanner()
+    arms: list[list[str] | None] = []
+
+    monkeypatch.setattr(
+        "api.main.datetime", _clock(datetime(2026, 9, 23, 10, 7, tzinfo=NEW_YORK))
+    )
+    monkeypatch.setattr(scanner, "start", lambda symbols=None: arms.append(symbols))
+    scanner.manual_stop_date = "2026-09-22"  # yesterday's stop
+
+    _drive_auto_loop(scanner, monkeypatch, iterations=1)
+
+    assert arms == [None]
+
+
+def test_internal_stop_clears_the_manual_stop_marker(monkeypatch):
+    """``start``/``test`` restart the scan, so they clear the user-stop marker."""
+    scanner = SilverBulletLiveScanner()
+    monkeypatch.setattr(
+        "api.main.datetime", _clock(datetime(2026, 9, 22, 10, 7, tzinfo=NEW_YORK))
+    )
+
+    scanner.stop(manual=True)
+    assert scanner.manual_stop_date == "2026-09-22"
+
+    scanner.stop()
+    assert scanner.manual_stop_date is None
 

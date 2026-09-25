@@ -23,7 +23,8 @@ A candidate is only ever reported/registered when *all* of these hold:
 1. **NSE** - the qualified symbol is ``NSE:<BASE>`` (this module only scans the
    NSE bhavcopy).
 2. **Equity** - the symbol is present in the NSE main-board equity master
-   (``EQUITY_L.csv`` via ``market_data.equity_master``), which by construction
+   (``EQUITY_L.csv`` via ``market_data.equity_master``) and absent from the NSE ETF
+   list (``market_data.etf_list``); the master by construction
    excludes ETFs/index funds, Sovereign Gold Bonds, dated government securities
    and rights entitlements. When the master cannot be fetched (offline), a
    symbol-pattern fallback (``NON_IPO_SYMBOL_RE``) is used instead.
@@ -65,7 +66,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import database, equity_master
+from . import database, equity_master, etf_list
 from .config import (
     IPO_MIN_ACTIVE_RATIO,
     IPO_MIN_AVG_DAILY_VALUE_CR,
@@ -95,6 +96,9 @@ MAIN_BOARD_SERIES = frozenset({"EQ"})
 #:   * dated govt securities    -> 628GS2032, 74GS2035, 79GR2024
 #:   * PSU bonds (NABARD/IIFCL) -> 735NABAR31, 740IIFCL33
 #:   * sovereign gold bonds     -> SGBDEC26, SGBOCT27VI
+#:   * ETF / index / gilt funds -> GOLDETF, NIFTYBEES, NIF10GETF, LIQUIDCASE
+#: Online, ``market_data.etf_list`` (NSE's own ETF list) is the authoritative ETF
+#: test; this pattern only covers the offline case.
 NON_IPO_SYMBOL_RE = re.compile(
     r"(?:"
     r"-RE\d*$"
@@ -102,10 +106,14 @@ NON_IPO_SYMBOL_RE = re.compile(
     r"|^\d{1,3}(?:NABAR|IIFCL)\d{2}$"
     r"|^SGB[A-Z]{3}\d{2}[A-Z]{0,2}$"
     r"|ETF[A-Z]{0,3}\d{0,4}$"
-    r"|GETF$"
-    r"|BEES$"
-    r"|BETA$"
-    r"|ADD$"
+    r"|GETF\d*$"
+    r"|BEES\d*$"
+    r"|LIQUIDBETA$"
+    r"|BANKETFADD|GOLDETFADD|ITETFADD"
+    r"|CASE$"
+    r"|BND$"
+    r"|^LIQ"
+    r"|^GSEC|^GILT|^SDL"
     r")"
 )
 
@@ -189,12 +197,16 @@ def ipo_ineligibility_reason(
     series: Optional[str] = None,
     equity_master_map: Optional[dict[str, str]] = None,
     allow_master_lookup: bool = True,
+    etf_symbols: Optional[set[str]] = None,
+    allow_etf_lookup: bool = True,
 ) -> Optional[str]:
     """Return the reason ``symbol`` cannot be an NSE main-board IPO, else ``None``.
 
     Conditions 1-3 of the module docstring: NSE exchange, main-board ``EQ``
     series, and equity-instrument membership verified against the NSE equity
-    master (with the pattern fallback when the master is unavailable).
+    master (with the pattern fallback when the master is unavailable), and absent
+    from the NSE ETF list (``market_data.etf_list``) so ETF/index-fund units are
+    rejected even when the equity master cannot be reached.
     """
     raw = str(symbol).strip().upper()
     if ":" in raw and raw.split(":", 1)[0] != "NSE":
@@ -209,6 +221,12 @@ def ipo_ineligibility_reason(
     family_reason = ipo_family_ineligibility_reason(base)
     if family_reason:
         return family_reason
+
+    etf_units = etf_symbols
+    if etf_units is None and allow_etf_lookup:
+        etf_units = etf_list.load_etf_symbols()
+    if etf_units and base in etf_units:
+        return f"'{base}' is an NSE ETF unit, not an equity IPO"
 
     master = equity_master_map
     if master is None and allow_master_lookup:
@@ -389,6 +407,7 @@ def discover_new_ipos(
         current += timedelta(days=1)
 
     master = equity_master.load_equity_master()
+    etf_units = etf_list.load_etf_symbols()
     accepted: list[dict] = []
     rejected: list[dict] = []
     for base in sorted(first_seen, key=lambda b: (first_seen[b], b)):
@@ -397,7 +416,10 @@ def discover_new_ipos(
         avg_value_cr = (stats.get("value_sum", 0.0) / value_days) if value_days else None
         sessions_since_listing = max(scanned - int(stats.get("first_index", 0)), 1)
         reason = ipo_ineligibility_reason(
-            f"NSE:{base}", series="EQ", equity_master_map=master
+            f"NSE:{base}",
+            series="EQ",
+            equity_master_map=master,
+            etf_symbols=etf_units,
         )
         if not reason:
             reason = ipo_trading_ineligibility_reason(

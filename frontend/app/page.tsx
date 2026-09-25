@@ -905,15 +905,10 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schedule?.running, schedule?.next_run_at]);
 
+  // Poll the AM Silver Bullet status while the page is open. The scan is armed
+  // server-side inside 10:00-11:00 New York, so it can start or restart without
+  // this tab noticing: polling only while `running` hid alerts until a reload.
   useEffect(() => {
-    fetch(`${API}/api/silver-bullet`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data: SilverBulletStatus) => setSilverBullet(data))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!silverBullet?.running) return;
     const poll = () => {
       fetch(`${API}/api/silver-bullet`, { cache: "no-store" })
         .then((response) => response.json())
@@ -923,7 +918,7 @@ export default function Home() {
     poll();
     const id = window.setInterval(poll, 15000);
     return () => window.clearInterval(id);
-  }, [silverBullet?.running]);
+  }, []);
 
   useEffect(() => {
     for (const signal of silverBullet?.signals ?? []) {

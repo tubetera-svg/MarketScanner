@@ -437,7 +437,7 @@ class SilverBulletLiveScanner:
     NEW_YORK = ZoneInfo("America/New_York")
     AM_WINDOW_START_HOUR = 10  # 10:00 New York: AM Silver Bullet window opens
     AM_WINDOW_END_HOUR = 11  # 11:00 New York: window closed, live scan retires
-    AUTO_CHECK_SECONDS = 60 * 60  # how often to confirm the live scan is running (hourly)
+    AUTO_CHECK_SECONDS = 60 * 3  # confirm the live scan is running every 3 minutes (scan poll cadence)
 
     def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
@@ -449,13 +449,16 @@ class SilverBulletLiveScanner:
         self.last_error: str | None = None
         self.run_count = 0
         self.scan_date: str | None = None
+        # New York date of an explicit user stop, so the in-window fallback does
+        # not re-arm a scan the user just stopped (cleared by any start/test).
+        self.manual_stop_date: str | None = None
 
     def start_auto_schedule(self) -> None:
         if self.auto_task is None or self.auto_task.done():
             self.auto_task = asyncio.create_task(self._auto_loop())
 
     def _seconds_until_next_auto_check(self, now: datetime) -> float:
-        """Seconds to the next hourly check inside the New York AM window.
+        """Seconds to the next check inside the New York AM window.
 
         Before 10:00 New York -> sleep until 10:00. After 11:00 New York -> the
         window is over, so sleep until 10:00 the next day. The delta is measured
@@ -476,17 +479,22 @@ class SilverBulletLiveScanner:
         return max(1.0, remaining.total_seconds())
 
     async def _auto_loop(self) -> None:
-        """Confirm hourly that a live scan is running in the NY AM window.
+        """Confirm every few minutes that a live scan is running in the NY AM window.
 
-        The scan itself is unchanged (1-minute bar polling inside 10:00-11:00 NY);
+        The scan itself is unchanged (15-minute bars polled inside 10:00-11:00 NY);
         this loop only decides *whether* a live scan should be running. It is a
-        fallback: an already running scan is never interrupted. Once 11:00 New
-        York has passed it stops checking for the day and waits for the next one.
+        fallback: an already running scan is never interrupted, and a scan the user
+        stopped for this session stays stopped. Once 11:00 New York has passed it
+        stops checking for the day and waits for the next one.
         """
         while True:
             try:
                 now = datetime.now(self.NEW_YORK)
-                if self.AM_WINDOW_START_HOUR <= now.hour < self.AM_WINDOW_END_HOUR:
+                manually_stopped = self.manual_stop_date == now.date().isoformat()
+                if (
+                    self.AM_WINDOW_START_HOUR <= now.hour < self.AM_WINDOW_END_HOUR
+                    and not manually_stopped
+                ):
                     stale = (
                         self.task is not None
                         and not self.task.done()
@@ -551,13 +559,22 @@ class SilverBulletLiveScanner:
         await self._scan(anchor_date, historical_now)
         return self.status()
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, manual: bool = False) -> dict[str, Any]:
+        """Stop the live scan; ``manual`` marks a stop made by the user.
+
+        A manual stop is remembered for the rest of the New York session so the
+        in-window fallback (``_auto_loop``) does not re-arm the scan the user just
+        stopped. Internal stops (a ``start``/``test`` restart) clear that marker.
+        """
         if self.task is not None and not self.task.done():
             self.task.cancel()
         self.task = None
         self.symbols = None
         self.next_check_at = None
         self.scan_date = None
+        self.manual_stop_date = (
+            datetime.now(self.NEW_YORK).date().isoformat() if manual else None
+        )
         return self.status()
 
     async def _loop(self) -> None:
@@ -726,6 +743,18 @@ service = ScannerService()
 scheduler = ScanScheduler(service)
 silver_bullet_scanner = SilverBulletLiveScanner()
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
+
+
+@app.on_event("startup")
+async def start_silver_bullet_auto_schedule() -> None:
+    """Arm the AM Silver Bullet scheduler on boot.
+
+    The scheduler used to start only when a client fetched /api/silver-bullet, so
+    a page load was required before a live scan could run. On startup the loop
+    arms a scan immediately when New York wall time is inside the window, or
+    sleeps until 10:00 New York otherwise.
+    """
+    silver_bullet_scanner.start_auto_schedule()
 
 
 @app.on_event("shutdown")
@@ -1027,7 +1056,7 @@ async def test_silver_bullet(request: SilverBulletTestRequest) -> dict[str, Any]
 
 @app.post("/api/silver-bullet/stop")
 async def stop_silver_bullet() -> dict[str, Any]:
-    return silver_bullet_scanner.stop()
+    return silver_bullet_scanner.stop(manual=True)
 
 
 class IPOScannerRequest(BaseModel):

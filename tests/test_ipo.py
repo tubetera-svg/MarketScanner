@@ -421,3 +421,24 @@ def test_register_ipos_skips_ineligible_without_aborting(monkeypatch, tmp_ipo_fi
     assert [row["symbol"] for row in database.query_ipo_metadata(db_path=tmp)] == [
         "NSE:NEWIPO"
     ]
+
+def test_ineligibility_uses_etf_list_when_available(monkeypatch):
+    """Test that authoritative ETF list rejects ETF units even when not caught by regex."""
+    # Use symbol like 'ALPHA' or 'MYCUSTOM' that does not match NON_IPO_SYMBOL_RE
+    monkeypatch.setattr(ipo_mod.etf_list, "load_etf_symbols", lambda **kwargs: {"ALPHA", "MYCUSTOM"})
+    reason = ipo_mod.ipo_ineligibility_reason("NSE:ALPHA")
+    assert reason and "NSE ETF unit" in reason
+
+    # When symbol is not in etf list, check returns None (if in master)
+    assert ipo_mod.ipo_ineligibility_reason("NSE:RELIANCE") is None
+
+
+def test_register_ipo_rejects_etf_units(monkeypatch, tmp_ipo_files, tmp):
+    """Test that register_ipo raises ValueError when given an ETF symbol."""
+    monkeypatch.setattr(ipo_mod.etf_list, "load_etf_symbols", lambda **kwargs: {"ALPHA"})
+    with pytest.raises(ValueError, match="NSE ETF unit"):
+        ipo_mod.register_ipo(
+            {"symbol": "NSE:ALPHA", "listing_date": "2026-01-05", "listing_price": 50.0},
+            db_path=tmp,
+        )
+
