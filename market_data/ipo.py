@@ -93,12 +93,13 @@ MAIN_BOARD_SERIES = frozenset({"EQ"})
 #: ``LICHSGFIN`` or ``ICICIGI`` are never excluded:
 #:   * rights entitlements      -> ANOND-RE, DUCON-RE1
 #:   * dated govt securities    -> 628GS2032, 74GS2035, 79GR2024
+#:   * PSU bonds (NABARD/IIFCL) -> 735NABAR31, 740IIFCL33
 #:   * sovereign gold bonds     -> SGBDEC26, SGBOCT27VI
-#:   * ETFs / index funds       -> BANKETFADD, NIF10GETF, LIQUIDBETA, NIFTYBEES
 NON_IPO_SYMBOL_RE = re.compile(
     r"(?:"
     r"-RE\d*$"
     r"|^\d{1,3}(?:GS|GR|SG)\d{4}[A-Z]?$"
+    r"|^\d{1,3}(?:NABAR|IIFCL)\d{2}$"
     r"|^SGB[A-Z]{3}\d{2}[A-Z]{0,2}$"
     r"|ETF[A-Z]{0,3}\d{0,4}$"
     r"|GETF$"

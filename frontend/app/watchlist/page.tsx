@@ -484,12 +484,12 @@ export default function WatchlistPage() {
               <div className="watchlist-row" key={symbol}>
                 {editingSymbol === symbol ? (
                   <div className="watchlist-edit">
-                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", alignSelf: "flex-start", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
                       Symbol
                       <input aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
                     </label>
                     {classificationFields.map(({ key, label, placeholder }) => (
-                      <label key={key} style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                      <label key={key} style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", alignSelf: "flex-start", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
                         {label}
                         <input
                           key={key}
@@ -500,7 +500,7 @@ export default function WatchlistPage() {
                         />
                       </label>
                     ))}
-                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", alignSelf: "flex-start", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
                       Aliases
                       <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
                     </label>

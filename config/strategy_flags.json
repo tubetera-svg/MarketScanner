@@ -8,7 +8,7 @@
   "inside_bar_pattern_daily_sweep": false,
   "intraweek_reversal_sweep": true,
   "midweek_reversal_sweep": true,
-  "multi_timeframe_bias": true,
+  "multi_timeframe_bias": false,
   "points_of_interest": true,
   "propulsion_blocks": true,
   "protected_swings": true,

@@ -61,9 +61,9 @@ button, input { font: inherit; }
 .watchlist-view .wl-symbol { display: flex; align-items: baseline; gap: 8px; }
 .watchlist-view .wl-symbol small { color: var(--muted); font: 11px 'DM Mono', monospace; }
 .watchlist-view .wl-actions { display: inline-flex; gap: 6px; }
-.watchlist-edit { display: flex; gap: 6px; flex-wrap: wrap; }
-.watchlist-edit input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 12px; min-height: 32px; padding: 6px 10px; border-radius: 4px; flex: 1 1 200px; }
-.manage-search { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 12px; min-height: 32px; padding: 6px 10px; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.watchlist-edit { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
+.watchlist-edit input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; height: 28px; padding: 5px 8px; border-radius: 4px; flex: 1 1 200px; }
+.manage-search { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; min-height: 30px; padding: 5px 8px; border-radius: 4px; width: 100%; box-sizing: border-box; }
 
 /* Date test */
 .date-test { align-items: center; display: flex; gap: var(--gap-sm); margin: 0; }
