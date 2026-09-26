@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import Navigation from "../components/Navigation";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, Info, Play, Plus, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -369,7 +369,7 @@ export default function Home() {
   const [dateTransition, setDateTransition] = useState(false);
   const statusFlash = useStatusFlash(message);
   const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
-  const [includeSilverBulletTests, setIncludeSilverBulletTests] = useState(true);
+  const [includeSilverBulletTests, setIncludeSilverBulletTests] = useState(false);
   const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
   const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
   const [crossScanTrackerEnabled, setCrossScanTrackerEnabled] = useState(false);
@@ -383,6 +383,17 @@ export default function Home() {
     strategies: null,
     tracker: null,
   });
+
+  // Keep the sticky section nav docked under the topbar even when the header wraps.
+  useEffect(() => {
+    const header = document.querySelector<HTMLElement>(".topbar");
+    if (!header || typeof ResizeObserver === "undefined") return;
+    const sync = () => document.documentElement.style.setProperty("--topbar-h", `${header.offsetHeight}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
 
   const scrollToSection = (section: "scan" | "alerts" | "strategies" | "tracker") => {
     setActiveSection(section);
@@ -732,8 +743,14 @@ export default function Home() {
     const current = new Date(strategyAnchorDate);
     if (Number.isNaN(current.getTime())) return;
     current.setUTCDate(current.getUTCDate() + days);
-    while (current.getUTCDay() === 0 || current.getUTCDay() === 6) {
-      current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
+    const hasCrypto = selected.some((sym) => {
+      const item = watchlist.find((w) => w.symbol === sym);
+      return item?.asset_class === "crypto";
+    });
+    if (!hasCrypto) {
+      while (current.getUTCDay() === 0 || current.getUTCDay() === 6) {
+        current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
+      }
     }
     const next = current.toISOString().slice(0, 10);
     if (next > localDate()) return;
@@ -1137,7 +1154,26 @@ export default function Home() {
           <button type="button" className={`section-nav-item${activeSection === "alerts" ? " active" : ""}`} onClick={() => scrollToSection("alerts")}><Zap size={13} /> Alerts</button>
           <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}><Settings2 size={13} /> Strategies</button>
           <button type="button" className={`section-nav-item${activeSection === "tracker" ? " active" : ""}`} onClick={() => scrollToSection("tracker")}><Timer size={13} /> Tracker</button>
-          <span className="section-nav-hint">Ctrl+K / ⌘K Command palette</span>
+          <div className="section-nav-aside">
+            <span className="section-nav-hint">Ctrl+K / ⌘K Command palette</span>
+            <div className="inventory-horizontal" aria-label="Upcoming commodity events">
+              <span className="inventory-heading">Events</span>
+              {inventoryReports.map((report) => (
+                <a
+                  key={report.key}
+                  href={report.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`inventory-chip${report.soon ? " soon" : ""}`}
+                  title={`Next ${report.label} release — ${report.url}`}
+                >
+                  <span className="inventory-label">{report.label}</span>
+                  <span className="inventory-ist">{report.ist}</span>
+                  {report.soon && <span className={`inventory-flag${report.sameDay ? " today" : ""}`}>{report.sameDay ? "TODAY" : "SOON"}</span>}
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
       </nav>
 
@@ -1274,104 +1310,59 @@ export default function Home() {
              <option value="4h">4h</option>
            </select>
          </div>
-          <div className="inventory-horizontal">
-            {inventoryReports.map((report) => (
-              <a
-                key={report.key}
-                href={report.url}
-                target="_blank"
-                rel="noreferrer"
-                className={`inventory-chip${report.soon ? " soon" : ""}`}
-                title={`Next ${report.label} release — ${report.url}`}
-              >
-                <span className="inventory-label">{report.label}</span>
-                <span className="inventory-ist">{report.ist}</span>
-                {report.soon && <span className={`inventory-flag${report.sameDay ? " today" : ""}`}>{report.sameDay ? "TODAY" : "SOON"}</span>}
-              </a>
-            ))}
-          </div>
 
         {!weeklyMasterOn && <p className="date-note">WEEKLY_PROFILES_ENABLED is off in all_strategy.py — weekly profile chips stay locked until the master switch is turned on there.</p>}
+        <div className="strategy-legend" aria-label="Data mode legend">
+          <span className="mode-badge live"><Radio size={10} /> Live</span>
+          <span className="mode-badge hist"><History size={10} /> Historic</span>
+          <small>Shown after a run: live intraday tracking vs end-of-day / historical confirmation.</small>
+        </div>
         <div className="strategy-groups">
-          <div className="strategy-group">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <span className="filter-label" style={{ margin: 0 }}>Core</span>
-              {(() => {
-                const names = strategies.filter((f) => f.group === "Core" && f.name !== "protected_swings").map((f) => f.name);
-                const count = names.filter((n) => strategies.find((f) => f.name === n)?.enabled).length;
-                const allOn = count === names.length;
-                const partial = count > 0 && !allOn;
-                return (
-                  <button className="toggle-text" title={allOn ? "Turn all Core OFF" : "Turn all Core ON"} onClick={() => setGroupStrategies("Core", !allOn)}>
+          {(["Core", "Weekly profiles"] as const).map((groupName) => {
+            const groupFlags = strategies.filter((f) => f.group === groupName && f.name !== "protected_swings");
+            const count = groupFlags.filter((f) => f.enabled).length;
+            const allOn = groupFlags.length > 0 && count === groupFlags.length;
+            const partial = count > 0 && !allOn;
+            return (
+              <div key={groupName} className="strategy-group">
+                <div className="strategy-group-head">
+                  <span className="filter-label">{groupName}</span>
+                  <span className="strategy-group-count">{count}/{groupFlags.length}</span>
+                  <button className="toggle-text" title={allOn ? `Turn all ${groupName} OFF` : `Turn all ${groupName} ON`} onClick={() => setGroupStrategies(groupName, !allOn)}>
                     {allOn ? "Clear" : "Select all"}
                     {partial && <span className="day-marker" style={{ marginLeft: 4 }}>—</span>}
                   </button>
-                );
-              })()}
-            </div>
-            <div className="filters">
-              {strategies.filter((flag) => flag.group === "Core" && flag.name !== "protected_swings").map((flag) => {
-                const matchCount = strategyGroups.find((g) => g.strategy === flag.name) ? (strategyGroups.find((g) => g.strategy === flag.name)!.bull_count + strategyGroups.find((g) => g.strategy === flag.name)!.bear_count) : 0;
-                const hasLive = strategyGroups.find((g) => g.strategy === flag.name)?.has_live_data ?? false;
-                return (
-                  <span key={flag.name} className="strategy-chip-wrap">
-                    <button type="button" title={flag.name} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
-                      {flag.label}
-                      {hasLive && <span className="live-data-badge" style={{ marginLeft: 4 }}><Zap size={9} /> LIVE</span>}
-                    </button>
-                    {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
-                    {flag.description && (
-                      <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
-                        <Info size={12} />
-                        <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
+                </div>
+                <div className="filters strategy-chips">
+                  {groupFlags.map((flag) => {
+                    const result = strategyGroups.find((g) => g.strategy === flag.name);
+                    const matchCount = result ? result.bull_count + result.bear_count : 0;
+                    const mode = !result || result.total === 0 ? null : result.has_live_data ? "live" : "hist";
+                    const isWeekly = groupName === "Weekly profiles";
+                    return (
+                      <span key={flag.name} className="strategy-chip-wrap">
+                        <button type="button" title={isWeekly && !flag.runnable ? `${flag.name} — blocked by the master switch` : flag.name} disabled={isWeekly && !flag.runnable} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
+                          {flag.label}
+                          {isWeekly && WEEKLY_PROFILE_DAYS[flag.name] && (
+                            <span className="day-marker" aria-label={`Requires weekdays: ${WEEKLY_PROFILE_DAYS[flag.name]}`}>{WEEKLY_PROFILE_DAYS[flag.name]}</span>
+                          )}
+                          {mode === "live" && <span className="mode-icon live" title="Live data" aria-label="Live data"><Radio size={11} /></span>}
+                          {mode === "hist" && <span className="mode-icon hist" title="Historic data" aria-label="Historic data"><History size={11} /></span>}
+                        </button>
+                        {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
+                        {flag.description && (
+                          <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
+                            <Info size={12} />
+                            <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-          <div className="strategy-group">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <span className="filter-label" style={{ margin: 0 }}>Weekly profiles</span>
-              {(() => {
-                const names = strategies.filter((f) => f.group === "Weekly profiles").map((f) => f.name);
-                const count = names.filter((n) => strategies.find((f) => f.name === n)?.enabled).length;
-                const allOn = count === names.length;
-                const partial = count > 0 && !allOn;
-                return (
-                  <button className="toggle-text" title={allOn ? "Turn all Weekly profiles OFF" : "Turn all Weekly profiles ON"} onClick={() => setGroupStrategies("Weekly profiles", !allOn)}>
-                    {allOn ? "Clear" : "Select all"}
-                    {partial && <span className="day-marker" style={{ marginLeft: 4 }}>—</span>}
-                  </button>
-                );
-              })()}
-            </div>
-            <div className="filters">
-              {strategies.filter((flag) => flag.group === "Weekly profiles").map((flag) => {
-                const matchCount = strategyGroups.find((g) => g.strategy === flag.name) ? (strategyGroups.find((g) => g.strategy === flag.name)!.bull_count + strategyGroups.find((g) => g.strategy === flag.name)!.bear_count) : 0;
-                const hasLive = strategyGroups.find((g) => g.strategy === flag.name)?.has_live_data ?? false;
-                return (
-                  <span key={flag.name} className="strategy-chip-wrap">
-                    <button type="button" title={flag.runnable ? flag.name : `${flag.name} — blocked by the master switch`} disabled={!flag.runnable} className={flag.enabled ? "active" : ""} onClick={() => toggleStrategy(flag)}>
-                      {flag.label}
-                      {flag.group === "Weekly profiles" && WEEKLY_PROFILE_DAYS[flag.name] && (
-                        <span className="day-marker" aria-label={`Requires weekdays: ${WEEKLY_PROFILE_DAYS[flag.name]}`}>{WEEKLY_PROFILE_DAYS[flag.name]}</span>
-                      )}
-                      {hasLive && <span className="live-data-badge" style={{ marginLeft: 4 }}><Zap size={9} /> LIVE</span>}
-                    </button>
-                    {matchCount > 0 && <span className="strategy-chip-badge">{matchCount}</span>}
-                    {flag.description && (
-                      <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
-                        <Info size={12} />
-                        <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
-                      </span>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
         <small className="auto-meta">Click a chip to turn that strategy ON/OFF (saved to strategy_flags.json). Runs over {selected.length} selected watchlist symbols.</small>
         <div className="strategy-date">
@@ -1419,7 +1410,7 @@ export default function Home() {
           <div className="strategy-results">
             {strategyGroups.map((group) => (
               <details key={group.strategy} className="strategy-result" open>
-                <summary>{group.label} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull_count} BULL</span><span className="badge bearish">{group.bear_count} BEAR</span></span></summary>
+                <summary>{group.label}{group.total > 0 && (group.has_live_data ? <span className="mode-badge live" style={{ marginLeft: 8 }}><Radio size={10} /> Live</span> : <span className="mode-badge hist" style={{ marginLeft: 8 }}><History size={10} /> Historic</span>)} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull_count} BULL</span><span className="badge bearish">{group.bear_count} BEAR</span></span></summary>
                 {group.bull_count + group.bear_count > 0 ? (
                   <div className="signal-list">
                     {group.bullish.map((row) => (
@@ -1670,4 +1661,6 @@ export default function Home() {
     </main>
   );
 }
+
+
 

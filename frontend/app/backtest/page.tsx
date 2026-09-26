@@ -22,7 +22,6 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const C_BLUE = "#356c9b";
 const C_CORAL = "#d65a3a";
 const C_MUTED = "#71808b";
-const C_TEAL = "#287b79";
 
 type StrategyFlag = { name: string; label: string; group: string; enabled: boolean; runnable: boolean };
 type WatchSymbol = { symbol: string; session: string; scope?: string };
@@ -175,7 +174,7 @@ export default function BacktestPage() {
         <aside className="controls panel">
           <div className="panel-heading"><span>Configuration</span></div>
 
-          <div className="watch-filter" style={{ marginTop: 12 }}>
+          <div className="watch-filter bt-section">
             <label className="filter-label">Start date</label>
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             <label className="filter-label">End date</label>
@@ -188,7 +187,7 @@ export default function BacktestPage() {
             <input type="text" placeholder="NSE:NIFTY" value={benchmark} onChange={(e) => setBenchmark(e.target.value)} />
           </div>
 
-          <div style={{ marginTop: 14 }}>
+          <div className="bt-section">
             <div className="panel-heading">
               <span>Strategies</span>
               {catalog.length > 0 && (() => {
@@ -197,7 +196,7 @@ export default function BacktestPage() {
                 return (
                   <button className="toggle-text" title={allOn ? "Clear all strategies" : "Select all strategies"} onClick={() => setSelectedStrategies(allOn ? [] : catalog.map((s) => s.name))}>
                     {allOn ? "Clear" : "Select all"}
-                    {partial && <span className="day-marker" style={{ marginLeft: 4 }}>…</span>}
+                    {partial && <span className="day-marker">…</span>}
                   </button>
                 );
               })()}
@@ -208,16 +207,16 @@ export default function BacktestPage() {
               const allOn = selectedCount === names.length;
               const partial = selectedCount > 0 && !allOn;
               return (
-                <div key={group} style={{ marginTop: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <span className="filter-label" style={{ margin: 0 }}>{group}</span>
+                <div key={group} className="bt-group">
+                  <div className="bt-group-head">
+                    <span className="filter-label">{group}</span>
                     <button
                       className="toggle-text"
                       title={allOn ? `Clear ${group}` : `Select all ${group}`}
                       onClick={() => setGroupStrategies(names, !allOn)}
                     >
                       {allOn ? "Clear" : "Select all"}
-                      {partial && <span className="day-marker" style={{ marginLeft: 4 }}>…</span>}
+                      {partial && <span className="day-marker">…</span>}
                     </button>
                   </div>
                   <div className="filters">
@@ -238,7 +237,7 @@ export default function BacktestPage() {
             })}
           </div>
 
-          <div style={{ marginTop: 16 }}>
+          <div className="bt-section">
             <div className="panel-heading">
               <span>Symbols <small>{selectedSymbols.length}/{symbolOptions.length}</small></span>
               <div className="panel-heading-actions">
@@ -248,13 +247,12 @@ export default function BacktestPage() {
             </div>
 
             <input
-              className="manage-search"
-              style={{ marginTop: 10 }}
+              className="manage-search bt-search"
               placeholder="Search symbols…"
               value={symbolQuery}
               onChange={(e) => setSymbolQuery(e.target.value)}
             />
-            <div className="add-watchlist" style={{ gridTemplateColumns: "1fr auto" }}>
+            <div className="add-watchlist">
               <input
                 placeholder="Add symbol, e.g. NSE:INFY"
                 value={newSymbol}
@@ -275,10 +273,10 @@ export default function BacktestPage() {
             </div>
           </div>
 
-          <button className="scan-now" style={{ marginTop: 14, width: "100%", justifyContent: "center" }} onClick={runBacktest} disabled={running}>
+          <button className="scan-now bt-run" onClick={runBacktest} disabled={running}>
             {running ? "Running…" : <><Play size={14} /> Run Backtest</>}
           </button>
-          {error && <p className="sync-note" style={{ marginTop: 8 }}><strong>Error:</strong> {error}</p>}
+          {error && <p className="sync-note bt-error"><strong>Error:</strong> {error}</p>}
         </aside>
 
         {/* ---------------- Results ---------------- */}
@@ -309,14 +307,14 @@ function ReportView({ label, report, fmt }: { label: string; report: Report; fmt
   const drawdown = report.equity_curve.map((e) => ({ date: e.date, dd: -(e.drawdown_pct * 100) }));
 
   return (
-    <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+    <div className="panel bt-report">
       <div className="table-head">
-        <h3 style={{ textTransform: "capitalize" }}>{label.replace(/_/g, " ")}</h3>
+        <h3 className="bt-report-title">{label.replace(/_/g, " ")}</h3>
         <span className="badge">{report.trades.length} trades</span>
       </div>
       {report.warnings?.length > 0 && <div className="date-note">{report.warnings.join(" ")}</div>}
 
-      <div className="metrics" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
+      <div className="metrics bt-metrics">
         <Metric icon={<TrendingUp size={16} />} label="Sharpe" value={fmt(m.sharpe)} />
         <Metric icon={<TrendingDown size={16} />} label="Max Drawdown" value={fmt(m.max_drawdown_pct, true)} tone="bear" />
         <Metric label="Win Rate" value={fmt(m.win_rate, true)} />
@@ -326,7 +324,7 @@ function ReportView({ label, report, fmt }: { label: string; report: Report; fmt
         <Metric label="Expectancy" value={fmt(m.expectancy)} />
       </div>
 
-      <h3 style={{ fontSize: 14, margin: "8px 0" }}>Equity Curve</h3>
+      <h3 className="bt-subhead first">Equity Curve</h3>
       <ResponsiveContainer width="100%" height={260}>
         <LineChart data={combo}>
           <CartesianGrid stroke="#edf0ef" />
@@ -339,7 +337,7 @@ function ReportView({ label, report, fmt }: { label: string; report: Report; fmt
         </LineChart>
       </ResponsiveContainer>
 
-      <h3 style={{ fontSize: 14, margin: "12px 0 0" }}>Drawdown</h3>
+      <h3 className="bt-subhead">Drawdown</h3>
       <ResponsiveContainer width="100%" height={150}>
         <AreaChart data={drawdown}>
           <CartesianGrid stroke="#edf0ef" />
@@ -350,8 +348,8 @@ function ReportView({ label, report, fmt }: { label: string; report: Report; fmt
         </AreaChart>
       </ResponsiveContainer>
 
-      <h3 style={{ fontSize: 14, margin: "12px 0 0" }}>Trades</h3>
-      <div className="table-wrap" style={{ maxHeight: 280 }}>
+      <h3 className="bt-subhead">Trades</h3>
+      <div className="table-wrap bt-trades">
         <table>
           <thead>
             <tr>
@@ -366,8 +364,8 @@ function ReportView({ label, report, fmt }: { label: string; report: Report; fmt
                 <td>{t.entry_date}</td>
                 <td>{t.exit_date}</td>
                 <td>{t.exit_reason}</td>
-                <td style={{ color: t.pnl >= 0 ? C_TEAL : C_CORAL, fontFamily: "'DM Mono', monospace" }}>{t.pnl.toFixed(2)}</td>
-                <td style={{ color: t.pnl >= 0 ? C_TEAL : C_CORAL, fontFamily: "'DM Mono', monospace" }}>{(t.pnl_pct * 100).toFixed(2)}%</td>
+                <td className={t.pnl >= 0 ? "pnl-pos" : "pnl-neg"}>{t.pnl.toFixed(2)}</td>
+                <td className={t.pnl >= 0 ? "pnl-pos" : "pnl-neg"}>{(t.pnl_pct * 100).toFixed(2)}%</td>
               </tr>
             ))}
             {report.trades.length === 0 && (

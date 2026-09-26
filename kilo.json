@@ -1,0 +1,54 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "sqlite": {
+      "type": "local",
+      "command": ["mcp-server-sqlite", "data/market_data.db"],
+      "enabled": true
+    },
+    "github": {
+      "type": "local",
+      "command": ["mcp-server-github"],
+      "enabled": true
+    },
+    "filesystem": {
+      "type": "local",
+      "command": ["mcp-server-filesystem", "D:\\Sid\\MarketScanner"],
+      "enabled": true
+    },
+    "time": {
+      "type": "local",
+      "command": ["mcp-server-time"],
+      "enabled": true
+    },
+    "fetch": {
+      "type": "local",
+      "command": ["mcp-server-fetch"],
+      "enabled": true
+    }
+  },
+  "skills": {
+    "paths": [".kilo/skill"],
+    "urls": []
+  },
+  "permission": {
+    "bash": "allow",
+    "edit": {
+      "src/**": "allow",
+      "api/**": "allow",
+      "market_data/**": "allow",
+      "config/**": "allow",
+      "*.json": "allow",
+      "*.md": "allow",
+      "*": "ask"
+    },
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "task": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
+    "skill": "allow"
+  }
+}

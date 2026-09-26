@@ -1,0 +1,20 @@
+  const shiftStrategyDate = (days: number) => {
+    if (strategyScanning) return;
+    const current = new Date(strategyAnchorDate);
+    if (Number.isNaN(current.getTime())) return;
+    current.setUTCDate(current.getUTCDate() + days);
+    while (current.getUTCDay() === 0 || current.getUTCDay() === 6) {
+      current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
+    }
+    const next = current.toISOString().slice(0, 10);
+    if (next > localDate()) return;
+    setDateTransition(true);
+    window.setTimeout(() => setDateTransition(false), 520);
+    setStrategyAnchorDate(next);
+    if (autoRunOnDateChange) {
+      runStrategyScan(next);
+      if (includeSilverBulletTests && next < localDate()) testSilverBullet(next);
+    } else {
+      setMessage(`Testing date shifted to ${next} (click Run scan to apply)`);
+    }
+  }
