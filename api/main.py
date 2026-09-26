@@ -23,8 +23,9 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
     if _extra_path not in sys.path:
         sys.path.insert(0, _extra_path)
 
+import app_settings  # noqa: E402  (persisted automation / show-hide settings)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
-from market_data.routes import router as market_data_router  # noqa: E402
+from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data  # noqa: E402
 from market_data.liquidity_screener import screen_all_ipos, remove_symbol_everywhere  # noqa: E402
 
@@ -473,8 +474,10 @@ class SilverBulletLiveScanner:
         window_end = window_start + timedelta(hours=1)
         if now >= window_end:
             window_start += timedelta(days=1)
-        elif now >= window_start:
+        elif now >= window_start and now.weekday() < 5:
             return float(self.AUTO_CHECK_SECONDS)
+        while window_start.weekday() >= 5:  # commodities: Mon-Fri only
+            window_start += timedelta(days=1)
         remaining = window_start.astimezone(timezone.utc) - now.astimezone(timezone.utc)
         return max(1.0, remaining.total_seconds())
 
@@ -492,7 +495,8 @@ class SilverBulletLiveScanner:
                 now = datetime.now(self.NEW_YORK)
                 manually_stopped = self.manual_stop_date == now.date().isoformat()
                 if (
-                    self.AM_WINDOW_START_HOUR <= now.hour < self.AM_WINDOW_END_HOUR
+                    now.weekday() < 5
+                    and self.AM_WINDOW_START_HOUR <= now.hour < self.AM_WINDOW_END_HOUR
                     and not manually_stopped
                 ):
                     stale = (
@@ -580,6 +584,11 @@ class SilverBulletLiveScanner:
     async def _loop(self) -> None:
         while True:
             now = await self._check()
+            if now.weekday() >= 5:
+                # Commodities are weekday-only: nothing to watch on Sat/Sun.
+                self.last_error = None
+                self.next_check_at = None
+                return
             if now.hour >= self.AM_WINDOW_END_HOUR:
                 # 11:00 New York has passed: the AM window is over for this
                 # session, so retire the live scan (status "running" -> False)
@@ -599,6 +608,9 @@ class SilverBulletLiveScanner:
         """
         now = datetime.now(self.NEW_YORK)
         self.last_check_at = now.isoformat()
+        if now.weekday() >= 5:
+            self.last_error = None
+            return now
         if now.hour < self.AM_WINDOW_START_HOUR or now.hour >= self.AM_WINDOW_END_HOUR:
             self.last_error = None
             return now
@@ -754,7 +766,10 @@ async def start_silver_bullet_auto_schedule() -> None:
     arms a scan immediately when New York wall time is inside the window, or
     sleeps until 10:00 New York otherwise.
     """
-    silver_bullet_scanner.start_auto_schedule()
+    settings = app_settings.load_settings()
+    if settings["automation"]["silver_bullet_auto"]["enabled"]:
+        silver_bullet_scanner.start_auto_schedule()
+    apply_automation(settings, on_boot=True)
 
 
 @app.on_event("shutdown")
@@ -1020,6 +1035,76 @@ def update_cross_scan_tracker(request: CrossScanTrackerUpdate) -> dict[str, Any]
     return settings
 
 
+def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
+    """Start/stop/retune each background automation to match ``settings``."""
+    auto = settings["automation"]
+
+    sched = auto["scan_scheduler"]
+    running = scheduler.task is not None and not scheduler.task.done()
+    if sched["enabled"]:
+        if not running or scheduler.interval_minutes != sched["interval_minutes"]:
+            scheduler.start(sched["interval_minutes"], scheduler.symbols)
+    elif running:
+        scheduler.stop()
+
+    sb = auto["silver_bullet_auto"]
+    if sb["enabled"]:
+        silver_bullet_scanner.start_auto_schedule()
+    elif silver_bullet_scanner.auto_task is not None:
+        silver_bullet_scanner.auto_task.cancel()
+        silver_bullet_scanner.auto_task = None
+
+    ipo = auto["ipo_scanner"]
+    ipo_running = ipo_scanner.task is not None and not ipo_scanner.task.done()
+    if ipo["enabled"]:
+        changed = (ipo_scanner.interval_minutes, ipo_scanner.lookback_days) != (ipo["interval_minutes"], ipo["lookback_days"])
+        ipo_scanner.interval_minutes = ipo["interval_minutes"]
+        ipo_scanner.lookback_days = ipo["lookback_days"]
+        if not ipo_running or changed:
+            ipo_scanner.start()
+    elif ipo_running:
+        ipo_scanner.stop()
+
+    sync = auto["data_auto_sync"]
+    syncer = _auto_sync()
+    sync_running = syncer.status()["running"]
+    if sync["enabled"]:
+        if not sync_running or syncer.lookback_days != sync["lookback_days"]:
+            syncer.start(sync["lookback_days"])
+    elif sync_running:
+        syncer.stop()
+
+
+def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
+    strategies, master = strategy_bridge.list_strategies()
+    return {
+        "settings": settings,
+        "strategies": strategies,
+        "weekly_profiles_master_enabled": master,
+        **strategy_bridge.get_tracker_settings(),
+        "status": {
+            "scan_scheduler": scheduler.status(),
+            "silver_bullet": {"auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done()},
+            "ipo_scanner": ipo_scanner.status(),
+            "data_auto_sync": _auto_sync().status(),
+        },
+        "hideable_pages": list(app_settings.HIDEABLE_PAGES),
+    }
+
+
+@app.get("/api/settings")
+def get_settings() -> dict[str, Any]:
+    return _settings_payload(app_settings.load_settings())
+
+
+@app.put("/api/settings")
+async def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge a partial settings document, persist it, and apply the automation changes."""
+    settings = app_settings.save_settings(patch)
+    apply_automation(settings)
+    return _settings_payload(settings)
+
+
 @app.get("/api/schedule")
 def get_schedule() -> dict[str, Any]:
     return scheduler.status()
@@ -1037,7 +1122,8 @@ async def stop_schedule() -> dict[str, Any]:
 
 @app.get("/api/silver-bullet")
 async def get_silver_bullet_status() -> dict[str, Any]:
-    silver_bullet_scanner.start_auto_schedule()
+    if app_settings.load_settings()["automation"]["silver_bullet_auto"]["enabled"]:
+        silver_bullet_scanner.start_auto_schedule()
     return silver_bullet_scanner.status()
 
 

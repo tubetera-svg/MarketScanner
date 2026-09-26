@@ -1,0 +1,210 @@
+"use client";
+
+import Navigation from "../../components/Navigation";
+
+// Settings: one place to enable/disable strategies and automations, tune
+// intervals / look-back days, and show/hide strategies and pages in the UI.
+// Automation and UI settings are persisted by PUT /api/settings; strategy and
+// tracker toggles use their existing endpoints and apply immediately.
+
+import { useCallback, useEffect, useState } from "react";
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+
+type Strategy = { name: string; label: string; group: string; enabled: boolean; runnable: boolean; description?: string | null };
+type Automation = {
+  scan_scheduler: { enabled: boolean; interval_minutes: number };
+  silver_bullet_auto: { enabled: boolean };
+  ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
+  data_auto_sync: { enabled: boolean; lookback_days: number };
+};
+type Settings = { automation: Automation; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
+type Payload = {
+  settings: Settings;
+  strategies: Strategy[];
+  cross_scan_tracker_enabled: boolean;
+  hideable_pages: string[];
+  status: {
+    scan_scheduler: { running: boolean; last_run_at: string | null; last_error: string | null };
+    silver_bullet: { auto_armed: boolean };
+    ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
+    data_auto_sync: { running: boolean; last_run_at: string | null; last_error: string | null };
+  };
+};
+
+const PAGE_LABELS: Record<string, string> = { watchlist: "Database", ipo: "IPO", backtest: "Backtest" };
+
+function Row({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--line)", flexWrap: "wrap" }}>
+      <div style={{ minWidth: 200, flex: "1 1 220px" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+        {hint && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{hint}</div>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>{children}</div>
+    </div>
+  );
+}
+
+function Switch({ on, onChange, label, disabled }: { on: boolean; onChange: (next: boolean) => void; label: string; disabled?: boolean }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} className="toggle-text" onClick={() => onChange(!on)}
+      style={on ? { borderColor: "var(--teal)", color: "var(--teal-ink)", background: "var(--teal-soft)" } : undefined}>
+      {on ? "ON" : "OFF"}
+    </button>
+  );
+}
+
+function NumberField({ value, min, max, unit, onCommit }: { value: number; min: number; max: number; unit: string; onCommit: (next: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const parsed = Math.max(min, Math.min(max, Math.round(Number(draft)) || value));
+    setDraft(String(parsed));
+    if (parsed !== value) onCommit(parsed);
+  };
+  return (
+    <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--muted)" }}>
+      <input type="number" min={min} max={max} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && commit()}
+        style={{ width: 64, height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace" }} />
+      {unit}
+    </label>
+  );
+}
+
+export default function SettingsPage() {
+  const [data, setData] = useState<Payload | null>(null);
+  const [message, setMessage] = useState("Loading…");
+
+  const apply = (payload: Payload, note: string) => {
+    setData(payload);
+    setMessage(note);
+  };
+
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch(`${API}/api/settings`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      apply(await response.json(), "Loaded");
+    } catch (error) {
+      setMessage(`Could not load settings: ${error instanceof Error ? error.message : error}`);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (patch: unknown) => {
+    try {
+      const response = await fetch(`${API}/api/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      apply(await response.json(), "Saved & applied");
+    } catch (error) {
+      setMessage(`Save failed: ${error instanceof Error ? error.message : error}`);
+    }
+  };
+
+  const patchAuto = <K extends keyof Automation>(key: K, values: Partial<Automation[K]>) => save({ automation: { [key]: values } });
+
+  const setStrategy = async (name: string, enabled: boolean) => {
+    try {
+      const response = await fetch(`${API}/api/strategies/${name}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? `HTTP ${response.status}`);
+      await load();
+      setMessage("Saved & applied");
+    } catch (error) {
+      setMessage(`Strategy update failed: ${error instanceof Error ? error.message : error}`);
+    }
+  };
+
+  const setTracker = async (enabled: boolean) => {
+    try {
+      const response = await fetch(`${API}/api/cross-scan-tracker`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await load();
+      setMessage("Saved & applied");
+    } catch (error) {
+      setMessage(`Tracker update failed: ${error instanceof Error ? error.message : error}`);
+    }
+  };
+
+  const toggleHidden = (field: "hidden_strategies" | "hidden_pages", key: string, hide: boolean) => {
+    if (!data) return;
+    const current = data.settings.ui[field];
+    save({ ui: { [field]: hide ? [...current, key] : current.filter((item) => item !== key) } });
+  };
+
+  const auto = data?.settings.automation;
+  const status = data?.status;
+  const stateNote = (running: boolean | undefined, last: string | null | undefined, err: string | null | undefined) =>
+    `${running ? "running" : "stopped"}${last ? ` · last ${new Date(last).toLocaleString()}` : ""}${err ? ` · error: ${err}` : ""}`;
+  const groups = data ? Array.from(new Set(data.strategies.map((item) => item.group))) : [];
+
+  return (
+    <main className="shell">
+      <header className="topbar">
+        <div className="top-title">
+          <p className="kicker">Market Structure Monitor</p>
+          <h1>Settings</h1>
+        </div>
+        <div className="top-actions">
+          <div className="status"><span className="pulse" />{message}</div>
+          <Navigation active="/settings" />
+        </div>
+      </header>
+
+      {data && auto && status && (
+        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 480px), 1fr))", alignItems: "start" }}>
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Automation</span><small>intervals · look-back days</small></div>
+            <Row title="Scheduled scan" hint={`Re-runs the scan on an interval — ${stateNote(status.scan_scheduler.running, status.scan_scheduler.last_run_at, status.scan_scheduler.last_error)}`}>
+              <NumberField value={auto.scan_scheduler.interval_minutes} min={1} max={1440} unit="min" onCommit={(v) => patchAuto("scan_scheduler", { interval_minutes: v })} />
+              <Switch label="Scheduled scan" on={auto.scan_scheduler.enabled} onChange={(v) => patchAuto("scan_scheduler", { enabled: v })} />
+            </Row>
+            <Row title="Silver Bullet auto-schedule" hint={`Arms the AM window scan (10:00 New York) — ${status.silver_bullet.auto_armed ? "armed" : "off"}`}>
+              <Switch label="Silver Bullet auto-schedule" on={auto.silver_bullet_auto.enabled} onChange={(v) => patchAuto("silver_bullet_auto", { enabled: v })} />
+            </Row>
+            <Row title="IPO scanner" hint={`Scans a trailing window once the NSE daily bar is ready — ${stateNote(status.ipo_scanner.running, status.ipo_scanner.last_ran_at, status.ipo_scanner.last_error)}`}>
+              <NumberField value={auto.ipo_scanner.interval_minutes} min={1} max={1440} unit="min" onCommit={(v) => patchAuto("ipo_scanner", { interval_minutes: v })} />
+              <NumberField value={auto.ipo_scanner.lookback_days} min={1} max={90} unit="days" onCommit={(v) => patchAuto("ipo_scanner", { lookback_days: v })} />
+              <Switch label="IPO scanner" on={auto.ipo_scanner.enabled} onChange={(v) => patchAuto("ipo_scanner", { enabled: v })} />
+            </Row>
+            <Row title="Market-data auto-sync" hint={`Daily OHLC sync per market after its bar is final — ${stateNote(status.data_auto_sync.running, status.data_auto_sync.last_run_at, status.data_auto_sync.last_error)}`}>
+              <NumberField value={auto.data_auto_sync.lookback_days} min={1} max={120} unit="days" onCommit={(v) => patchAuto("data_auto_sync", { lookback_days: v })} />
+              <Switch label="Market-data auto-sync" on={auto.data_auto_sync.enabled} onChange={(v) => patchAuto("data_auto_sync", { enabled: v })} />
+            </Row>
+            <Row title="Cross-scan setup tracker" hint="Tracks setups that appear across strategies">
+              <Switch label="Cross-scan tracker" on={data.cross_scan_tracker_enabled} onChange={setTracker} />
+            </Row>
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Pages</span><small>show / hide in navigation</small></div>
+            {data.hideable_pages.map((page) => (
+              <Row key={page} title={PAGE_LABELS[page] ?? page}>
+                <Switch label={`Show ${PAGE_LABELS[page] ?? page}`} on={!data.settings.ui.hidden_pages.includes(page)} onChange={(show) => toggleHidden("hidden_pages", page, !show)} />
+              </Row>
+            ))}
+          </section>
+
+          <section className="panel" style={{ padding: 16, gridColumn: "1 / -1" }}>
+            <div className="panel-heading"><span>Strategies</span><small>enable = runs in scans · show = listed on the scanner page</small></div>
+            {groups.map((group) => (
+              <div key={group}>
+                <div style={{ textTransform: "uppercase", color: "var(--muted)", font: "10px 'DM Mono', monospace", padding: "12px 0 2px" }}>{group}</div>
+                {data.strategies.filter((item) => item.group === group).map((item) => (
+                  <Row key={item.name} title={item.label} hint={item.runnable ? item.description ?? undefined : "Not runnable — disabled in all_strategy.py"}>
+                    <span style={{ fontSize: 10, color: "var(--muted)" }}>Enabled</span>
+                    <Switch label={`Enable ${item.label}`} on={item.enabled} disabled={!item.runnable} onChange={(v) => setStrategy(item.name, v)} />
+                    <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 8 }}>Shown</span>
+                    <Switch label={`Show ${item.label}`} on={!data.settings.ui.hidden_strategies.includes(item.name)} onChange={(show) => toggleHidden("hidden_strategies", item.name, !show)} />
+                  </Row>
+                ))}
+              </div>
+            ))}
+          </section>
+        </div>
+      )}
+    </main>
+  );
+}

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import Navigation from "../components/Navigation";
-import { Activity, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -124,6 +124,21 @@ type TrackerAlert = {
 type StrategyGroup = { strategy: string; label: string; total: number; bull_count: number; bear_count: number; bullish: StrategyRow[]; bearish: StrategyRow[]; has_live_data: boolean };
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
 
+// Renders strategy_info.txt markdown (bullets, nested bullets, `code`) as readable tooltip content.
+const renderInline = (text: string): ReactNode[] =>
+  text.split(/(`[^`]+`)/g).filter(Boolean).map((part, index) =>
+    part.startsWith("`") && part.endsWith("`") && part.length > 2 ? <code key={index}>{part.slice(1, -1)}</code> : part.replace(/\*\*/g, ""),
+  );
+const renderInfoBody = (text: string): ReactNode => (
+  <>
+    {text.split(String.fromCharCode(10)).filter((line) => line.trim()).map((line, index) => {
+      const bullet = /^(\s*)[-*]\s+(.*)$/.exec(line);
+      if (!bullet) return <p key={index}>{renderInline(line.trim())}</p>;
+      return <div key={index} className={`info-li${bullet[1].length >= 2 ? " nested" : ""}`}>{renderInline(bullet[2])}</div>;
+    })}
+  </>
+);
+const nyIsWeekend = () => ["Sat", "Sun"].includes(new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" }));
 const localDate = (offsetDays = 0) => {
   // Local calendar date (not UTC): toISOString() lagged a day in IST before 05:30.
   const value = new Date();
@@ -135,6 +150,26 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const SYNC_BATCH_SIZE = 500;
 type SyncResultRow = { symbol: string; source: string; notes?: string[]; fetched_new?: number; count?: number; missing_dates?: string[] };
 const syncFailed = (row: SyncResultRow) => row.notes?.some((note) => note.startsWith("sync failed")) ?? false;
+const groupSyncIssues = (results: SyncResultRow[]) => {
+  const groups = new Map<string, string[]>();
+  const add = (reason: string, symbol: string) => {
+    const list = groups.get(reason) ?? [];
+    list.push(symbol);
+    groups.set(reason, list);
+  };
+  for (const row of results) {
+    const symbolPattern = new RegExp(row.symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    const failedNotes = row.notes?.filter((note) => note.startsWith("sync failed")) ?? [];
+    if (failedNotes.length > 0) {
+      failedNotes.forEach((note) => add(note.replace(symbolPattern, "<sym>").slice(0, 160), row.symbol));
+    } else if ((row.missing_dates?.length ?? 0) > 0) {
+      add("missing dates", row.symbol);
+    } else if (row.notes?.some((note) => note.includes("alias"))) {
+      add("alias used", row.symbol);
+    }
+  }
+  return Array.from(groups, ([reason, symbols]) => ({ reason, symbols })).sort((a, b) => b.symbols.length - a.symbols.length);
+};
 const apiErrorMessage = (detail: unknown, fallback: string) => {
   if (typeof detail === "string" && detail.trim()) return detail;
   if (Array.isArray(detail)) {
@@ -285,7 +320,7 @@ const tzOffsetMs = (instant: Date, timeZone: string): number => {
 const nextReleaseInstantET = (now: Date, weekdayET: number, hourET: number, minuteET: number): Date => {
   for (let i = 0; i < 14; i++) {
     const candidate = new Date(now.getTime() + i * 86400000);
-    const etWall = new Date(candidate.getTime() - tzOffsetMs(candidate, "America/New_York"));
+    const etWall = new Date(candidate.getTime() + tzOffsetMs(candidate, "America/New_York"));
     if (etWall.getUTCDay() !== weekdayET) continue;
     const wallMs = Date.UTC(etWall.getUTCFullYear(), etWall.getUTCMonth(), etWall.getUTCDate(), hourET, minuteET, 0);
     const instant = wallMs - tzOffsetMs(new Date(wallMs), "America/New_York");
@@ -855,9 +890,14 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetch(`${API}/api/strategies`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data: StrategiesPayload) => applyStrategies(data))
+    Promise.all([
+      fetch(`${API}/api/strategies`, { cache: "no-store" }).then((response) => response.json()),
+      fetch(`${API}/api/settings`, { cache: "no-store" }).then((response) => response.json()).catch(() => null),
+    ])
+      .then(([data, cfg]: [StrategiesPayload, { settings?: { ui?: { hidden_strategies?: string[] } } } | null]) => {
+        const hidden = new Set(cfg?.settings?.ui?.hidden_strategies ?? []);
+        applyStrategies({ ...data, strategies: data.strategies?.filter((item) => !hidden.has(item.name)) });
+      })
       .catch(() => {});
   }, []);
 
@@ -1303,7 +1343,11 @@ export default function Home() {
                     </button>
                   </>
                 )}
-                {silverBullet?.last_error && <small className="auto-meta silver-bullet-failure" title={`Failure: ${silverBullet.last_error}`}>Failure: {silverBullet.last_error}</small>}
+                {!silverBullet?.running && nyIsWeekend() && <small className="auto-meta silver-bullet-note">Weekend — commodities scan resumes Monday 10:00 NY</small>}
+                {silverBullet?.last_error && (() => {
+                  const issues = silverBullet.last_error.split("; ").filter(Boolean);
+                  return <small className="silver-bullet-failure" title={silverBullet.last_error}><AlertTriangle size={12} />{issues.length} symbol{issues.length === 1 ? "" : "s"} could not be fetched — <span>{issues[0]}</span>{issues.length > 1 ? ` (+${issues.length - 1} more)` : ""}</small>;
+                })()}
                 {silverBullet?.scan_date && !silverBullet.running && <small className="auto-meta">Showing {silverBullet.scan_date}</small>}
               </section>
             {silverBulletLoading || silverBullet?.scan_date ? (
@@ -1335,8 +1379,11 @@ export default function Home() {
           <div className="history-results">
             <p className="kicker">Sync summary — {syncSummary.start_date ?? "lookback"} to {syncSummary.end_date ?? syncSummary.anchor_date}</p>
             <span>{syncSummary.synced} synced — {syncSummary.fetchedNew} new bars{syncSummary.failed > 0 ? ` — ${syncSummary.failed} failed` : ""}{syncSummary.incomplete > 0 ? ` — ${syncSummary.incomplete} with missing dates` : ""}{syncSummary.gated ? " — latest bar deferred until market cut-off" : ""}</span>
-            {syncSummary.results.filter((row) => syncFailed(row) || (row.missing_dates?.length ?? 0) > 0 || row.notes?.some((note: string) => note.includes("alias"))).slice(0, 50).map((row) => (
-              <span key={row.symbol} className="sync-note"><strong>{row.symbol}</strong> {row.notes?.join("; ")}</span>
+            {groupSyncIssues(syncSummary.results).map((group) => (
+              <details key={group.reason} className="sync-note">
+                <summary><strong>{group.symbols.length}×</strong> {group.reason}</summary>
+                <span>{group.symbols.join(", ")}</span>
+              </details>
             ))}
           </div>
         )}
@@ -1429,7 +1476,7 @@ export default function Home() {
                         {flag.description && (
                           <span className="info-trigger" aria-label={`Info: ${flag.label}`} role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === flag.name ? null : flag.name)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === flag.name ? null : flag.name); } }}>
                             <Info size={12} />
-                            <span className={`info-tooltip${activeTooltip === flag.name ? " open" : ""}`}>{flag.description}</span>
+                            <span className={`info-tooltip rich${activeTooltip === flag.name ? " open" : ""}`}><strong className="info-heading">{flag.label}</strong>{renderInfoBody(flag.description)}</span>
                           </span>
                         )}
                       </span>

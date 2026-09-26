@@ -146,38 +146,41 @@ def test_auto_check_sleep_waits_for_the_window_to_open():
 
 
 def test_auto_check_sleep_uses_real_time_across_dst_start():
-    """2026-03-08 02:00 New York jumps EST -> EDT, so this "day" is 23 real hours.
-
-    Naive (same-tzinfo) subtraction returned 22h and woke the check at 11:00 New
-    York, skipping the whole 10:00-11:00 window on the first session after the
-    transition.
+    """2026-03-08 02:00 New York jumps EST -> EDT (weekend), so Fri 12:00 -> Mon
+    10:00 is 69 real hours, not the 70 that wall-clock subtraction reports.
     """
     scanner = SilverBulletLiveScanner()
-    now = datetime(2026, 3, 7, 12, 0, tzinfo=NEW_YORK)
+    now = datetime(2026, 3, 6, 12, 0, tzinfo=NEW_YORK)
     seconds = scanner._seconds_until_next_auto_check(now)
 
-    assert seconds == pytest.approx(21 * HOUR)
-    # Wall-clock subtraction over the same tzinfo would have said 22 hours.
-    assert datetime(2026, 3, 8, 10, 0, tzinfo=NEW_YORK) - now == timedelta(hours=22)
+    assert seconds == pytest.approx(69 * HOUR)
+    # Wall-clock subtraction over the same tzinfo would have said 70 hours.
+    assert datetime(2026, 3, 9, 10, 0, tzinfo=NEW_YORK) - now == timedelta(hours=70)
     assert now.astimezone(timezone.utc) + timedelta(seconds=seconds) == datetime(
-        2026, 3, 8, 10, 0, tzinfo=NEW_YORK
+        2026, 3, 9, 10, 0, tzinfo=NEW_YORK
     ).astimezone(timezone.utc)
 
 
 def test_auto_check_sleep_uses_real_time_across_dst_end():
-    """2026-11-01 02:00 New York falls back EDT -> EST: 23 real hours to 10:00."""
+    """2026-11-01 02:00 New York falls back EDT -> EST: Fri 12:00 -> Mon 10:00 is 71 real hours."""
     scanner = SilverBulletLiveScanner()
-    now = datetime(2026, 10, 31, 12, 0, tzinfo=NEW_YORK)
+    now = datetime(2026, 10, 30, 12, 0, tzinfo=NEW_YORK)
     seconds = scanner._seconds_until_next_auto_check(now)
 
-    assert seconds == pytest.approx(23 * HOUR)
+    assert seconds == pytest.approx(71 * HOUR)
     assert now.astimezone(timezone.utc) + timedelta(seconds=seconds) == datetime(
-        2026, 11, 1, 10, 0, tzinfo=NEW_YORK
+        2026, 11, 2, 10, 0, tzinfo=NEW_YORK
     ).astimezone(timezone.utc)
     # Regular (no transition) close-of-window wait stays 23 hours of wall time.
     assert scanner._seconds_until_next_auto_check(
         datetime(2026, 9, 22, 11, 0, tzinfo=NEW_YORK)
     ) == pytest.approx(23 * HOUR)
+
+
+def test_auto_check_skips_weekend_to_monday():
+    scanner = SilverBulletLiveScanner()
+    now = datetime(2026, 9, 26, 10, 30, tzinfo=NEW_YORK)  # Saturday, in-window hours
+    assert scanner._seconds_until_next_auto_check(now) == pytest.approx(47.5 * HOUR)
 
 
 def test_auto_check_cadence_allows_recovery_inside_the_window():

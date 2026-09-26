@@ -1,0 +1,24 @@
+{
+  "automation": {
+    "data_auto_sync": {
+      "enabled": true,
+      "lookback_days": 1
+    },
+    "ipo_scanner": {
+      "enabled": false,
+      "interval_minutes": 60,
+      "lookback_days": 7
+    },
+    "scan_scheduler": {
+      "enabled": false,
+      "interval_minutes": 15
+    },
+    "silver_bullet_auto": {
+      "enabled": true
+    }
+  },
+  "ui": {
+    "hidden_pages": [],
+    "hidden_strategies": []
+  }
+}

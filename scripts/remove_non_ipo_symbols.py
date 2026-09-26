@@ -21,6 +21,8 @@ Usage:
     python scripts/remove_non_ipo_symbols.py --dry-run     # preview removals
     python scripts/remove_non_ipo_symbols.py               # apply
     python scripts/remove_non_ipo_symbols.py --etf-only    # ETFs / funds only
+    python scripts/remove_non_ipo_symbols.py --master-absent [--dry-run]
+        # tracked IPOs absent from the NSE main-board equity master (SME / delisted)
 """
 
 from __future__ import annotations
@@ -159,6 +161,19 @@ def audit_tracked() -> None:
         print(f"   ... and {len(master_absent) - 20} more")
 
 
+def master_absent_tracked() -> list[str]:
+    """Tracked NSE IPO bases missing from the main-board equity master (SME / delisted)."""
+    master = equity_master.load_equity_master()
+    if not master:
+        print("WARNING: NSE equity master unavailable - nothing removed.")
+        return []
+    bases = [
+        str(row["symbol"]).strip().upper().split(":", 1)[-1]
+        for row in database.query_ipo_metadata(source="NSE")
+    ]
+    return [base for base in bases if base not in master]
+
+
 def remove_symbols(symbols: list[str], dry_run: bool) -> int:
     """Delete ``symbols`` everywhere; returns how many were processed."""
     table_totals: dict[str, int] = {}
@@ -209,10 +224,18 @@ def main() -> int:
                         help="only list tracked entries that are ETFs / fail the gate")
     parser.add_argument("--etf-only", action="store_true",
                         help="remove ETF / index-fund units only (skip legacy families)")
+    parser.add_argument("--master-absent", action="store_true",
+                        help="remove tracked IPOs absent from the NSE main-board equity master")
     args = parser.parse_args()
 
     if args.audit:
         audit_tracked()
+        return 0
+
+    if args.master_absent:
+        bases = master_absent_tracked()
+        print(f"\n== Tracked IPOs absent from the equity master ({len(bases)}) ==")
+        remove_symbols(bases, dry_run=args.dry_run)
         return 0
 
     etf_bases = etf_symbols_in_watchlist()
