@@ -4,7 +4,7 @@ Replays the platform's existing daily strategies point-in-time over historical
 daily OHLC stored in SQLite, turns each historical signal into a simulated trade
 via an explicit execution model, and produces an equity curve + trade blotter.
 
-Design contract (see BACKTEST_ENGINE_SPEC.md §5, §7):
+Design contract (see docs/BACKTEST_ENGINE_SPEC.md §5, §7):
 - Every strategy runner takes ``(symbols, as_of_date, ..., daily_map)`` and only
   ever reads bars at or before ``as_of_date``. We honor that by building a
   per-date ``daily_map`` sliced to ``index <= as_of_date`` — no future bars reach

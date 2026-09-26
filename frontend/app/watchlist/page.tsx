@@ -117,6 +117,7 @@ export default function WatchlistPage() {
   const [editSymbolText, setEditSymbolText] = useState("");
   const [editAliasesText, setEditAliasesText] = useState("");
   const [editClassification, setEditClassification] = useState<WatchlistClassification>({});
+  const [savingEdit, setSavingEdit] = useState(false);
   const [classifications, setClassifications] = useState<Record<string, WatchlistClassification>>({});
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
@@ -359,7 +360,7 @@ export default function WatchlistPage() {
   };
 
   const saveEdit = async () => {
-    if (editingSymbol == null) return;
+    if (editingSymbol == null || savingEdit) return;
     const newSymbol = editSymbolText.trim().toUpperCase();
     const aliasList = editAliasesText
       .split(",")
@@ -375,6 +376,7 @@ export default function WatchlistPage() {
       setMessage("Symbol must be exchange-qualified, e.g. NSE:INFY");
       return;
     }
+    setSavingEdit(true);
     try {
       {
         const renameResponse = await fetch(`${API}/api/watchlist`, {
@@ -405,6 +407,8 @@ export default function WatchlistPage() {
       setMessage(`Saved ${newSymbol} · ${category || "automatic category"}${aliasList.length ? ` · ${aliasList.length} alias(es)` : " · aliases cleared"}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Save failed");
+    } finally {
+      setSavingEdit(false);
     }
   };
   const canPrev = !!records && records.offset > 0;
@@ -480,18 +484,21 @@ export default function WatchlistPage() {
               <span className="symbol-row muted">No symbols match “{manageQuery}”.</span>
             )}
             {filteredManageSymbols.map((symbol) => (
-              <div className="watchlist-row" key={symbol}>
+              <div className={`watchlist-row${editingSymbol === symbol ? " editing" : ""}`} key={symbol}>
                 {editingSymbol === symbol ? (
-                  <div className="watchlist-edit">
-                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", alignSelf: "flex-start", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                  <form
+                    className="watchlist-edit"
+                    onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}
+                    onKeyDown={(event) => { if (event.key === "Escape") cancelEdit(); }}
+                  >
+                    <label className="wl-field">
                       Symbol
-                      <input aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
+                      <input autoFocus aria-label={`Symbol for ${symbol}`} value={editSymbolText} onChange={(event) => setEditSymbolText(event.target.value)} placeholder="NSE:INFY" />
                     </label>
                     {classificationFields.map(({ key, label, placeholder }) => (
-                      <label key={key} style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", alignSelf: "flex-start", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                      <label key={key} className="wl-field">
                         {label}
                         <input
-                          key={key}
                           aria-label={`${label} for ${symbol}`}
                           value={editClassification[key] ?? ""}
                           onChange={(event) => setEditClassification((current) => ({ ...current, [key]: event.target.value }))}
@@ -499,20 +506,20 @@ export default function WatchlistPage() {
                         />
                       </label>
                     ))}
-                    <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 180px", alignSelf: "flex-start", fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontFamily: "'DM Mono', monospace" }}>
+                    <label className="wl-field wl-field-wide">
                       Aliases
                       <input aria-label={`Aliases for ${symbol}`} value={editAliasesText} onChange={(event) => setEditAliasesText(event.target.value)} placeholder="comma-separated aliases, e.g. BSE:INFY" />
                     </label>
-                    <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flex: "1 1 100%", marginTop: 6 }}>
-                      <button className="test-button" type="button" onClick={saveEdit}><Save size={13} /> Save</button>
-                      <button className="test-button button-secondary" type="button" onClick={cancelEdit}><X size={13} /> Cancel</button>
+                    <div className="wl-edit-actions">
+                      <button className="test-button" type="submit" disabled={savingEdit}><Save size={13} /> {savingEdit ? "Saving…" : "Save"}</button>
+                      <button className="test-button button-secondary" type="button" onClick={cancelEdit} disabled={savingEdit}><X size={13} /> Cancel</button>
                     </div>
-                  </div>
+                  </form>
                 ) : (
                   <div className="watchlist-view">
                     <span className="wl-symbol"><strong>{symbol}</strong><small>{classificationFields.map(({ key, label }) => classifications[symbol]?.[key] ? `${label}: ${classifications[symbol]?.[key]}` : null).filter(Boolean).join(" · ") || "automatic classification"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
                     <span className="wl-actions">
-                      <button className="test-button" type="button" onClick={() => beginEdit(symbol)}><Pencil size={13} /> Edit</button>
+                      <button className="test-button" type="button" onClick={() => beginEdit(symbol)} disabled={savingEdit}><Pencil size={13} /> Edit</button>
                       <button className="test-button danger" type="button" onClick={() => deleteSymbol(symbol)}><Trash2 size={13} /> Delete</button>
                     </span>
                   </div>

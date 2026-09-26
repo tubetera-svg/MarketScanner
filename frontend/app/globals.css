@@ -72,11 +72,16 @@ button, input { font: inherit; }
 .watchlist-editor { flex-basis: 100%; display: flex; flex-direction: column; gap: var(--gap-sm); margin-top: var(--gap-sm); }
 .watchlist-row { border: 1px solid var(--line); border-radius: 4px; background: white; padding: 8px 10px; }
 .watchlist-view { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-sm); flex-wrap: wrap; }
-.watchlist-view .wl-symbol { display: flex; align-items: baseline; gap: 8px; }
-.watchlist-view .wl-symbol small { color: var(--muted); font: 11px 'DM Mono', monospace; }
+.watchlist-row.editing { border-color: var(--ink); }
+.watchlist-view .wl-symbol { display: flex; align-items: baseline; gap: 4px 8px; flex-wrap: wrap; min-width: 0; }
+.watchlist-view .wl-symbol small { color: var(--muted); font: 11px 'DM Mono', monospace; overflow-wrap: anywhere; }
 .watchlist-view .wl-actions { display: inline-flex; gap: 6px; }
-.watchlist-edit { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
-.watchlist-edit input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; height: 28px; padding: 5px 8px; border-radius: 4px; flex: 1 1 200px; }
+.watchlist-view .wl-actions .test-button, .wl-edit-actions .test-button { align-items: center; display: inline-flex; gap: 5px; min-height: 28px; padding: 4px 10px; }
+.watchlist-edit { display: grid; gap: 8px 10px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: end; }
+.wl-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
+.wl-field-wide { grid-column: 1 / -1; }
+.watchlist-edit input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; height: 28px; padding: 5px 8px; border-radius: 4px; width: 100%; box-sizing: border-box; text-transform: none; }
+.wl-edit-actions { grid-column: 1 / -1; display: flex; gap: 6px; }
 .manage-search { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; min-height: 30px; padding: 5px 8px; border-radius: 4px; width: 100%; box-sizing: border-box; }
 
 /* Date test */

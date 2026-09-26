@@ -17,7 +17,10 @@
   "FOREXCOM:USOIL": {
     "asset_class": "commodity",
     "exchange": "FOREXCOM",
-    "scope": "Commodities"
+    "scope": "Commodities",
+    "symbol": "FOREXCOM:USOIL",
+    "base": "USOIL",
+    "session": "forex_24_5"
   },
   "NSE:AADHARHFC": {
     "asset_class": "equity",
