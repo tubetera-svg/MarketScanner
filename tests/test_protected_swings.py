@@ -537,6 +537,12 @@ def test_protected_swing_intraday_frame_uses_live_timeframe_fetch(monkeypatch):
     frame = all_strategy._protected_swing_frame("NSE:TEST", "15m", pd.DataFrame())
     assert len(frame) == 1
     assert calls[0]["timeframe"] == "15m"
+    # Live run fetches through today; a historical run must end at the tested
+    # date so later intraday bars cannot leak in (look-ahead).
+    assert calls[0]["end_date"] == date.today()
+    all_strategy._protected_swing_frame("NSE:TEST", "15m", pd.DataFrame(), date(2026, 9, 18))
+    assert calls[1]["end_date"] == date(2026, 9, 18)
+    assert calls[1]["start_date"] == date(2026, 8, 19)
     # lookback dict in run_strategies must know the strategy (else default 60 used)
     import inspect
 

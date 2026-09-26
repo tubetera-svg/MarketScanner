@@ -382,3 +382,119 @@ def test_query_ohlc_multi_groups_by_symbol(tmp_db):
 
     # Empty symbol list returns no rows without querying.
     assert database.query_ohlc_multi("NSE", [], days[0], days[-1]) == {}
+
+
+# ------------------------------------------------------------------ per-market sync cut-offs
+def test_latest_final_session_uses_each_markets_cutoff():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from market_data.service import latest_final_session
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # NSE: Tue 2026-09-22 bar is final only after the 17:00 IST bhavcopy.
+    assert latest_final_session("NSE", datetime(2026, 9, 22, 16, 0, tzinfo=ist)) == date(2026, 9, 21)
+    assert latest_final_session("NSE", datetime(2026, 9, 22, 17, 30, tzinfo=ist)) == date(2026, 9, 22)
+    # Forex: Mon 2026-09-21 bar closes at 17:00 New York (= Tue 02:30 IST), not IST midnight.
+    assert latest_final_session("TRADINGVIEW", datetime(2026, 9, 22, 1, 0, tzinfo=ist)) == date(2026, 9, 18)
+    assert latest_final_session("TRADINGVIEW", datetime(2026, 9, 22, 3, 0, tzinfo=ist)) == date(2026, 9, 21)
+
+
+def test_gated_sync_trims_to_last_final_session(tmp_db, clean_flags):
+    import market_data.service as service
+
+    final = date(2026, 9, 21)
+    clean_flags.setattr(service, "latest_final_session", lambda source, now=None, symbol=None: final)
+    requested = []
+
+    def fake_tv(spec):
+        requested.append(spec)
+        return [row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", day) for day in spec["dates"]]
+
+    register_fetcher("TRADINGVIEW", fake_tv)
+    result = sync_symbol_range(
+        "TRADINGVIEW", "OANDA:XAUUSD", date(2026, 9, 22), start_date=date(2026, 9, 15),
+        gate_market_hours=True, db_path=tmp_db,
+    )
+    assert result.end_date == final.isoformat()
+    assert max(requested[0]["dates"]) == final
+    assert any("last completed session" in note for note in result.notes)
+
+    # Range entirely after the last final bar: nothing fetched, no error.
+    requested.clear()
+    empty = sync_symbol_range(
+        "TRADINGVIEW", "OANDA:XAUUSD", date(2026, 9, 22), start_date=date(2026, 9, 22),
+        gate_market_hours=True, db_path=tmp_db,
+    )
+    assert requested == [] and empty.rows == []
+    assert empty.notes[0].startswith("Nothing to sync yet")
+
+
+def test_auto_sync_runs_once_per_final_session(tmp_db, clean_flags):
+    import market_data.auto_sync as auto_sync
+    import market_data.service as service
+
+    final = date.today() - timedelta(days=1)
+    while final.weekday() >= 5:
+        final -= timedelta(days=1)
+    for module in (service, auto_sync):
+        clean_flags.setattr(module, "latest_final_session", lambda source, now=None, symbol=None: final)
+    calls = []
+
+    def fake_tv(spec):
+        calls.append(spec)
+        return [row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", day) for day in spec["dates"]]
+
+    register_fetcher("TRADINGVIEW", fake_tv)
+    syncer = auto_sync.DataAutoSync(lambda: [("OANDA:XAUUSD", "forex_24_5")])
+    first = syncer.run_once()
+    assert first["TRADINGVIEW"]["have_target"] == 1
+    assert syncer.markets["TRADINGVIEW"]["last_synced_session"] == final.isoformat()
+    second = syncer.run_once()
+    assert second["TRADINGVIEW"]["skipped"] is True
+    assert len(calls) == 1
+
+
+def test_crypto_is_24x7_with_utc_day_cutoff():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from market_data.service import expected_trading_dates, latest_final_session
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # Weekend bars are expected for crypto, not for forex.
+    sat, sun = date(2026, 9, 19), date(2026, 9, 20)
+    assert expected_trading_dates("TRADINGVIEW", sat, sun, "CRYPTO:BTCUSD") == [sat, sun]
+    assert expected_trading_dates("TRADINGVIEW", sat, sun, "OANDA:XAUUSD") == []
+    # Sat 2026-09-19 UTC candle closes at 00:00 UTC Sun = 05:30 IST Sun.
+    assert latest_final_session("TRADINGVIEW", datetime(2026, 9, 20, 5, 0, tzinfo=ist), "CRYPTO:BTCUSD") == date(2026, 9, 18)
+    assert latest_final_session("TRADINGVIEW", datetime(2026, 9, 20, 6, 0, tzinfo=ist), "CRYPTO:BTCUSD") == sat
+
+
+def test_sync_replaces_bars_stored_before_their_daily_close(tmp_db, clean_flags):
+    import sqlite3
+
+    day = date(2026, 9, 21)
+    database.upsert_ohlc([row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", day, close=1.0)], db_path=tmp_db)
+    # Stored at 2026-09-21 10:00 UTC, before the 17:00 NY (21:00 UTC) close -> partial.
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute("UPDATE ohlc_daily SET created_at = '2026-09-21 10:00:00'")
+    register_fetcher(
+        "TRADINGVIEW",
+        lambda spec: [row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", d, close=2.0) for d in spec["dates"]],
+    )
+    result = sync_symbol_range("TRADINGVIEW", "OANDA:XAUUSD", day, start_date=day, db_path=tmp_db)
+    assert [r["close"] for r in result.rows] == [2.0]
+    assert any("partial bars" in note for note in result.notes)
+
+
+def test_gift_nifty_final_after_overnight_session():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from market_data.service import latest_final_session
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # Tue 2026-09-22 session runs to 02:45 IST Wed; final from 03:00 IST Wed.
+    assert latest_final_session("TRADINGVIEW", datetime(2026, 9, 23, 2, 50, tzinfo=ist), "NSEIX:NIFTY1!") == date(2026, 9, 21)
+    assert latest_final_session("TRADINGVIEW", datetime(2026, 9, 23, 3, 5, tzinfo=ist), "NSEIX:NIFTY1!") == date(2026, 9, 22)

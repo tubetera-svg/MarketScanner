@@ -13,6 +13,7 @@ import logging
 import os
 from datetime import date, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from ..config import SOURCE_TRADINGVIEW
 
@@ -23,6 +24,7 @@ SOURCE_NAME = SOURCE_TRADINGVIEW
 _DEFAULT_EXCHANGE = os.environ.get("TRADINGVIEW_DEFAULT_EXCHANGE", "NSE")
 
 _client = None  # lazily created shared TvDatafeed session
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def split_symbol(symbol: str) -> tuple[str, str]:
@@ -134,7 +136,14 @@ def fetch_timeframe(
 
     rows: list[dict] = []
     for index, row in df.iterrows():
-        bar_day = getattr(index, "date", lambda: index)()
+        # tvDatafeed stamps each bar's OPEN time as naive machine-local time.
+        # Label bars by the IST date of that open so dates do not depend on the
+        # PC's timezone: forex/commodity daily bars open 17:00 NY (02:30/03:30
+        # IST) -> their NY session day; crypto opens 00:00 UTC (05:30 IST) -> UTC day.
+        if hasattr(index, "to_pydatetime"):
+            bar_day = index.to_pydatetime().astimezone(_IST).date()
+        else:
+            bar_day = getattr(index, "date", lambda: index)()
         if not isinstance(bar_day, date):
             continue
         if bar_day < start_date or bar_day > end_date:

@@ -12,13 +12,20 @@ get_ohlc(source, symbol, start_date, end_date):
     5. Return the complete requested range read back from SQLite.
     6. When AUTO_FETCH_MISSING_DATA is false, or the source flag is off,
        return local data only / raise a descriptive error.
+    7. Only *final* daily bars are fetched/stored (see latest_final_session):
+       an in-progress bar is never persisted, since stored rows are never
+       overwritten.
+
+Daily bar dates: NSE = IST trading day; forex/commodities = the NY session day
+(17:00 ET -> 17:00 ET), labelled with the IST date of the bar open (02:30/03:30
+IST); crypto (CRYPTO:*) = the UTC day (open 05:30 IST), every day of the week.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable, Optional
 
 from . import database
@@ -102,8 +109,30 @@ def reset_fetchers() -> None:
     _FETCHERS = {}
 
 
-def expected_trading_dates(source: str, start: date, end: date) -> list[date]:
-    """Expected daily bars between start and end (never in the future)."""
+def is_crypto_symbol(symbol: object) -> bool:
+    """CRYPTO:* symbols trade 24x7 (mirrors ict_scanner.detect_session)."""
+    value = str(symbol or "").strip().upper()
+    return ":" in value and value.split(":", 1)[0].strip() == "CRYPTO"
+
+
+# NSE IX (GIFT Nifty, NSEIX:*): the day's candle opens ~06:15 IST and its
+# evening session runs to 02:45 IST the next day. The bar dated D is treated as
+# final at 03:00 IST on D+1 (fixed IST, no DST; 15-min buffer over the close).
+NSEIX_DAILY_FINAL = time(3, 0)
+
+
+def is_nseix_symbol(symbol: object) -> bool:
+    value = str(symbol or "").strip().upper()
+    return ":" in value and value.split(":", 1)[0].strip() == "NSEIX"
+
+
+def expected_trading_dates(
+    source: str, start: date, end: date, symbol: Optional[str] = None
+) -> list[date]:
+    """Expected daily bars between start and end (never in the future).
+
+    Crypto (``symbol`` CRYPTO:*) trades every day, including weekends.
+    """
     today = date.today()
     end = min(end, today)
     if start > end:
@@ -112,6 +141,8 @@ def expected_trading_dates(source: str, start: date, end: date) -> list[date]:
         from .sources import nse_source
 
         return nse_source.expected_trading_dates(start, end)
+    if is_crypto_symbol(symbol):
+        return [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
     from .sources import tradingview_source
 
     return tradingview_source.expected_trading_dates(start, end)
@@ -165,7 +196,15 @@ def get_ohlc(
 
     rows = database.query_ohlc(source_name, sym, start, end, exchange=exchange, db_path=db_path)
     have = {row["date"] for row in rows}
-    expected = expected_trading_dates(source_name, start, end)
+    # Bars after the last final session are still in progress: never fetch or
+    # store them (a stored row is never overwritten, so it would stay partial).
+    final = latest_final_session(source_name, symbol=sym)
+    final_iso = final.isoformat() if final is not None else "9999-12-31"
+    expected = [
+        day
+        for day in expected_trading_dates(source_name, start, end, sym)
+        if day.isoformat() <= final_iso
+    ]
     known_no_data = database.no_data_dates(
         source_name, sym, start, end, exchange=exchange, db_path=db_path
     )
@@ -234,7 +273,11 @@ def get_ohlc(
             last_exc = exc
             log.warning("Fetch candidate %s failed for %s (%s): %s", candidate, sym, source_name, exc)
             continue
-        in_range = [row for row in rows if start.isoformat() <= str(row["date"]) <= end.isoformat()]
+        in_range = [
+            row
+            for row in rows
+            if start.isoformat() <= str(row["date"]) <= min(end.isoformat(), final_iso)
+        ]
         if in_range:
             fetched_rows = in_range
             if candidate != sym:
@@ -307,19 +350,92 @@ def session_for_source(source: str) -> Optional[object]:
         return None
 
 
-def _last_completed_trading_day(source: str, end_date: date) -> date | None:
-    """Latest expected trading day strictly before `end_date` (used for gating).
+def latest_final_session(
+    source: str, now: Optional[datetime] = None, symbol: Optional[str] = None
+) -> date | None:
+    """Most recent trading date whose *final* daily bar is available.
 
-    When a market is still open, the in-progress session's bar is incomplete, so
-    sync is deferred to this date until the exchange's hours close.
+    Each market has its own cut-off, evaluated in its own timezone:
+    - NSE: the day's bar is final once the bhavcopy is published
+      (``is_daily_bar_ready`` — 17:00 IST on a trading day).
+    - TradingView (forex/commodities): the daily bar for date D closes at the
+      17:00 New York rollover on D (≈02:30/03:30 IST on D+1), so D is final only
+      from then on — not at IST midnight.
+    - Crypto (``symbol`` CRYPTO:*): no market close, but the daily candle is the
+      UTC day, so D is final at 00:00 UTC on D+1 (05:30 IST).
+    - NSE IX / GIFT Nifty (``symbol`` NSEIX:*): D is final at 03:00 IST on D+1.
     """
-    today = date.today()
-    horizon = min(end_date, today)
-    # Scan the last ~2 weeks of expected sessions to find the most recent one
-    # that closed before today (the in-progress session is excluded).
-    candidates = expected_trading_dates(source, horizon - timedelta(days=12), horizon)
-    completed = [day for day in candidates if day < today]
-    return completed[-1] if completed else None
+    name = normalize_source(source)
+    session = session_for_source(name)
+    if session is None:
+        return None
+    import ict_scanner  # type: ignore  (path set up by session_for_source)
+
+    if name == SOURCE_NSE:
+        local_now = (now or datetime.now(ict_scanner.IST)).astimezone(ict_scanner.IST)
+        cutoff = local_now.date()
+        if not ict_scanner.is_daily_bar_ready(session, local_now):
+            cutoff -= timedelta(days=1)
+    elif is_crypto_symbol(symbol):
+        cutoff = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date() - timedelta(days=1)
+    elif is_nseix_symbol(symbol):
+        local_now = (now or datetime.now(ict_scanner.IST)).astimezone(ict_scanner.IST)
+        cutoff = local_now.date() - timedelta(days=1 if local_now.time() >= NSEIX_DAILY_FINAL else 2)
+    else:
+        local_now = (now or datetime.now(ict_scanner.NY)).astimezone(ict_scanner.NY)
+        cutoff = local_now.date()
+        if local_now.time() < ict_scanner.FOREX_DAILY_ROLLOVER:
+            cutoff -= timedelta(days=1)
+    # Scan the last ~2 weeks of expected sessions (skips weekends/holidays).
+    candidates = expected_trading_dates(name, cutoff - timedelta(days=12), cutoff, symbol)
+    return candidates[-1] if candidates else None
+
+
+def bar_final_at(source: str, symbol: str, day: date) -> datetime:
+    """Instant (tz-aware) at which the daily bar dated `day` becomes final."""
+    session_for_source(source)  # puts src/ on sys.path for ict_scanner
+    import ict_scanner  # type: ignore
+
+    if normalize_source(source) == SOURCE_NSE:
+        return datetime.combine(day, ict_scanner.NSE_BHAVCOPY_READY, ict_scanner.IST)
+    if is_crypto_symbol(symbol):
+        return datetime.combine(day + timedelta(days=1), time(0, 0), timezone.utc)
+    if is_nseix_symbol(symbol):
+        return datetime.combine(day + timedelta(days=1), NSEIX_DAILY_FINAL, ict_scanner.IST)
+    return datetime.combine(day, ict_scanner.FOREX_DAILY_ROLLOVER, ict_scanner.NY)
+
+
+def _drop_provisional_bars(
+    source_name: str, symbol: str, start: date, end: date, db_path=None
+) -> list[str]:
+    """Delete stored TradingView bars that were fetched before their daily close.
+
+    Such rows hold an in-progress (partial) candle and, because stored rows are
+    never overwritten, would otherwise stay wrong forever. Deleted dates are
+    re-fetched by the following get_ohlc call (only final ones). NSE bars come
+    from the published bhavcopy and are always final, so they are skipped.
+    """
+    if source_name == SOURCE_NSE or session_for_source(source_name) is None:
+        return []
+    sym = str(symbol).strip().upper()
+    exchange = _exchange_for(source_name, sym)
+    stale: list[str] = []
+    stored = database.stored_at_by_date(source_name, sym, start, end, exchange=exchange, db_path=db_path)
+    for day_text, stored_text in stored.items():
+        try:
+            stored_at = datetime.fromisoformat(stored_text).replace(tzinfo=timezone.utc)
+            if stored_at < bar_final_at(source_name, sym, date.fromisoformat(day_text[:10])):
+                stale.append(day_text)
+        except ValueError:
+            continue
+    for day_text in stale:
+        database.delete_ohlc(
+            symbols=[sym], source=source_name, exchange=exchange,
+            start_date=day_text, end_date=day_text, db_path=db_path,
+        )
+    if stale:
+        log.info("Dropped %d provisional %s bars for %s: %s", len(stale), source_name, sym, stale)
+    return sorted(stale)
 
 
 def sync_symbol_range(
@@ -354,46 +470,58 @@ def sync_symbol_range(
     ) or end - timedelta(days=max(1, lookback_days) - 1)
     if start > end:
         raise ValueError("start_date must be on or before end_date")
+    source_name = normalize_source(source)
+    repaired: list[str] = []
+    try:
+        repaired = _drop_provisional_bars(source_name, str(symbol), start, end, db_path=db_path)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("Provisional-bar check skipped for %s: %s", symbol, exc)
     gated = False
     if gate_market_hours:
-        session = session_for_source(source)
-        if session is not None:
-            try:
-                import ict_scanner  # type: ignore
-
-                if ict_scanner.is_daily_bar_ready(session):
-                    # The day's final bar is published/available (e.g. NSE bhavcopy
-                    # after 17:00 IST). Make sure an earlier "no data" marker does
-                    # not permanently block today's bar from being re-fetched.
-                    try:
-                        database.clear_no_data(
-                            source_name,
-                            str(symbol).upper(),
-                            end,
-                            exchange=_exchange_for(source_name, str(symbol)),
-                            db_path=db_path,
-                        )
-                    except Exception:  # pragma: no cover - defensive
-                        pass
-                else:
-                    # Bar not final yet: sync only up to the last completed session
-                    # (NSE before bhavcopy is ready, commodities/forex -> next day).
-                    completed = _last_completed_trading_day(source, end)
-                    if completed is not None and completed < end:
-                        end = completed
-                        gated = True
-                        log.info(
-                            "Sync gated for %s (%s): daily bar not final yet, deferring to %s",
-                            symbol, source, end,
-                        )
-            except Exception as exc:  # pragma: no cover - defensive
-                log.warning("Market-hours gating skipped for %s: %s", symbol, exc)
+        try:
+            final = latest_final_session(source_name, symbol=str(symbol))
+            if final is not None and final < end:
+                # Bar(s) after `final` are not final yet: sync only up to the last
+                # completed session (NSE before bhavcopy, forex before 17:00 NY).
+                end = final
+                gated = True
+                log.info(
+                    "Sync gated for %s (%s): daily bar not final yet, deferring to %s",
+                    symbol, source_name, end,
+                )
+            elif final is not None and end == final and final >= date.today() - timedelta(days=1):
+                # The newest bar just became final. Make sure a "no data" marker
+                # stored before it was published does not permanently block it.
+                database.clear_no_data(
+                    source_name,
+                    str(symbol).upper(),
+                    end,
+                    exchange=_exchange_for(source_name, str(symbol)),
+                    db_path=db_path,
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("Market-hours gating skipped for %s: %s", symbol, exc)
+    if start > end:
+        return OhlcResult(
+            source=source_name,
+            symbol=str(symbol).upper(),
+            exchange=_exchange_for(source_name, str(symbol)),
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            cached=True,
+            notes=["Nothing to sync yet: no final daily bar in the requested range "
+                   "(last completed session is before the start date)."],
+        )
     try:
         result = get_ohlc(source, symbol, start, end, aliases=aliases, db_path=db_path)
+        if repaired:
+            result.notes.append(
+                "Re-fetched partial bars stored before their daily close: " + ", ".join(repaired)
+            )
         if gated:
             result.notes.append(
-                "Synced up to the last completed session (market still open; "
-                "today's bar will be backfilled after the exchange closes)."
+                f"Synced up to {end.isoformat()}, the last completed session "
+                "(newer bar not final yet; it is backfilled after the market's cut-off)."
             )
         return result
     except Exception as exc:
@@ -457,7 +585,10 @@ def ensure_backdate_data(
 __all__ = [
     "OhlcResult",
     "ensure_backdate_data",
+    "bar_final_at",
     "get_ohlc",
+    "is_crypto_symbol",
+    "latest_final_session",
     "register_fetcher",
     "reset_fetchers",
     "resolve_session_source",

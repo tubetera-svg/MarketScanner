@@ -34,6 +34,18 @@ type ScheduleStatus = {
   last_error: string | null;
   run_count: number;
 };
+type AutoSyncMarket = { symbols: number; last_synced_session: string | null; latest_final_session: string | null; attempts: number; last_result: string | null };
+type AutoSyncStatus = {
+  running: boolean;
+  syncing: boolean;
+  tick_minutes: number;
+  lookback_days: number;
+  last_run_at: string | null;
+  last_error: string | null;
+  run_count: number;
+  markets: Record<string, AutoSyncMarket>;
+};
+const AUTO_SYNC_PREF_KEY = "marketScanner.autoSync";
 type SilverBulletSignal = {
   id: string;
   symbol: string;
@@ -113,13 +125,16 @@ type StrategyGroup = { strategy: string; label: string; total: number; bull_coun
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
 
 const localDate = (offsetDays = 0) => {
+  // Local calendar date (not UTC): toISOString() lagged a day in IST before 05:30.
   const value = new Date();
-  value.setUTCDate(value.getUTCDate() + offsetDays);
-  return value.toISOString().slice(0, 10);
+  value.setDate(value.getDate() + offsetDays);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const SYNC_BATCH_SIZE = 500;
+type SyncResultRow = { symbol: string; source: string; notes?: string[]; fetched_new?: number; count?: number; missing_dates?: string[] };
+const syncFailed = (row: SyncResultRow) => row.notes?.some((note) => note.startsWith("sync failed")) ?? false;
 const apiErrorMessage = (detail: unknown, fallback: string) => {
   if (typeof detail === "string" && detail.trim()) return detail;
   if (Array.isArray(detail)) {
@@ -346,11 +361,14 @@ export default function Home() {
     start_date?: string | null;
     end_date?: string | null;
     lookback_days: number;
-    results: { symbol: string; source: string; notes?: string[]; fetched_new?: number; rows?: number }[];
+    results: SyncResultRow[];
     synced: number;
     failed: number;
     gated: boolean;
+    fetchedNew: number;
+    incomplete: number;
   } | null>(null);
+  const [autoSync, setAutoSync] = useState<AutoSyncStatus | null>(null);
   const [schedule, setSchedule] = useState<ScheduleStatus | null>(null);
     const [silverBullet, setSilverBullet] = useState<SilverBulletStatus | null>(null);
   const [silverBulletLoading, setSilverBulletLoading] = useState(false);
@@ -501,10 +519,14 @@ export default function Home() {
   };
 
   const syncData = async () => {
+    if (syncStartDate && anchorDate && syncStartDate > anchorDate) {
+      setMessage("Sync start date must be on or before the end date");
+      return;
+    }
     setLoading(true);
     setMessage("Synchronizing market data...");
     try {
-      const results: { symbol: string; source: string; notes?: string[]; fetched_new?: number; rows?: number }[] = [];
+      const results: SyncResultRow[] = [];
       let summaryData: { anchor_date: string; start_date?: string | null; end_date?: string | null; lookback_days: number } | null = null;
       for (let batchStart = 0; batchStart < selected.length; batchStart += SYNC_BATCH_SIZE) {
         const symbols = selected.slice(batchStart, batchStart + SYNC_BATCH_SIZE);
@@ -526,18 +548,56 @@ export default function Home() {
         summaryData ??= data;
         results.push(...(data.results ?? []));
       }
-      const synced = results.filter((row) => !row.notes?.some((note: string) => note.startsWith("sync failed"))).length;
-      const failed = results.filter((row) => row.notes?.some((note: string) => note.startsWith("sync failed"))).length;
-      const gated = results.some((row) => row.notes?.some((note: string) => note.includes("market still open") || note.includes("last completed session")));
-      setSyncSummary({ ...summaryData!, results, synced, failed, gated });
+      const failed = results.filter(syncFailed).length;
+      const synced = results.length - failed;
+      const gated = results.some((row) => row.notes?.some((note: string) => note.includes("last completed session") || note.startsWith("Nothing to sync yet")));
+      const fetchedNew = results.reduce((total, row) => total + (row.fetched_new ?? 0), 0);
+      const incomplete = results.filter((row) => !syncFailed(row) && (row.missing_dates?.length ?? 0) > 0).length;
+      setSyncSummary({ ...summaryData!, results, synced, failed, gated, fetchedNew, incomplete });
+      const range = `${summaryData!.start_date ?? `${summaryData!.lookback_days}d lookback`} → ${summaryData!.end_date ?? summaryData!.anchor_date}`;
       setMessage(
-        `Sync complete — ${synced} ok, ${failed} failed` +
-        `${gated ? " (some deferred: market still open)" : ""} — ${summaryData!.lookback_days}d window`,
+        `Sync complete (${range}) — ${synced} ok, ${failed} failed, ${fetchedNew} new bars` +
+        `${gated ? " (latest bar deferred until market cut-off)" : ""}`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Data sync failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const autoSyncTitle = autoSync
+    ? [
+        `Auto-sync ${autoSync.running ? "on" : "off"} — checks every ${autoSync.tick_minutes} min; each market syncs once its daily bar is final (NSE 17:00 IST, forex/commodities 17:00 New York, crypto 00:00 UTC = 05:30 IST).`,
+        ...Object.entries(autoSync.markets).map(([source, market]) =>
+          `${source}: last synced ${market.last_synced_session ?? "—"}, latest final ${market.latest_final_session ?? "—"}${market.last_result ? ` (${market.last_result})` : ""}`),
+        ...(autoSync.last_error ? [`Error: ${autoSync.last_error}`] : []),
+      ].join("\n")
+    : "Auto-sync status unavailable";
+
+  const refreshAutoSync = async () => {
+    const response = await fetch(`${API}/api/market-data/auto-sync`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Could not load auto-sync status");
+    const data: AutoSyncStatus = await response.json();
+    setAutoSync(data);
+    return data;
+  };
+
+  const toggleAutoSync = async () => {
+    const enable = !autoSync?.running;
+    try {
+      const response = await fetch(`${API}/api/market-data/auto-sync/${enable ? "start" : "stop"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: enable ? "{}" : undefined,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(apiErrorMessage(data.detail, "Could not change auto-sync"));
+      setAutoSync(data);
+      try { window.localStorage.setItem(AUTO_SYNC_PREF_KEY, enable ? "on" : "off"); } catch {}
+      setMessage(enable ? "Auto-sync on — NSE after bhavcopy (17:00 IST), forex/commodities after 17:00 New York, crypto after 00:00 UTC" : "Auto-sync stopped");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not change auto-sync");
     }
   };
 
@@ -881,6 +941,22 @@ export default function Home() {
     }).catch(() => setMessage("API unavailable. Start FastAPI on port 8000."));
   }, []);
 
+  // Auto-sync runs server-side; poll its status and re-arm it after an API
+  // restart when this browser last left it on.
+  useEffect(() => {
+    let prefOn = false;
+    try { prefOn = window.localStorage.getItem(AUTO_SYNC_PREF_KEY) === "on"; } catch {}
+    refreshAutoSync().then((data) => {
+      if (prefOn && !data.running) {
+        fetch(`${API}/api/market-data/auto-sync/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+          .then((response) => response.json()).then(setAutoSync).catch(() => {});
+      }
+    }).catch(() => {});
+    const id = window.setInterval(() => { refreshAutoSync().catch(() => {}); }, 60000);
+    return () => window.clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const loadMarkets = () => {
       fetch(`${API}/api/markets`, { cache: "no-store" }).then((response) => response.json()).then(setMarkets).catch(() => {});
@@ -1201,7 +1277,7 @@ export default function Home() {
         </button>
         {loading && scanProgress && <span className="scan-progress">{scanProgress}</span>}
         {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` — last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` — ${selected.length} selected symbols` : " — full watchlist"}</small>}
-        <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0}>Sync</button></section>
+        <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} max={anchorDate || localDate()} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} min={syncStartDate || undefined} max={localDate()} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0 || (!!syncStartDate && syncStartDate > anchorDate)}>Sync</button><button className={`test-button ${autoSync?.running ? "" : "button-secondary"}`} onClick={toggleAutoSync} aria-pressed={!!autoSync?.running} title={autoSyncTitle}>{autoSync?.syncing ? "Auto: syncing…" : autoSync?.running ? "Auto: on" : "Auto: off"}</button></section>
       </section>
               <section className="auto-scan" aria-label="AM Silver Bullet live scanner">
                 <span className="auto-title info-title"><Timer size={14} /> AM Silver Bullet
@@ -1258,8 +1334,8 @@ export default function Home() {
         {syncSummary && (
           <div className="history-results">
             <p className="kicker">Sync summary — {syncSummary.start_date ?? "lookback"} to {syncSummary.end_date ?? syncSummary.anchor_date}</p>
-            <span>{syncSummary.synced} synced{syncSummary.failed > 0 ? ` — ${syncSummary.failed} failed` : ""}{syncSummary.gated ? " — some deferred (market open)" : ""}</span>
-            {syncSummary.results.filter((row) => row.notes?.some((note: string) => note.startsWith("sync failed") || note.includes("alias"))).map((row) => (
+            <span>{syncSummary.synced} synced — {syncSummary.fetchedNew} new bars{syncSummary.failed > 0 ? ` — ${syncSummary.failed} failed` : ""}{syncSummary.incomplete > 0 ? ` — ${syncSummary.incomplete} with missing dates` : ""}{syncSummary.gated ? " — latest bar deferred until market cut-off" : ""}</span>
+            {syncSummary.results.filter((row) => syncFailed(row) || (row.missing_dates?.length ?? 0) > 0 || row.notes?.some((note: string) => note.includes("alias"))).slice(0, 50).map((row) => (
               <span key={row.symbol} className="sync-note"><strong>{row.symbol}</strong> {row.notes?.join("; ")}</span>
             ))}
           </div>

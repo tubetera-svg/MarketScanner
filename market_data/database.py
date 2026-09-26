@@ -226,6 +226,33 @@ def query_ohlc(
         conn.close()
 
 
+def stored_at_by_date(
+    source: str,
+    symbol: str,
+    start_date: date | str,
+    end_date: date | str,
+    exchange: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> dict[str, str]:
+    """{bar date: created_at (UTC 'YYYY-MM-DD HH:MM:SS')} — when each row was stored."""
+    clauses = ["source = ?", "symbol = ?", "date >= ?", "date <= ?"]
+    params: list[object] = [
+        str(source).strip().upper(),
+        str(symbol).strip().upper(),
+        _to_date_text(start_date),
+        _to_date_text(end_date),
+    ]
+    if exchange:
+        clauses.append("exchange = ?")
+        params.append(str(exchange).strip().upper())
+    conn = connect(db_path)
+    try:
+        sql = f"SELECT date, created_at FROM ohlc_daily WHERE {' AND '.join(clauses)}"
+        return {str(row[0]): str(row[1]) for row in conn.execute(sql, params).fetchall()}
+    finally:
+        conn.close()
+
+
 _SYMBOL_CHUNK = 400  # keep IN()-groups safely under SQLite's host-parameter ceiling
 
 

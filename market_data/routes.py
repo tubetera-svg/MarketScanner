@@ -4,6 +4,7 @@ Exposed paths:
     GET  /ohlc            ?source=NSE&symbol=RELIANCE&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
     GET  /api/ohlc        (alias, consistent with other /api endpoints)
     POST /api/market-data/sync   (optional bulk backfill trigger)
+    GET  /api/market-data/auto-sync, POST .../auto-sync/start|stop  (per-market daily auto-sync)
     GET  /api/market-data/records   ?scope=watchlist|all&source=&exchange=&q=&start_date=&end_date=&sort=asc|desc&limit=&offset=&symbols=NSE:A,OANDA:B
     GET  /api/market-data/meta      ?scope=watchlist|all
     GET  /api/market-data/watchlist (static symbol list powering the picker UI)
@@ -112,6 +113,11 @@ class SyncRequest(BaseModel):
         description="Fall back to configured alias symbols (config/symbol_aliases.json) "
                     "when the primary fetch returns nothing.",
     )
+    include_rows: bool = Field(
+        default=False,
+        description="Include the stored OHLC rows per symbol in the response "
+                    "(off by default; the sync summary only needs counts).",
+    )
 
 
 class DeleteRecordsRequest(BaseModel):
@@ -125,6 +131,38 @@ class DeleteRecordsRequest(BaseModel):
         description="Required (with no symbol/source/exchange/date filter) to wipe "
                     "the entire market-data table before a full re-sync.",
     )
+
+
+class AutoSyncStartRequest(BaseModel):
+    lookback_days: Optional[int] = Field(default=None, ge=1, le=120)
+
+
+def _auto_sync():
+    global _AUTO_SYNC
+    if _AUTO_SYNC is None:
+        from .auto_sync import DataAutoSync
+
+        _AUTO_SYNC = DataAutoSync(_watchlist_entries)
+    return _AUTO_SYNC
+
+
+_AUTO_SYNC = None
+
+
+@router.get("/api/market-data/auto-sync")
+def auto_sync_status() -> dict:
+    """Per-market auto-sync state (NSE after bhavcopy, forex after 17:00 NY)."""
+    return _auto_sync().status()
+
+
+@router.post("/api/market-data/auto-sync/start")
+def auto_sync_start(request: AutoSyncStartRequest) -> dict:
+    return _auto_sync().start(request.lookback_days)
+
+
+@router.post("/api/market-data/auto-sync/stop")
+def auto_sync_stop() -> dict:
+    return _auto_sync().stop()
 
 
 @router.post("/api/market-data/sync")
@@ -166,7 +204,10 @@ def sync_market_data(request: SyncRequest) -> dict:
             gate_market_hours=request.gate_market_hours,
             aliases=aliases,
         )
-        results.append(summary.to_dict())
+        payload = summary.to_dict()
+        if not request.include_rows:
+            payload.pop("rows", None)
+        results.append(payload)
     return {
         "anchor_date": anchor.isoformat(),
         "start_date": request.start_date.isoformat() if request.start_date else None,

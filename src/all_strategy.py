@@ -193,10 +193,12 @@ def _fetch_strategy_daily(
 
     * Historical (strictly before today) -> SQLite only. Backdate scans never
       hit a provider.
-    * Live (today) -> the provider, for the in-progress session, unless the
-      exchange has already closed for the day. Once closed, the final bar is read
-      from SQLite (it should have been synced after the close). Close times are
-      exchange-aware: NSE 15:30 IST vs the near-24/5 commodity/forex session.
+    * Today -> the final daily bar only: once the market's daily bar is ready
+      (NSE bhavcopy after 17:00 IST) it is fetched/stored via get_ohlc; before
+      that, SQLite is read, which never holds an in-progress bar (forex/crypto
+      bars are stored only after their NY-17:00 / UTC-midnight close). Daily
+      strategies therefore never see a forming candle; intraday timeframes use
+      live TradingView bars instead (see ``_protected_swing_frame``).
     """
     md = _get_md_service()
     source = _source_for_symbol(symbol)
@@ -305,8 +307,16 @@ PROTECTED_SWING_TIMEFRAMES = ("daily", "weekly", "15m", "1h", "4h")
 _PROTECTED_SWING_TV_TIMEFRAMES = {"15m": "15m", "1h": "1h", "4h": "4h"}
 
 
-def _protected_swing_frame(symbol: str, timeframe: str, daily: pd.DataFrame) -> pd.DataFrame:
-    """Build the protected-swing frame from historical or live data."""
+def _protected_swing_frame(
+    symbol: str, timeframe: str, daily: pd.DataFrame, as_of_date: Optional[date] = None
+) -> pd.DataFrame:
+    """Build the protected-swing frame from historical or live data.
+
+    Daily/weekly frames come from ``daily`` (SQLite, final bars only). Intraday
+    frames (15m/1h/4h) are fetched from TradingView: live (through now) when
+    ``as_of_date`` is today, and ending at ``as_of_date`` for a historical run so
+    no bar after the tested session can leak in (look-ahead).
+    """
     normalized = str(timeframe).strip().lower()
     if normalized not in PROTECTED_SWING_TIMEFRAMES:
         raise ValueError(f"Unsupported protected swing timeframe: {timeframe}")
@@ -321,11 +331,11 @@ def _protected_swing_frame(symbol: str, timeframe: str, daily: pd.DataFrame) -> 
 
     from market_data.sources import tradingview_source
 
-    today = date.today()
+    end = min(as_of_date or date.today(), date.today())
     rows = tradingview_source.fetch_timeframe(
         symbol=symbol,
-        start_date=today - timedelta(days=30),
-        end_date=today,
+        start_date=end - timedelta(days=30),
+        end_date=end,
         timeframe=_PROTECTED_SWING_TV_TIMEFRAMES[normalized],
         exchange=symbol.split(":", 1)[0] if ":" in symbol else "NSE",
     )
@@ -844,7 +854,7 @@ def run_protected_swings(
             daily = _trim_in_progress_daily(daily)
 
         try:
-            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
             log.warning("Protected swing %s frame failed for %s: %s", timeframe, symbol_upper, exc)
             frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
@@ -1021,7 +1031,7 @@ def run_points_of_interest(
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
         try:
-            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
             log.warning("Points of interest frame failed for %s: %s", symbol_upper, exc)
             frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
@@ -1124,7 +1134,7 @@ def run_candle_3_closure(
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
         try:
-            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
             log.warning("Candle 3 frame failed for %s: %s", symbol_upper, exc)
             frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
@@ -1193,7 +1203,7 @@ def run_propulsion_blocks(
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
         try:
-            frame = _protected_swing_frame(symbol_upper, timeframe, daily)
+            frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
             log.warning("Propulsion block %s frame failed for %s: %s", timeframe, symbol_upper, exc)
             frame = pd.DataFrame(columns=["Open", "High", "Low", "Close"])
