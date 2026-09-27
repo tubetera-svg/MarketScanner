@@ -218,7 +218,7 @@ def test_known_symbols_from_bhavcopy(monkeypatch):
     )
     monkeypatch.setattr(ipo_mod, "_download_bhavcopy", lambda d: frame)
     symbols = ipo_mod.known_symbols_from_bhavcopy(date(2026, 3, 2))
-    assert symbols == {"AAA", "BBB"}  # BE series excluded
+    assert symbols == {"AAA", "BBB", "NON"}  # all series (BE->EQ movers are not IPOs)
 
 
 def row_dict(source, symbol, exchange, day, close=100.0, volume=12345.0):
@@ -442,3 +442,21 @@ def test_register_ipo_rejects_etf_units(monkeypatch, tmp_ipo_files, tmp):
             db_path=tmp,
         )
 
+
+
+def _bars(closes, vol=1_000_000):
+    return [{"date": f"d{i}", "open": c, "high": c * 1.01, "low": c * 0.99, "close": c, "volume": vol}
+            for i, c in enumerate(closes)]
+
+
+def test_strength_metrics_leader_and_illiquid():
+    from market_data.ipo import ipo_strength_metrics
+
+    up = ipo_strength_metrics(_bars([100 + i for i in range(59)] + [175]), 100)
+    assert up["liquidity"] == "LIQUID" and up["signal"] == "LEADER"
+    assert up["breakout_20d"] is True
+
+    thin = ipo_strength_metrics(_bars([100 - i * 0.5 for i in range(60)], vol=100), 100)
+    assert thin["liquidity"] == "ILLIQUID" and thin["signal"] == "WEAK"
+
+    assert ipo_strength_metrics(_bars([100] * 10), 100)["signal"] == "NEW"

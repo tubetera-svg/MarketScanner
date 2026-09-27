@@ -558,6 +558,18 @@ def read_ipo_performance(reference_date: Optional[date] = Query(default=None)) -
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/api/market-data/ipo/review")
+def read_ipo_review(reference_date: Optional[date] = Query(default=None)) -> dict:
+    """Keep/discard suggestions for the tracked IPO list (read-only, deletes nothing)."""
+    try:
+        from . import ipo as ipo_service
+
+        return ipo_service.ipo_review(reference_date=reference_date)
+    except Exception as exc:
+        log.exception("Unhandled IPO review error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/api/market-data/ipo")
 def read_ipo_metadata() -> dict:
     """List all tracked IPOs (from the ipo_metadata table). Read-only."""

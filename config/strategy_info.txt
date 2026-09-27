@@ -43,25 +43,6 @@ This file contains the exact conditions used by strategy runners in `all_strateg
   - current close is below day 1 high
 - Output: bullish or bearish inside-bar breakout matches.
 
-### `daily_fvg_sweep`
-- Uses the latest 4 daily candles.
-- Bullish condition `_daily_fvg_sweep_bullish()` requires:
-  - gap size (`d3_low - d1_high`) > 1% of current close
-  - `d3_low` > `d2_low` and `d2_low` > `d1_low`
-  - `d2_high` < `d3_high` and `d1_high` < `d2_high`
-  - current high > `d1_high`
-  - current close < `d1_high`
-  - current low > `d1_low`
-- Bearish condition `_daily_fvg_sweep_bearish()` requires:
-  - gap size (`d3_high - d1_low`) < 1% of current close
-  - `d3_high` < `d2_high` and `d3_high` < `d1_low`
-  - `d2_high` < `d1_high`
-  - `d2_low` > `d3_low` and `d1_low` > `d2_low`
-  - current low < `d1_low`
-  - current close > `d1_low`
-  - current high < `d1_high`
-- Output: fair value gap-based bullish or bearish sweep signals.
-
 ### `ema5_sweep`
 - Uses the latest 6+ daily candles and computes a 5-period EMA on close prices.
 - Bullish condition `_ema5_sweep_bullish()` requires:

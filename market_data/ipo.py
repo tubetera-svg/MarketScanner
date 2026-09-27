@@ -69,7 +69,10 @@ from typing import Iterable, Optional
 from . import database, equity_master, etf_list
 from .config import (
     IPO_MIN_ACTIVE_RATIO,
+    BORDERLINE_AVG_DAILY_VALUE_CR,
     IPO_MIN_AVG_DAILY_VALUE_CR,
+    LIQUID_AVG_DAILY_VALUE_CR,
+    LIQUID_MAX_ZERO_DAYS,
     LIQUIDITY_LOOKBACK_DAYS,
     SOURCE_NSE,
     source_enabled,
@@ -146,10 +149,11 @@ def _download_bhavcopy(trade_date: date) -> Optional[object]:
 
 
 def known_symbols_from_bhavcopy(trade_date: date) -> set[str]:
-    """Return the full NSE EQ universe present in one bhavcopy file.
+    """Return every symbol (all series) present in one bhavcopy file.
 
     Used to build a realistic *already-listed* baseline for going-forward IPO
-    detection so established stocks are not mistaken for new listings.
+    detection so established stocks are not mistaken for new listings. All
+    series are included so stocks moving BE/BZ -> EQ are not read as IPOs.
     """
     df = _download_bhavcopy(trade_date)
     result: set[str] = set()
@@ -161,12 +165,7 @@ def known_symbols_from_bhavcopy(trade_date: date) -> set[str]:
     series_col = mod._find_column(cols, ["SERIES"])
     if not symbol_col or not series_col:
         return result
-    mask = df[series_col].astype(str).str.strip().str.upper() == "EQ"
-    try:
-        values = df.loc[mask, symbol_col]
-    except KeyError:  # pragma: no cover - defensive
-        return result
-    for value in values:
+    for value in df[symbol_col]:
         text = str(value).strip().upper()
         if text:
             result.add(text)
@@ -611,6 +610,91 @@ def register_ipos(
     return summaries
 
 
+#: Bars needed before trend metrics (20-DMA etc.) are meaningful.
+STRENGTH_MIN_BARS = 20
+#: A tracked IPO with no bar for this many calendar days is treated as stale
+#: (suspended / stopped trading).
+STALE_DAYS = 10
+
+
+def _sma(values: list[float], n: int) -> Optional[float]:
+    return sum(values[-n:]) / n if len(values) >= n else None
+
+
+def ipo_strength_metrics(bars: list[dict], listing_price: Optional[float]) -> dict:
+    """Liquidity + trend metrics from daily bars (oldest first, all <= reference date).
+
+    Uses only bars up to and including the last one (no look-ahead). Liquidity is
+    the 20-bar and 60-bar average traded value (classified on the 60-bar median) (close * volume, Rs crore) and
+    the count of zero-volume bars in the last 20. ``signal``:
+      LEADER    - score >= 5 of 6 trend points
+      IMPROVING - score 3-4
+      WEAK      - score <= 2
+      NEW       - fewer than ``STRENGTH_MIN_BARS`` bars
+    Trend points: close > 20-DMA, 20-DMA > 50-DMA, within 10% of the since-listing
+    high, 20-day return > 0, 5-day volume above 20-day volume, close > listing
+    price. Entry cues: ``breakout_20d`` (close above the prior 20 bars' high) and
+    ``pullback_20dma`` (LEADER/IMPROVING within 3% above the 20-DMA).
+    """
+    out: dict = {
+        "avg_value_cr_20d": None, "avg_value_cr_60d": None, "zero_days_20d": None,
+        "liquidity": "N/A", "ret_5d": None, "ret_20d": None, "pct_from_high": None,
+        "above_dma20": None, "above_dma50": None, "rel_volume": None,
+        "breakout_20d": False, "pullback_20dma": False,
+        "strength_score": None, "signal": "NEW",
+    }
+    if not bars:
+        return out
+    closes = [float(b["close"]) for b in bars]
+    vols = [float(b.get("volume") or 0) for b in bars]
+    values = [c * v / 1e7 for c, v in zip(closes, vols)]
+    last20 = values[-20:]
+    out["avg_value_cr_20d"] = round(sum(last20) / len(last20), 2)
+    last60 = values[-60:]
+    out["avg_value_cr_60d"] = round(sum(last60) / len(last60), 2)
+    out["zero_days_20d"] = sum(1 for v in vols[-20:] if v <= 0)
+    # classify on the median so a single spike day cannot make a thin stock "liquid"
+    avg = round(sorted(last60)[len(last60) // 2], 2) if len(last60) % 2 else round(
+        sum(sorted(last60)[len(last60) // 2 - 1:len(last60) // 2 + 1]) / 2, 2)
+    if avg >= LIQUID_AVG_DAILY_VALUE_CR and out["zero_days_20d"] <= LIQUID_MAX_ZERO_DAYS:
+        out["liquidity"] = "LIQUID"
+    elif avg >= BORDERLINE_AVG_DAILY_VALUE_CR:
+        out["liquidity"] = "BORDERLINE"
+    else:
+        out["liquidity"] = "ILLIQUID"
+
+    close = closes[-1]
+    high_since = max(float(b["high"]) for b in bars)
+    out["pct_from_high"] = round((close - high_since) / high_since * 100, 2) if high_since else None
+    if len(closes) > 5:
+        out["ret_5d"] = round((close / closes[-6] - 1) * 100, 2)
+    if len(closes) > 20:
+        out["ret_20d"] = round((close / closes[-21] - 1) * 100, 2)
+    if len(bars) < STRENGTH_MIN_BARS:
+        return out
+
+    dma20, dma50 = _sma(closes, 20), _sma(closes, 50)
+    v20, v5 = _sma(vols, 20), _sma(vols, 5)
+    out["above_dma20"] = close > dma20
+    out["above_dma50"] = None if dma50 is None else close > dma50
+    out["rel_volume"] = round(v5 / v20, 2) if v20 else None
+    score = 0
+    score += 1 if close > dma20 else 0
+    score += 1 if dma50 is not None and dma20 > dma50 else 0
+    score += 1 if out["pct_from_high"] is not None and out["pct_from_high"] >= -10 else 0
+    score += 1 if (out["ret_20d"] or 0) > 0 else 0
+    score += 1 if out["rel_volume"] is not None and out["rel_volume"] > 1 else 0
+    score += 1 if listing_price and close > float(listing_price) else 0
+    out["strength_score"] = score
+    out["signal"] = "LEADER" if score >= 5 else "IMPROVING" if score >= 3 else "WEAK"
+    prior_high = max(float(b["high"]) for b in bars[-21:-1]) if len(bars) > 20 else None
+    out["breakout_20d"] = bool(prior_high and close > prior_high)
+    out["pullback_20dma"] = bool(
+        score >= 3 and dma20 and 0 <= (close - dma20) / dma20 <= 0.03
+    )
+    return out
+
+
 def ipo_performance(
     db_path: Optional[Path | str] = None,
     reference_date: Optional[date | str] = None,
@@ -660,7 +744,9 @@ def ipo_performance(
                     (item["current_price"] - float(item["listing_price"]))
                     / float(item["listing_price"]) * 100, 2,
                 )
+            item.update(ipo_strength_metrics(bars, item["listing_price"]))
         else:
+            item.update(ipo_strength_metrics([], None))
             item["latest_date"] = None
             item["current_price"] = None
             item["high_since_listing"] = None
@@ -669,6 +755,61 @@ def ipo_performance(
         out.append(item)
     out.sort(key=lambda i: (i["listing_date"], i["symbol"]))
     return out
+
+
+def ipo_review(
+    db_path: Optional[Path | str] = None,
+    reference_date: Optional[date | str] = None,
+) -> dict:
+    """Read-only keep/discard suggestions for the tracked IPO list.
+
+    Nothing is deleted. A tracked IPO is suggested for DISCARD when it is not an
+    NSE main-board EQ equity, is not LIQUID (60-bar avg traded value below
+    ``LIQUID_AVG_DAILY_VALUE_CR`` or too many zero-volume days), has gone stale,
+    or its listing date equals the discovery-window start (existing stock picked
+    up as an "IPO" - renames/re-listings, not a real listing). Everything else is
+    KEEP; KEEP items carry the trend ``signal`` so leaders can be tracked first.
+    """
+    perf = ipo_performance(db_path=db_path, reference_date=reference_date)
+    ref = (
+        reference_date if isinstance(reference_date, date)
+        else date.fromisoformat(reference_date) if reference_date else date.today()
+    )
+    window_start = min((i["listing_date"] for i in perf), default=None)
+    master = equity_master.load_equity_master()
+    etf_units = etf_list.load_etf_symbols()
+    keep: list[dict] = []
+    discard: list[dict] = []
+    for item in perf:
+        reasons: list[str] = []
+        inelig = ipo_ineligibility_reason(
+            item["symbol"], equity_master_map=master, etf_symbols=etf_units,
+        )
+        if inelig:
+            reasons.append(inelig)
+        if item["latest_date"] is None:
+            reasons.append("no price data")
+        elif (ref - date.fromisoformat(item["latest_date"])).days > STALE_DAYS:
+            reasons.append(f"stale: last bar {item['latest_date']}")
+        if item["liquidity"] != "LIQUID" and item["latest_date"] is not None:
+            reasons.append(
+                f"{item['liquidity'].lower()}: avg value Rs.{item['avg_value_cr_60d']} cr/day, "
+                f"{item['zero_days_20d']} zero-volume day(s) in last 20"
+            )
+        if window_start and item["listing_date"] == window_start and window_start < ref.isoformat():
+            reasons.append("listing date = discovery-window start (likely existing stock, not an IPO)")
+        row = {**item, "verdict": "DISCARD" if reasons else "KEEP", "reasons": reasons}
+        (discard if reasons else keep).append(row)
+    order = {"LEADER": 0, "IMPROVING": 1, "WEAK": 2, "NEW": 3}
+    keep.sort(key=lambda r: (order.get(r["signal"], 9), -(r["strength_score"] or 0),
+                             -(r["avg_value_cr_60d"] or 0)))
+    return {
+        "reference_date": ref.isoformat(),
+        "keep_count": len(keep),
+        "discard_count": len(discard),
+        "keep": keep,
+        "discard": discard,
+    }
 
 
 def run_ipo_backfill(

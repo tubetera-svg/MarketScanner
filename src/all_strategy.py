@@ -457,59 +457,6 @@ def _inside_bar_bearish(v: Dict[str, float]) -> bool:
     )
 
 
-def _daily_fvg_sweep_points(daily: pd.DataFrame) -> Dict[str, float]:
-    curr = daily.iloc[-1]
-    d1 = daily.iloc[-2]
-    d2 = daily.iloc[-3]
-    d3 = daily.iloc[-4]
-
-    return {
-        "curr_open": float(curr["Open"]),
-        "curr_high": float(curr["High"]),
-        "curr_low": float(curr["Low"]),
-        "curr_close": float(curr["Close"]),
-        "d1_open": float(d1["Open"]),
-        "d1_high": float(d1["High"]),
-        "d1_low": float(d1["Low"]),
-        "d1_close": float(d1["Close"]),
-        "d2_open": float(d2["Open"]),
-        "d2_high": float(d2["High"]),
-        "d2_low": float(d2["Low"]),
-        "d2_close": float(d2["Close"]),
-        "d3_open": float(d3["Open"]),
-        "d3_high": float(d3["High"]),
-        "d3_low": float(d3["Low"]),
-        "d3_close": float(d3["Close"]),
-    }
-
-
-def _daily_fvg_sweep_bullish(v: Dict[str, float]) -> bool:
-    return (
-        (v["d3_low"] - v["d1_high"]) > (v["curr_close"] * 0.01)
-        and v["d3_low"] > v["d2_low"]
-        and v["d2_low"] > v["d1_low"]
-        and v["d2_high"] < v["d3_high"]
-        and v["d1_high"] < v["d2_high"]
-        and v["curr_high"] > v["d1_high"]
-        and v["curr_close"] < v["d1_high"]
-        and v["curr_low"] > v["d1_low"]
-    )
-
-
-def _daily_fvg_sweep_bearish(v: Dict[str, float]) -> bool:
-    return (
-        (v["d3_high"] - v["d1_low"]) < (v["curr_close"] * 0.01)
-        and v["d3_high"] < v["d2_high"]
-        and v["d3_high"] < v["d1_low"]
-        and v["d2_high"] < v["d1_high"]
-        and v["d2_low"] > v["d3_low"]
-        and v["d1_low"] > v["d2_low"]
-        and v["curr_low"] < v["d1_low"]
-        and v["curr_close"] > v["d1_low"]
-        and v["curr_high"] < v["d1_high"]
-    )
-
-
 def _ema5_sweep_points(daily: pd.DataFrame) -> Dict[str, float]:
     work = daily.copy()
     work["ema5"] = work["Close"].ewm(span=5, adjust=False, min_periods=5).mean()
@@ -679,57 +626,6 @@ def run_inside_bar_daily_sweep(
     bullish, bearish = _extract_signal_frames(results)
     return StrategyExecution(
         name="inside_bar_pattern_daily_sweep",
-        results=results,
-        bullish=bullish,
-        bearish=bearish,
-    )
-
-
-def run_daily_fvg_sweep(
-    symbols: Sequence[str],
-    as_of_date: date,
-    verbose: bool = False,
-    print_values: bool = False,
-    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
-) -> StrategyExecution:
-    _ = print_values
-    results = pd.DataFrame(
-        {
-            "symbol": list(symbols),
-            "bullish_match": False,
-            "bearish_match": False,
-            "final_signal": False,
-            "status": "pending",
-        }
-    )
-
-    for idx, symbol in enumerate(symbols):
-        if daily_map is None:
-            daily = _fetch_daily_from_bhavcopy(symbol=symbol, as_of_date=as_of_date, max_lookback_days=80)
-        else:
-            daily = daily_map.get(str(symbol).upper(), pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
-
-        if len(daily) < 4:
-            results.at[idx, "status"] = "no_data"
-            if verbose:
-                print(f"{symbol}: SKIPPED (no_data)")
-            continue
-
-        values = _daily_fvg_sweep_points(daily)
-        bullish = _daily_fvg_sweep_bullish(values)
-        bearish = _daily_fvg_sweep_bearish(values)
-
-        results.at[idx, "bullish_match"] = bullish
-        results.at[idx, "bearish_match"] = bearish
-        results.at[idx, "final_signal"] = bullish or bearish
-        results.at[idx, "status"] = "complete"
-
-        if verbose:
-            print(f"{symbol}: bullish={bullish}, bearish={bearish}")
-
-    bullish, bearish = _extract_signal_frames(results)
-    return StrategyExecution(
-        name="daily_fvg_sweep",
         results=results,
         bullish=bullish,
         bearish=bearish,
@@ -2567,10 +2463,6 @@ def strategy_registry() -> Dict[str, StrategySpec]:
             name="inside_bar_pattern_daily_sweep",
             runner=run_inside_bar_daily_sweep,
         ),
-        "daily_fvg_sweep": StrategySpec(
-            name="daily_fvg_sweep",
-            runner=run_daily_fvg_sweep,
-        ),
         "ema5_sweep": StrategySpec(
             name="ema5_sweep",
             runner=run_ema5_sweep,
@@ -2667,7 +2559,6 @@ def run_strategies(
     lookback_by_strategy = {
         "weekly_vs_daily_sweep": 420,
         "inside_bar_pattern_daily_sweep": 160,
-        "daily_fvg_sweep": 80,
         "ema5_sweep": 40,
         "multi_timeframe_bias": 600,
         "daily_bias_invalidation": 600,

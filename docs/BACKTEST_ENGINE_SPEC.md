@@ -33,7 +33,7 @@ paper-trading, parameter optimization / walk-forward.
 | Concern | Existing code | Reuse |
 |---|---|---|
 | Strategy registry | `src/all_strategy.py:1663` `strategy_registry()` | Drives which strategies run |
-| Per-strategy runners | `run_weekly_vs_daily` (`:517`), `run_inside_bar_daily_sweep` (`:575`), `run_daily_fvg_sweep` (`:626`), `run_ema5_sweep` (`:677`), `run_weekly_profile` (`:1494`) | Called once per historical date with a `daily_map` truncated to that date |
+| Per-strategy runners | `run_weekly_vs_daily` (`:517`), `run_inside_bar_daily_sweep` (`:575`), `run_ema5_sweep` (`:677`), `run_weekly_profile` (`:1494`) | Called once per historical date with a `daily_map` truncated to that date |
 | Runner signature | `(symbols, as_of_date, verbose, print_values, daily_map=None)` → `StrategyExecution` | The `daily_map` arg is the backtest integration seam |
 | Point-in-time guard | `_trim_in_progress_daily` (`:1468`) only trims when `date.today()` is the last bar → no-op during historical replay (as_of_date ≠ today) | Safe to ignore in backtest |
 | Result shape | `StrategyExecution(name, results, bullish, bearish)` (`:64`); weekly profiles also populate `entry/sl/target/rr/direction` (`:1517-1584`) | Source of signal + trade levels |
@@ -51,7 +51,7 @@ paper-trading, parameter optimization / walk-forward.
 
 From `strategy_registry()` (`src/all_strategy.py:1663`) + `WEEKLY_PROFILE_FLAGS`:
 
-- Core (no built-in SL/target): `weekly_vs_daily_sweep` (420d), `inside_bar_pattern_daily_sweep` (160d), `daily_fvg_sweep` (80d), `ema5_sweep` (40d).
+- Core (no built-in SL/target): `weekly_vs_daily_sweep` (420d), `inside_bar_pattern_daily_sweep` (160d), `ema5_sweep` (40d).
 - Weekly profiles (carry `entry/sl/target/rr`): `classic_expansion_sweep`, `midweek_reversal_sweep`, `consolidation_reversal_sweep`, `intraweek_reversal_sweep`, `thursday_counter_sweep`, `tgif_setup_sweep` (all 60d).
 
 The per-strategy required lookback is already centralized in `run_strategies`'s

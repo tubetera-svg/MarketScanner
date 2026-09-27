@@ -6,7 +6,7 @@
 // trigger NSE/TradingView requests.
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, ArrowLeft, Database, Pencil, RefreshCw, Rocket, Save, SearchX, Trash2, X } from "lucide-react";
+import { Activity, ArrowLeft, Database, Download, Pencil, RefreshCw, Rocket, Save, SearchX, Trash2, X } from "lucide-react";
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
 
@@ -84,6 +84,11 @@ const classificationFields: { key: keyof WatchlistClassification; label: string;
 const SCOPE = "watchlist";
 const pageSizeOptions = [25, 50, 100, 250];
 const todayISO = () => new Date().toISOString().slice(0, 10);
+// Local-calendar "today" (the max selectable date); todayISO() is UTC and can lag IST by a day.
+const localTodayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const defaultFilters = { source: "", exchange: "", q: "", from: todayISO(), to: "", sort: "desc" };
 
 // Per-column grid filters (Date/Symbol/Exchange/Source). These now drive the
@@ -321,6 +326,31 @@ export default function WatchlistPage() {
 
   const rows = records?.rows ?? [];
 
+  const daysAgoISO = (days: number) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const applyPreset = (from: string, to = "") => {
+    setFilters((current) => ({ ...current, from, to }));
+    markStale();
+  };
+  const resetFilters = () => {
+    setFilters(defaultFilters);
+    setGrid(emptyGridFilters);
+    markStale();
+  };
+
+  const exportCsv = () => {
+    if (rows.length === 0) return;
+    const header = ["date", "symbol", "exchange", "source", "open", "high", "low", "close", "volume"];
+    const lines = rows.map((r) => [r.date, r.symbol, r.exchange, r.source, r.open, r.high, r.low, r.close, r.volume ?? ""].join(","));
+    const blob = new Blob([[header.join(","), ...lines].join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `market_data_${todayISO()}_offset${records?.offset ?? 0}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setMessage(`Exported ${rows.length} rows from this page to CSV`);
+  };
+
   // ---- Watchlist manager: edit (rename + alias) / delete symbols ----------
   const deleteSymbol = async (symbol: string) => {
     if (!window.confirm(`Remove ${symbol} from the watchlist? Its alias mapping will also be cleared.`)) return;
@@ -411,6 +441,8 @@ export default function WatchlistPage() {
       setSavingEdit(false);
     }
   };
+  const totalPages = records ? Math.max(1, Math.ceil(records.total / pageSize)) : 1;
+  const currentPage = records ? Math.floor(records.offset / pageSize) + 1 : 1;
   const canPrev = !!records && records.offset > 0;
   const canNext = !!records && records.offset + rows.length < records.total;
   const gridActive = Object.values(grid).some((value) => value !== "");
@@ -584,9 +616,15 @@ export default function WatchlistPage() {
           </select>
           <input aria-label="Search symbol" placeholder="Symbol contains…" value={filters.q} onChange={(event) => updateFilter("q", event.target.value)} />
           <span className="filter-label">From</span>
-          <input aria-label="Start date" type="date" value={filters.from} onChange={(event) => updateFilter("from", event.target.value)} />
+          <input aria-label="Start date" type="date" max={filters.to || localTodayISO()} value={filters.from} onChange={(event) => updateFilter("from", event.target.value)} />
           <span className="filter-label">To</span>
-          <input aria-label="End date" type="date" value={filters.to} onChange={(event) => updateFilter("to", event.target.value)} />
+          <input aria-label="End date" type="date" min={filters.from || undefined} max={localTodayISO()} value={filters.to} onChange={(event) => updateFilter("to", event.target.value)} />
+          <button className="seg" type="button" onClick={() => applyPreset(todayISO())}>Today</button>
+          <button className="seg" type="button" onClick={() => applyPreset(daysAgoISO(7))}>7D</button>
+          <button className="seg" type="button" onClick={() => applyPreset(daysAgoISO(30))}>30D</button>
+          <button className="seg" type="button" onClick={() => applyPreset(daysAgoISO(365))}>1Y</button>
+          <button className="seg" type="button" onClick={() => applyPreset("")}>All</button>
+          <button className="seg" type="button" onClick={resetFilters} title="Reset all filters to defaults">Reset</button>
           <span className="filter-label">Sort</span>
           <select aria-label="Sort direction" value={filters.sort} onChange={(event) => updateFilter("sort", event.target.value)}>
             <option value="desc">Newest first</option>
@@ -628,12 +666,15 @@ export default function WatchlistPage() {
             {gridActive && (
               <button className="seg active" type="button" onClick={clearGridFilters}>Clear grid filters</button>
             )}
+            <button className="seg" type="button" onClick={exportCsv} disabled={rows.length === 0} style={{ marginLeft: "auto" }}>
+              <Download size={12} /> Export page CSV
+            </button>
           </div>
         )}
-        <div className="table-wrap">
+        <div className="table-wrap" style={loading && records ? { opacity: 0.55, transition: "opacity .15s" } : undefined}>
           <table>
             <thead>
-              <tr><th>Date</th><th>Symbol</th><th>Exchange</th><th>Source</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr>
+              <tr><th>Date</th><th>Symbol</th><th>Exchange</th><th>Source</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Chg %</th><th>Volume</th></tr>
               {records && (
                 <tr className="grid-filter-row">
                   <th><input aria-label="Filter date contains" placeholder="contains…" value={grid.date} onChange={(event) => updateGridFilter("date", event.target.value)} /></th>
@@ -650,23 +691,30 @@ export default function WatchlistPage() {
                       {sourceValues.map((value) => <option key={value} value={value}>{value}</option>)}
                     </select>
                   </th>
+                  <th colSpan={6} />
                 </tr>
               )}
             </thead>
             <tbody>
-              {visibleRows.map((row) => (
+              {visibleRows.map((row) => {
+                const chg = row.open ? ((row.close - row.open) / row.open) * 100 : null;
+                return (
                 <tr key={`${row.source}-${row.symbol}-${row.date}`}>
                   <td>{row.date}</td>
-                  <td><strong>{row.symbol}</strong></td>
+                  <td><strong style={{ cursor: "pointer" }} title="Click to filter by this symbol" onClick={() => updateGridFilter("symbol", row.symbol)}>{row.symbol}</strong></td>
                   <td>{row.exchange}</td>
                   <td><span className={`badge ${sourceClass(row.source)}`}>{row.source}</span></td>
                   <td className="number">{number(row.open)}</td>
                   <td className="number">{number(row.high)}</td>
                   <td className="number">{number(row.low)}</td>
                   <td className="number">{number(row.close)}</td>
+                  <td className="number" style={{ color: chg == null ? undefined : chg >= 0 ? "var(--teal-ink)" : "var(--coral-ink)" }}>
+                    {chg == null ? "-" : `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`}
+                  </td>
                   <td className="number">{number(row.volume)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {!records && (
@@ -688,8 +736,11 @@ export default function WatchlistPage() {
               Showing {records.offset + 1}–{records.offset + rows.length} of {records.total.toLocaleString()}
               {gridActive ? " · grid filters applied" : ""}
             </span>
+            <span className="auto-meta">Page {currentPage} / {totalPages}</span>
+            <button className="test-button" type="button" disabled={!canPrev || loading} onClick={() => loadRecords(0)}>First</button>
             <button className="test-button" type="button" disabled={!canPrev || loading} onClick={() => loadRecords(records.offset - pageSize)}>Prev</button>
             <button className="test-button" type="button" disabled={!canNext || loading} onClick={() => loadRecords(records.offset + pageSize)}>Next</button>
+            <button className="test-button" type="button" disabled={!canNext || loading} onClick={() => loadRecords((totalPages - 1) * pageSize)}>Last</button>
           </div>
         )}
       </section>

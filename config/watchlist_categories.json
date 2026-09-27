@@ -87,19 +87,10 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:ACGL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1781.1"
-  },
   "NSE:ADANIENSOL": {
     "asset_class": "equity",
     "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-08-31",
-    "listing_price": "820.0"
+    "scope": "F&O"
   },
   "NSE:ADANIENT": {
     "asset_class": "equity",
@@ -110,20 +101,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:ADDIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "86.0"
-  },
-  "NSE:ADVIKCA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1.15"
   },
   "NSE:AEROPLANE": {
     "asset_class": "equity",
@@ -138,13 +115,6 @@
     "scope": "IPO",
     "listing_date": "2024-11-04",
     "listing_price": "426.0"
-  },
-  "NSE:AFSL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-04-01",
-    "listing_price": "180.0"
   },
   "NSE:AGARWALEYE": {
     "asset_class": "equity",
@@ -167,26 +137,12 @@
     "listing_date": "2025-02-17",
     "listing_price": "576.0"
   },
-  "NSE:AKCAPIT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "1600.05"
-  },
   "NSE:AKUMS": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2024-08-06",
     "listing_price": "725.0"
-  },
-  "NSE:ALFREDHE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "3599.0"
   },
   "NSE:ALIVUS": {
     "asset_class": "equity",
@@ -199,13 +155,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:ALLDIGI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-09-27",
-    "listing_price": "1090.0"
   },
   "NSE:ALLTIME": {
     "asset_class": "equity",
@@ -221,27 +170,6 @@
     "listing_date": "2026-07-21",
     "listing_price": "105.0"
   },
-  "NSE:ALUFLUOR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "437.55"
-  },
-  "NSE:AMAL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "762.0"
-  },
-  "NSE:AMARJOTHI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "159.0"
-  },
   "NSE:AMBUJACEM": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -254,26 +182,12 @@
     "listing_date": "2026-09-02",
     "listing_price": "72.0"
   },
-  "NSE:ANSALBU": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "72.8"
-  },
   "NSE:ANTHEM": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2025-07-21",
     "listing_price": "723.05"
-  },
-  "NSE:ANUHPHR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-12-20",
-    "listing_price": "232.0"
   },
   "NSE:APOLLOHOSP": {
     "asset_class": "equity",
@@ -284,13 +198,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:ARCL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "249.68"
   },
   "NSE:ARDEE": {
     "asset_class": "equity",
@@ -320,13 +227,6 @@
     "listing_date": "2025-09-30",
     "listing_price": "432.0"
   },
-  "NSE:ARYAMAN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "582.85"
-  },
   "NSE:ASHOKLEY": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -337,13 +237,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:ASIANTNE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "9.95"
-  },
   "NSE:ASKAUTOLTD": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -351,31 +244,10 @@
     "listing_date": "2023-11-15",
     "listing_price": "303.3"
   },
-  "NSE:ASSAMENT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "850.0"
-  },
-  "NSE:ASTAR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "633.0"
-  },
   "NSE:ASTRAL": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:ATLASCYCLE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-12-27",
-    "listing_price": "63.0"
   },
   "NSE:AUBANK": {
     "asset_class": "equity",
@@ -393,27 +265,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:AURUS": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-07-14",
-    "listing_price": "4.67"
-  },
-  "NSE:AUSTENG": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "125.0"
-  },
-  "NSE:AVANCE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "0.94"
   },
   "NSE:AVANTEL": {
     "asset_class": "equity",
@@ -434,20 +285,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:AXTEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "415.0"
-  },
-  "NSE:AZADIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "98.99"
-  },
   "NSE:BAJAJ-AUTO": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -465,13 +302,6 @@
     "listing_date": "2024-09-16",
     "listing_price": "150.0"
   },
-  "NSE:BAJAJINDEF": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-02-21",
-    "listing_price": "281.0"
-  },
   "NSE:BAJEL": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -483,13 +313,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:BALAJEE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-09-12",
-    "listing_price": "90.0"
   },
   "NSE:BALKRISIND": {
     "asset_class": "equity",
@@ -534,20 +357,6 @@
     "scope": "IPO",
     "listing_date": "2025-05-28",
     "listing_price": "100.0"
-  },
-  "NSE:BENARAS": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "10178.0"
-  },
-  "NSE:BENGALASM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "5845.85"
   },
   "NSE:BERGEPAINT": {
     "asset_class": "equity",
@@ -602,13 +411,6 @@
     "listing_date": "2026-08-19",
     "listing_price": "465.0"
   },
-  "NSE:BLIL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "73.3"
-  },
   "NSE:BLSE": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -630,13 +432,6 @@
     "listing_date": "2023-11-01",
     "listing_price": "380.0"
   },
-  "NSE:BMWVENTLTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-10-01",
-    "listing_price": "78.0"
-  },
   "NSE:BOSCHLTD": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -646,34 +441,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:BPLPHARMA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1400.0"
-  },
-  "NSE:BRAHMINFRA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "181.7"
-  },
-  "NSE:BRIGHOTEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-07-31",
-    "listing_price": "81.1"
-  },
-  "NSE:BRIGHTBR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "240.7"
   },
   "NSE:BRITANNIA": {
     "asset_class": "equity",
@@ -708,13 +475,6 @@
     "scope": "IPO",
     "listing_date": "2025-11-21",
     "listing_price": "571.9"
-  },
-  "NSE:CAPITALSFB": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-02-14",
-    "listing_price": "430.25"
   },
   "NSE:CARRARO": {
     "asset_class": "equity",
@@ -751,24 +511,10 @@
     "listing_date": "2023-11-06",
     "listing_price": "829.0"
   },
-  "NSE:CGVAK": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "160.0"
-  },
   "NSE:CHAMBLFERT": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:CHEMCRUX": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "86.87"
   },
   "NSE:CHOLAFIN": {
     "asset_class": "equity",
@@ -816,13 +562,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:COMPEAU": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "314.3"
-  },
   "NSE:CONCOR": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -854,33 +593,12 @@
     "listing_date": "2025-12-15",
     "listing_price": "1470.0"
   },
-  "NSE:CPL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-07-23",
-    "listing_price": "71.66"
-  },
   "NSE:CRAMC": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2025-10-16",
     "listing_price": "280.25"
-  },
-  "NSE:CRAVATEX": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "340.0"
-  },
-  "NSE:CRESTO": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-09-10",
-    "listing_price": "16.0"
   },
   "NSE:CRIZAC": {
     "asset_class": "equity",
@@ -928,13 +646,6 @@
     "listing_date": "2024-12-27",
     "listing_price": "393.0"
   },
-  "NSE:DCMSIL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-02-17",
-    "listing_price": "49.5"
-  },
   "NSE:DDEVPLSTIK": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -959,26 +670,12 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:DHATRE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "3.67"
-  },
   "NSE:DHOOTTRANS": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-08-17",
     "listing_price": "1200.0"
-  },
-  "NSE:DISAQ": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "12622.05"
   },
   "NSE:DIVISLAB": {
     "asset_class": "equity",
@@ -1002,38 +699,10 @@
     "listing_date": "2023-12-20",
     "listing_price": "1400.0"
   },
-  "NSE:DRAGARWQ": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "4700.0"
-  },
   "NSE:DRREDDY": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:DSFCL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-02-17",
-    "listing_price": "50.0"
-  },
-  "NSE:EASTWEST": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "2.41"
-  },
-  "NSE:ECORECO": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "494.9"
   },
   "NSE:EICHERMOT": {
     "asset_class": "equity",
@@ -1046,27 +715,6 @@
     "scope": "IPO",
     "listing_date": "2024-11-29",
     "listing_price": "220.0"
-  },
-  "NSE:EKI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "81.0"
-  },
-  "NSE:ELCIDIN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "134000.0"
-  },
-  "NSE:ELPROINTL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "100.0"
   },
   "NSE:EMCURE": {
     "asset_class": "equity",
@@ -1081,27 +729,6 @@
     "scope": "IPO",
     "listing_date": "2025-11-18",
     "listing_price": "217.0"
-  },
-  "NSE:EMPIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1065.6"
-  },
-  "NSE:EMPOWER": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "1.3"
-  },
-  "NSE:ENKEIWHEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "393.45"
   },
   "NSE:ENRIN": {
     "asset_class": "equity",
@@ -1139,9 +766,7 @@
   "NSE:ETERNAL": {
     "asset_class": "equity",
     "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-04-09",
-    "listing_price": "216.0"
+    "scope": "F&O"
   },
   "NSE:EUREKAFORB": {
     "asset_class": "equity",
@@ -1256,31 +881,10 @@
     "listing_date": "2026-02-27",
     "listing_price": "83.0"
   },
-  "NSE:GKB": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "70.0"
-  },
   "NSE:GLENMARK": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:GLOSTERLTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-04-26",
-    "listing_price": "939.9"
-  },
-  "NSE:GLOTTIS": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-10-07",
-    "listing_price": "84.0"
   },
   "NSE:GMRAIRPORT": {
     "asset_class": "equity",
@@ -1356,31 +960,10 @@
     "listing_date": "2026-07-01",
     "listing_price": "335.0"
   },
-  "NSE:GYFTR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-07-10",
-    "listing_price": "171.01"
-  },
   "NSE:HAL": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:HALEOSLABS": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-11-26",
-    "listing_price": "1427.8"
-  },
-  "NSE:HAMPTON": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "8.39"
   },
   "NSE:HAPPYFORGE": {
     "asset_class": "equity",
@@ -1401,26 +984,12 @@
     "listing_date": "2026-04-20",
     "listing_price": "7600.0"
   },
-  "NSE:HAZOOR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "22.2"
-  },
   "NSE:HBLENGINE": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2024-12-23",
     "listing_price": "656.95"
-  },
-  "NSE:HBPOR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "60.79"
   },
   "NSE:HCLTECH": {
     "asset_class": "equity",
@@ -1461,31 +1030,10 @@
     "listing_date": "2025-02-19",
     "listing_price": "745.5"
   },
-  "NSE:HILINFRA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-08-12",
-    "listing_price": "115.0"
-  },
-  "NSE:HINDADH": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "335.55"
-  },
   "NSE:HINDALCO": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:HINDALUMI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "106.95"
   },
   "NSE:HINDCOPPER": {
     "asset_class": "equity",
@@ -1515,13 +1063,6 @@
     "scope": "IPO",
     "listing_date": "2026-08-24",
     "listing_price": "60.25"
-  },
-  "NSE:HRYNSHP": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "100.95"
   },
   "NSE:HTEL": {
     "asset_class": "equity",
@@ -1634,26 +1175,12 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:INDOKEM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "610.0"
-  },
   "NSE:INDOMIM": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-07-30",
     "listing_price": "700.0"
-  },
-  "NSE:INDPRUD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "6200.0"
   },
   "NSE:INDUSINDBK": {
     "asset_class": "equity",
@@ -1669,13 +1196,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:INNOVISION": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-03-23",
-    "listing_price": "467.7"
   },
   "NSE:INTELLECT": {
     "asset_class": "equity",
@@ -1699,13 +1219,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:IPRINGLTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "129.0"
-  },
   "NSE:IRCTC": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -1717,13 +1230,6 @@
     "scope": "IPO",
     "listing_date": "2023-10-26",
     "listing_price": "477.25"
-  },
-  "NSE:ISTLTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "675.0"
   },
   "NSE:ITC": {
     "asset_class": "equity",
@@ -1737,26 +1243,12 @@
     "listing_date": "2025-01-29",
     "listing_price": "180.0"
   },
-  "NSE:ITL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "369.0"
-  },
   "NSE:JARO": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2025-09-30",
     "listing_price": "890.0"
-  },
-  "NSE:JENBURPH": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1042.6"
   },
   "NSE:JINDALSTEL": {
     "asset_class": "equity",
@@ -1766,9 +1258,7 @@
   "NSE:JIOFIN": {
     "asset_class": "equity",
     "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-08-31",
-    "listing_price": "241.7"
+    "scope": "F&O"
   },
   "NSE:JKCEMENT": {
     "asset_class": "equity",
@@ -1827,13 +1317,6 @@
     "listing_date": "2024-02-28",
     "listing_price": "365.0"
   },
-  "NSE:JYOTIRES": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "856.0"
-  },
   "NSE:KALAMANDIR": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -1847,48 +1330,6 @@
     "scope": "IPO",
     "listing_date": "2025-07-01",
     "listing_price": "414.0"
-  },
-  "NSE:KAMAHOLD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "2538.0"
-  },
-  "NSE:KAMANWALA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "17.9"
-  },
-  "NSE:KANCHI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "418.0"
-  },
-  "NSE:KANCOTEA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "50.8"
-  },
-  "NSE:KDGREEN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-09-03",
-    "listing_price": "52.51"
-  },
-  "NSE:KJMCFIN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "56.83"
   },
   "NSE:KMCSHIL": {
     "asset_class": "equity",
@@ -1916,47 +1357,12 @@
     "listing_date": "2024-11-14",
     "listing_price": "544.95"
   },
-  "NSE:KRYSTAL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-03-21",
-    "listing_price": "785.0"
-  },
-  "NSE:KSE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "195.0"
-  },
-  "NSE:KSHITIJPOL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-08-31",
-    "listing_price": "5.85"
-  },
   "NSE:KUSUMGAR": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-07-15",
     "listing_price": "569.0"
-  },
-  "NSE:LAHOTIOV": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "44.1"
-  },
-  "NSE:LAKSHMIMIL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "8505.0"
   },
   "NSE:LALITHAA": {
     "asset_class": "equity",
@@ -1969,13 +1375,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:LANCER": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "10.91"
   },
   "NSE:LASERPOWER": {
     "asset_class": "equity",
@@ -2029,26 +1428,12 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:LKPSEC": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "16.91"
-  },
   "NSE:LMW": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2024-10-10",
     "listing_price": "17300.0"
-  },
-  "NSE:LOTUSCHO": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "620.0"
   },
   "NSE:LT": {
     "asset_class": "equity",
@@ -2102,20 +1487,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:MAFATIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "137.0"
-  },
-  "NSE:MAKERSL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "164.6"
   },
   "NSE:MAMATA": {
     "asset_class": "equity",
@@ -2179,27 +1550,6 @@
     "listing_date": "2025-12-10",
     "listing_price": "162.5"
   },
-  "NSE:MEIL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-08-28",
-    "listing_price": "556.0"
-  },
-  "NSE:MERCANTILE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "19.0"
-  },
-  "NSE:MERCURYEV": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-06-02",
-    "listing_price": "36.86"
-  },
   "NSE:METROPOLIS": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2229,27 +1579,6 @@
     "listing_date": "2026-08-17",
     "listing_price": "690.0"
   },
-  "NSE:MINDTECK": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-08-31",
-    "listing_price": "152.0"
-  },
-  "NSE:MKEXIM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "58.65"
-  },
-  "NSE:MLKFOOD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "89.0"
-  },
   "NSE:MOBIKWIK": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2263,20 +1592,6 @@
     "scope": "IPO",
     "listing_date": "2025-11-14",
     "listing_price": "389.0"
-  },
-  "NSE:MODTHREAD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-02-14",
-    "listing_price": "21.0"
-  },
-  "NSE:MOHITE": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "2.8"
   },
   "NSE:MOLBIO": {
     "asset_class": "equity",
@@ -2309,33 +1624,12 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:MSL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "138.5"
-  },
   "NSE:MUFIN": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2023-11-06",
     "listing_price": "133.0"
-  },
-  "NSE:MUFTI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-12-27",
-    "listing_price": "282.35"
-  },
-  "NSE:MUKESHB": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "147.15"
   },
   "NSE:MUTHOOTFIN": {
     "asset_class": "equity",
@@ -2354,13 +1648,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:NATIONSTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "1419.5"
-  },
   "NSE:NAUKRI": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2378,31 +1665,10 @@
     "listing_date": "2023-08-31",
     "listing_price": "576.7"
   },
-  "NSE:NEAGI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-22",
-    "listing_price": "3400.0"
-  },
   "NSE:NESTLEIND": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:NICCOPAR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "77.0"
-  },
-  "NSE:NIRLON": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "540.0"
   },
   "NSE:NIVABUPA": {
     "asset_class": "equity",
@@ -2422,13 +1688,6 @@
     "scope": "IPO",
     "listing_date": "2024-09-24",
     "listing_price": "350.0"
-  },
-  "NSE:NTCIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "155.0"
   },
   "NSE:NTPC": {
     "asset_class": "equity",
@@ -2454,13 +1713,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:ODYCORP": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "6.93"
-  },
   "NSE:OFSS": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2472,13 +1724,6 @@
     "scope": "IPO",
     "listing_date": "2026-04-17",
     "listing_price": "186.0"
-  },
-  "NSE:ONEGLOBAL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "576.0"
   },
   "NSE:ONESOURCE": {
     "asset_class": "equity",
@@ -2505,13 +1750,6 @@
     "scope": "IPO",
     "listing_date": "2026-08-17",
     "listing_price": "393.95"
-  },
-  "NSE:OPTIFIN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "11.98"
   },
   "NSE:ORIENTTECH": {
     "asset_class": "equity",
@@ -2548,24 +1786,10 @@
     "listing_date": "2025-10-06",
     "listing_price": "225.0"
   },
-  "NSE:PACIFICI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "146.0"
-  },
   "NSE:PAGEIND": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:PANCHMAHQ": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "315.0"
   },
   "NSE:PANORAMA": {
     "asset_class": "equity",
@@ -2588,27 +1812,6 @@
     "listing_date": "2024-02-12",
     "listing_price": "186.0"
   },
-  "NSE:PARNAXLAB": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "108.03"
-  },
-  "NSE:PBMPOLY": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "63.5"
-  },
-  "NSE:PERMAGN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "832.0"
-  },
   "NSE:PERNIASPOP": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2630,13 +1833,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:PHOENXINTL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "32.95"
   },
   "NSE:PICCADIL": {
     "asset_class": "equity",
@@ -2669,13 +1865,6 @@
     "listing_date": "2024-03-05",
     "listing_price": "225.0"
   },
-  "NSE:PML": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "645.0"
-  },
   "NSE:PNB": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2688,36 +1877,15 @@
     "listing_date": "2024-09-17",
     "listing_price": "830.0"
   },
-  "NSE:POEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "150.1"
-  },
   "NSE:POLYCAB": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:POLYSPIN": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "33.77"
-  },
   "NSE:POWERGRID": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:PREMCO": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "420.0"
   },
   "NSE:PREMIERENE": {
     "asset_class": "equity",
@@ -2732,13 +1900,6 @@
     "scope": "IPO",
     "listing_date": "2026-09-04",
     "listing_price": "230.0"
-  },
-  "NSE:PRISMX": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "0.57"
   },
   "NSE:PROSTARM": {
     "asset_class": "equity",
@@ -2759,24 +1920,10 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:PYRAMID": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-08-31",
-    "listing_price": "164.1"
-  },
   "NSE:RAIN": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:RAJPALAYAM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "810.0"
   },
   "NSE:RAMBHAJO": {
     "asset_class": "equity",
@@ -2814,33 +1961,12 @@
     "listing_date": "2026-07-16",
     "listing_price": "169.99"
   },
-  "NSE:RRECL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "145.0"
-  },
   "NSE:RSL": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-03-19",
     "listing_price": "122.0"
-  },
-  "NSE:RTSPOWR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "98.19"
-  },
-  "NSE:RUBFILA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-08-08",
-    "listing_price": "96.0"
   },
   "NSE:SAATVIKGL": {
     "asset_class": "equity",
@@ -2849,26 +1975,12 @@
     "listing_date": "2025-09-26",
     "listing_price": "465.0"
   },
-  "NSE:SAB": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "170.0"
-  },
   "NSE:SAGILITY": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2024-11-12",
     "listing_price": "31.06"
-  },
-  "NSE:SAICAPI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "149.95"
   },
   "NSE:SAIL": {
     "asset_class": "equity",
@@ -2881,13 +1993,6 @@
     "scope": "IPO",
     "listing_date": "2024-12-18",
     "listing_price": "650.0"
-  },
-  "NSE:SAMBANDAM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-19",
-    "listing_price": "97.7"
   },
   "NSE:SAMHI": {
     "asset_class": "equity",
@@ -2917,20 +2022,6 @@
     "listing_date": "2024-09-13",
     "listing_price": "4670.0"
   },
-  "NSE:SAYAJIHOTL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-22",
-    "listing_price": "274.95"
-  },
-  "NSE:SAYAJIIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "125.0"
-  },
   "NSE:SBICARD": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -2953,41 +2044,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:SCILAL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-03-19",
-    "listing_price": "46.7"
-  },
-  "NSE:SECMARK": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-10-16",
-    "listing_price": "113.0"
-  },
-  "NSE:SEKURITIND": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "122.5"
-  },
-  "NSE:SEMAC": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-09-21",
-    "listing_price": "1950.0"
-  },
-  "NSE:SGLRES": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "2.73"
-  },
   "NSE:SGRL": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3002,13 +2058,6 @@
     "listing_date": "2026-08-25",
     "listing_price": "103.3"
   },
-  "NSE:SHERVANI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "300.05"
-  },
   "NSE:SHILCTECH": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3016,40 +2065,12 @@
     "listing_date": "2025-11-24",
     "listing_price": "4292.9"
   },
-  "NSE:SHILGRAVQ": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "157.8"
-  },
   "NSE:SHIPROCKET": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-08-19",
     "listing_price": "131.0"
-  },
-  "NSE:SHIVAAGRO": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "37.2"
-  },
-  "NSE:SHIVACEM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "17.94"
-  },
-  "NSE:SHRADDHA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "158.0"
   },
   "NSE:SHREECEM": {
     "asset_class": "equity",
@@ -3063,13 +2084,6 @@
     "listing_date": "2025-08-26",
     "listing_price": "270.0"
   },
-  "NSE:SHRIKRISH": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "40.0"
-  },
   "NSE:SHRINGARMS": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3082,33 +2096,12 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:SHRJAGP": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "801.25"
-  },
   "NSE:SHUKRAPHAR": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-08-14",
     "listing_price": "42.04"
-  },
-  "NSE:SHYAMTEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-08-31",
-    "listing_price": "7.1"
-  },
-  "NSE:SIEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "30.0"
   },
   "NSE:SIEMENS": {
     "asset_class": "equity",
@@ -3121,20 +2114,6 @@
     "scope": "IPO",
     "listing_date": "2023-09-27",
     "listing_price": "444.0"
-  },
-  "NSE:SIMPLXREA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "130.11"
-  },
-  "NSE:SINCLAIR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-04-10",
-    "listing_price": "137.0"
   },
   "NSE:SKYWAYS": {
     "asset_class": "equity",
@@ -3150,13 +2129,6 @@
     "listing_date": "2025-07-17",
     "listing_price": "435.0"
   },
-  "NSE:SONAL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-21",
-    "listing_price": "99.8"
-  },
   "NSE:SRF": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3169,26 +2141,12 @@
     "listing_date": "2024-04-03",
     "listing_price": "215.25"
   },
-  "NSE:SRTL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-03-02",
-    "listing_price": "68.0"
-  },
   "NSE:STANLEY": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2024-06-28",
     "listing_price": "494.95"
-  },
-  "NSE:STLSTRINF": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "22.78"
   },
   "NSE:STUDDS": {
     "asset_class": "equity",
@@ -3197,20 +2155,6 @@
     "listing_date": "2025-11-07",
     "listing_price": "565.0"
   },
-  "NSE:SUDARCOLOR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-01-20",
-    "listing_price": "417.05"
-  },
-  "NSE:SUMEDHA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "39.27"
-  },
   "NSE:SUMEETINDS": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3218,45 +2162,10 @@
     "listing_date": "2023-09-01",
     "listing_price": "2.3"
   },
-  "NSE:SUNCLAY": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2023-12-29",
-    "listing_price": "1439.8"
-  },
-  "NSE:SUNDROP": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-03-28",
-    "listing_price": "805.6"
-  },
-  "NSE:SUNLOC": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "71.0"
-  },
   "NSE:SUNPHARMA": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:SUNRAKSHAK": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "379.0"
-  },
-  "NSE:SUNSHIEL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1275.0"
   },
   "NSE:SUNSHINE": {
     "asset_class": "equity",
@@ -3277,33 +2186,12 @@
     "listing_date": "2023-12-26",
     "listing_price": "340.0"
   },
-  "NSE:SURAJLTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-08-29",
-    "listing_price": "345.0"
-  },
-  "NSE:SVGLOBAL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "130.0"
-  },
   "NSE:SWANCORP": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2025-09-04",
     "listing_price": "462.0"
-  },
-  "NSE:SWARNSAR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "36.95"
   },
   "NSE:SWIGGY": {
     "asset_class": "equity",
@@ -3323,13 +2211,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:TANAA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "308.0"
   },
   "NSE:TARIL": {
     "asset_class": "equity",
@@ -3408,33 +2289,12 @@
     "listing_date": "2025-11-19",
     "listing_price": "505.0"
   },
-  "NSE:TERAI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "137.5"
-  },
   "NSE:TGVSL": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-08-17",
     "listing_price": "107.49"
-  },
-  "NSE:THACKER": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "1033.45"
-  },
-  "NSE:THAKDEV": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-21",
-    "listing_price": "128.9"
   },
   "NSE:THELEELA": {
     "asset_class": "equity",
@@ -3469,31 +2329,10 @@
     "listing_date": "2025-10-24",
     "listing_price": "406.95"
   },
-  "NSE:TOLINS": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-09-16",
-    "listing_price": "228.0"
-  },
   "NSE:TORNTPHARM": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:TOYAMSL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "0.65"
-  },
-  "NSE:TRANSCOR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "24.51"
   },
   "NSE:TRANSRAILL": {
     "asset_class": "equity",
@@ -3514,13 +2353,6 @@
     "exchange": "NSE",
     "scope": "F&O"
   },
-  "NSE:TRITONV": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1150.0"
-  },
   "NSE:TSFINV": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3534,13 +2366,6 @@
     "scope": "IPO",
     "listing_date": "2026-06-29",
     "listing_price": "134.9"
-  },
-  "NSE:TUTIALKA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "56.86"
   },
   "NSE:TVSMOTOR": {
     "asset_class": "equity",
@@ -3558,13 +2383,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:UDAYJEW": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "140.3"
   },
   "NSE:ULTRACEMCO": {
     "asset_class": "equity",
@@ -3592,13 +2410,6 @@
     "listing_date": "2024-06-07",
     "listing_price": "1306.45"
   },
-  "NSE:UPHOT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "1448.0"
-  },
   "NSE:UPL": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3611,33 +2422,12 @@
     "listing_date": "2025-09-17",
     "listing_price": "162.25"
   },
-  "NSE:VADILENT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "10002.0"
-  },
   "NSE:VAML": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-06-15",
     "listing_price": "522.0"
-  },
-  "NSE:VASUPRADA": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "96.03"
-  },
-  "NSE:VEDAVAAG": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "19.44"
   },
   "NSE:VEDL": {
     "asset_class": "equity",
@@ -3665,26 +2455,12 @@
     "listing_date": "2024-12-30",
     "listing_price": "716.0"
   },
-  "NSE:VGCL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "61.5"
-  },
   "NSE:VIDYAWIRES": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2025-12-10",
     "listing_price": "52.0"
-  },
-  "NSE:VIJSOLX": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "710.0"
   },
   "NSE:VIKRAMSOLR": {
     "asset_class": "equity",
@@ -3700,26 +2476,12 @@
     "listing_date": "2025-09-03",
     "listing_price": "99.0"
   },
-  "NSE:VIRAT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "350.0"
-  },
   "NSE:VISL": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "IPO",
     "listing_date": "2026-06-15",
     "listing_price": "20.0"
-  },
-  "NSE:VIVOBIOT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "20.16"
   },
   "NSE:VIYASH": {
     "asset_class": "equity",
@@ -3735,13 +2497,6 @@
     "listing_date": "2024-12-18",
     "listing_price": "104.0"
   },
-  "NSE:VMSTMT": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2025-09-24",
-    "listing_price": "104.9"
-  },
   "NSE:VOEPL": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3756,38 +2511,10 @@
     "listing_date": "2026-06-15",
     "listing_price": "38.0"
   },
-  "NSE:VOITHPAPR": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "1456.0"
-  },
   "NSE:VOLTAS": {
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:VRAJ": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-07-03",
-    "listing_price": "240.0"
-  },
-  "NSE:VSTL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-02-20",
-    "listing_price": "425.0"
-  },
-  "NSE:VTMLTD": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "47.0"
   },
   "NSE:WAAREEENER": {
     "asset_class": "equity",
@@ -3803,20 +2530,6 @@
     "listing_date": "2025-04-09",
     "listing_price": "884.95"
   },
-  "NSE:WARDINMOBI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-17",
-    "listing_price": "6.5"
-  },
-  "NSE:WCIL": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2024-09-24",
-    "listing_price": "171.0"
-  },
   "NSE:WELSPUNLIV": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3830,13 +2543,6 @@
     "scope": "IPO",
     "listing_date": "2025-10-10",
     "listing_price": "650.0"
-  },
-  "NSE:WHBRADY": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "505.8"
   },
   "NSE:WHIRLPOOL": {
     "asset_class": "equity",
@@ -3855,13 +2561,6 @@
     "listing_date": "2026-07-30",
     "listing_price": "136.0"
   },
-  "NSE:YOGI": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-08-18",
-    "listing_price": "157.45"
-  },
   "NSE:ZAGGLE": {
     "asset_class": "equity",
     "exchange": "NSE",
@@ -3873,13 +2572,6 @@
     "asset_class": "equity",
     "exchange": "NSE",
     "scope": "F&O"
-  },
-  "NSE:ZSARACOM": {
-    "asset_class": "equity",
-    "exchange": "NSE",
-    "scope": "IPO",
-    "listing_date": "2026-04-20",
-    "listing_price": "9499.95"
   },
   "NSE:ZYDUSLIFE": {
     "asset_class": "equity",

@@ -3,7 +3,6 @@
   "classic_expansion_sweep": true,
   "consolidation_reversal_sweep": true,
   "daily_bias_invalidation": true,
-  "daily_fvg_sweep": false,
   "ema5_sweep": false,
   "inside_bar_pattern_daily_sweep": false,
   "intraweek_reversal_sweep": true,

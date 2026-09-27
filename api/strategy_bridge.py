@@ -29,7 +29,6 @@ from weekly_profile_tracker import ProfileTrackerStore  # noqa: E402
 
 CORE_STRATEGIES = [
     ("inside_bar_pattern_daily_sweep", "Inside Bar Pattern"),
-    ("daily_fvg_sweep", "Daily FVG Sweep"),
     ("ema5_sweep", "EMA5 Sweep"),
     ("multi_timeframe_bias", "Multi-TimeFrame Bias"),
     ("daily_bias_invalidation", "Daily Bias Invalidation"),
