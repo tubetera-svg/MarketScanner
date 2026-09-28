@@ -16,7 +16,7 @@ type Automation = {
   scan_scheduler: { enabled: boolean; interval_minutes: number };
   silver_bullet_auto: { enabled: boolean };
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
-  data_auto_sync: { enabled: boolean; lookback_days: number };
+  data_auto_sync: { enabled: boolean; lookback_days: number; interval_hours: number };
   ltf_confirmation: { enabled: boolean };
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
@@ -72,17 +72,17 @@ function Switch({ on, onChange, label, disabled }: { on: boolean; onChange: (nex
   );
 }
 
-function NumberField({ value, min, max, unit, onCommit }: { value: number; min: number; max: number; unit: string; onCommit: (next: number) => void }) {
+function NumberField({ value, min, max, unit, step = 1, onCommit }: { value: number; min: number; max: number; unit: string; step?: number; onCommit: (next: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   const commit = () => {
-    const parsed = Math.max(min, Math.min(max, Math.round(Number(draft)) || value));
+    const parsed = Math.max(min, Math.min(max, Math.round(Number(draft) / step) * step || value));
     setDraft(String(parsed));
     if (parsed !== value) onCommit(parsed);
   };
   return (
     <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--muted)" }}>
-      <input type="number" min={min} max={max} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+      <input type="number" min={min} max={max} step={step} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && commit()}
         style={{ width: 64, height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace" }} />
       {unit}
@@ -187,6 +187,7 @@ export default function SettingsPage() {
               <Switch label="IPO scanner" on={auto.ipo_scanner.enabled} onChange={(v) => patchAuto("ipo_scanner", { enabled: v })} />
             </Row>
             <Row title="Market-data auto-sync" hint={`Daily OHLC sync per market after its bar is final — ${stateNote(status.data_auto_sync.running, status.data_auto_sync.last_run_at, status.data_auto_sync.last_error)}`}>
+              <NumberField value={auto.data_auto_sync.interval_hours} min={0.25} max={24} step={0.25} unit="h interval" onCommit={(v) => patchAuto("data_auto_sync", { interval_hours: v })} />
               <NumberField value={auto.data_auto_sync.lookback_days} min={1} max={120} unit="days" onCommit={(v) => patchAuto("data_auto_sync", { lookback_days: v })} />
               <Switch label="Market-data auto-sync" on={auto.data_auto_sync.enabled} onChange={(v) => patchAuto("data_auto_sync", { enabled: v })} />
             </Row>

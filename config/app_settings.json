@@ -2,6 +2,7 @@
   "automation": {
     "data_auto_sync": {
       "enabled": true,
+      "interval_hours": 4.0,
       "lookback_days": 1
     },
     "ipo_scanner": {
@@ -10,7 +11,7 @@
       "lookback_days": 7
     },
     "ltf_confirmation": {
-      "enabled": true
+      "enabled": false
     },
     "scan_scheduler": {
       "enabled": false,

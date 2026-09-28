@@ -39,13 +39,13 @@ type AutoSyncStatus = {
   running: boolean;
   syncing: boolean;
   tick_minutes: number;
+  interval_hours: number;
   lookback_days: number;
   last_run_at: string | null;
   last_error: string | null;
   run_count: number;
   markets: Record<string, AutoSyncMarket>;
 };
-const AUTO_SYNC_PREF_KEY = "marketScanner.autoSync";
 type SilverBulletSignal = {
   id: string;
   symbol: string;
@@ -633,7 +633,7 @@ export default function Home() {
 
   const autoSyncTitle = autoSync
     ? [
-        `Auto-sync ${autoSync.running ? "on" : "off"} — checks every ${autoSync.tick_minutes} min; each market syncs once its daily bar is final (NSE 17:00 IST, forex/commodities 17:00 New York, crypto 00:00 UTC = 05:30 IST).`,
+        `Auto-sync ${autoSync.running ? "on" : "off"} — checks every ${autoSync.interval_hours} h (set in Settings); each market syncs once its daily bar is final (NSE 17:00 IST, forex/commodities 17:00 New York, crypto 00:00 UTC = 05:30 IST).`,
         ...Object.entries(autoSync.markets).map(([source, market]) =>
           `${source}: last synced ${market.last_synced_session ?? "—"}, latest final ${market.latest_final_session ?? "—"}${market.last_result ? ` (${market.last_result})` : ""}`),
         ...(autoSync.last_error ? [`Error: ${autoSync.last_error}`] : []),
@@ -651,15 +651,15 @@ export default function Home() {
   const toggleAutoSync = async () => {
     const enable = !autoSync?.running;
     try {
-      const response = await fetch(`${API}/api/market-data/auto-sync/${enable ? "start" : "stop"}`, {
-        method: "POST",
+      // Persisted in app settings so it re-arms on API boot without a page open.
+      const response = await fetch(`${API}/api/settings`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: enable ? "{}" : undefined,
+        body: JSON.stringify({ automation: { data_auto_sync: { enabled: enable } } }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(apiErrorMessage(data.detail, "Could not change auto-sync"));
-      setAutoSync(data);
-      try { window.localStorage.setItem(AUTO_SYNC_PREF_KEY, enable ? "on" : "off"); } catch {}
+      setAutoSync(data.status.data_auto_sync);
       setMessage(enable ? "Auto-sync on — NSE after bhavcopy (17:00 IST), forex/commodities after 17:00 New York, crypto after 00:00 UTC" : "Auto-sync stopped");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not change auto-sync");
@@ -1011,17 +1011,9 @@ export default function Home() {
     }).catch(() => setMessage("API unavailable. Start FastAPI on port 8000."));
   }, []);
 
-  // Auto-sync runs server-side; poll its status and re-arm it after an API
-  // restart when this browser last left it on.
+  // Auto-sync runs server-side (armed on API boot from app settings); poll its status.
   useEffect(() => {
-    let prefOn = false;
-    try { prefOn = window.localStorage.getItem(AUTO_SYNC_PREF_KEY) === "on"; } catch {}
-    refreshAutoSync().then((data) => {
-      if (prefOn && !data.running) {
-        fetch(`${API}/api/market-data/auto-sync/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
-          .then((response) => response.json()).then(setAutoSync).catch(() => {});
-      }
-    }).catch(() => {});
+    refreshAutoSync().catch(() => {});
     const id = window.setInterval(() => { refreshAutoSync().catch(() => {}); }, 60000);
     return () => window.clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -312,6 +312,11 @@ if barstate.islast
 //  AM SILVER BULLET — added, commodities & crypto gated
 //  Framework hour range -> liquidity sweep in the trade window -> CISD /
 //  displacement / FVG confirmation -> stop beyond sweep, target opposite side.
+//  Defaults mirror src/silver_bullet.py (use a 5m chart): first displacement
+//  FVG whose middle candle is the sweep bar or later and whose third candle
+//  closes back inside the range; entry at the FVG edge nearest price (Proximal),
+//  stop = swing extreme since the sweep, no buffer / R:R filter. A bar taking
+//  both sides, or the target side running before confirmation, voids the session.
 //  Signal-only: this is an indicator, so it plots/labels/alerts — it does not
 //  place trades. Pair with a strategy script if you want auto-execution.
 // ============================================================================
@@ -328,19 +333,18 @@ sb_tz        = input.string("America/New_York", "SB: Timezone", group = gSB)
 sb_frameSess = input.session("0900-1000:1234567", "SB: Framework hour", group = gSB)
 sb_tradeSess = input.session("1000-1100:1234567", "SB: Trade window", group = gSB)
 
-sb_confMode   = input.string("CISD", "SB: Confirmation", options = ["CISD", "Displacement close", "FVG"], group = gSB)
+sb_confMode   = input.string("FVG", "SB: Confirmation", options = ["CISD", "Displacement close", "FVG"], group = gSB)
 sb_sameBarOK  = input.bool(false, "SB: Allow confirmation on sweep candle", group = gSB)
 sb_useFvgLmt  = input.bool(true,  "SB: Use FVG fill as entry price", group = gSB)
-sb_fvgFill    = input.string("CE", "SB: FVG fill level", options = ["Proximal", "CE", "Distal"], group = gSB)
+sb_fvgFill    = input.string("Proximal", "SB: FVG fill level", options = ["Proximal", "CE", "Distal"], group = gSB)
 sb_minBodyAtr = input.float(0.35, "SB: Min displacement body (× ATR14)", minval = 0.0, step = 0.05, group = gSB)
 
-sb_stopBuf    = input.float(0.05, "SB: Stop buffer (% of range)", minval = 0.0, step = 0.01, group = gSB)
-sb_minRR      = input.float(1.5,  "SB: Minimum R:R", minval = 0.0, step = 0.1, group = gSB)
+sb_stopBuf    = input.float(0.0, "SB: Stop buffer (% of range)", minval = 0.0, step = 0.01, group = gSB)
+sb_minRR      = input.float(0.0,  "SB: Minimum R:R", minval = 0.0, step = 0.1, group = gSB)
 
 sb_showRange  = input.bool(true, "SB: Draw framework range", group = gSB)
 sb_showZone   = input.bool(true, "SB: Shade windows",        group = gSB)
 sb_showLvls   = input.bool(true, "SB: Draw stop / target lines", group = gSB)
-sb_warnTf     = input.bool(true, "SB: Show 'wrong timeframe' notice", group = gSB)
 
 // Only run/display on 1H and below — the model is an intraday session play
 // and produces meaningless boxes/signals on daily+ bars.
@@ -361,6 +365,7 @@ var bool  sb_ready    = false
 var int   sb_bias     = 0
 var float sb_sweepPx  = na
 var bool  sb_taken    = false
+var bool  sb_void     = false
 var int   sb_sweepBar = na
 var box   sb_rngBox   = na
 var float sb_upRunOpen = na
@@ -401,6 +406,7 @@ if sb_active and sb_frameStart
     sb_bias     := 0
     sb_sweepPx  := na
     sb_taken    := false
+    sb_void     := false
     sb_entryPx  := na
     sb_stopPx   := na
     sb_targetPx := na
@@ -421,15 +427,19 @@ if sb_active and sb_ready and not na(sb_rngBox) and sb_inWin
 
 sb_fRange = sb_fHigh - sb_fLow
 
-if sb_active and sb_ready and sb_inWin and not sb_taken
+if sb_active and sb_ready and sb_inWin and not sb_taken and not sb_void
     sb_hitHigh = high > sb_fHigh
     sb_hitLow  = low  < sb_fLow
-    if sb_bias == 0 and (sb_hitHigh or sb_hitLow)
-        sb_exUp = high - sb_fHigh
-        sb_exDn = sb_fLow - low
-        sb_bias     := sb_hitHigh and (not sb_hitLow or sb_exUp >= sb_exDn) ? -1 : 1
-        sb_sweepPx  := sb_bias == -1 ? high : low
+    if sb_hitHigh and sb_hitLow
+        // Both liquidity pools taken in one bar: no draw left -> session void.
+        sb_void := true
+    else if sb_bias == 0 and (sb_hitHigh or sb_hitLow)
+        sb_bias     := sb_hitHigh ? -1 : 1
+        sb_sweepPx  := sb_hitHigh ? high : low
         sb_sweepBar := bar_index
+    else if (sb_bias == -1 and sb_hitLow) or (sb_bias == 1 and sb_hitHigh)
+        // Target side ran before the setup confirmed -> session void.
+        sb_void := true
     else if sb_bias == -1
         sb_sweepPx := math.max(sb_sweepPx, high)
     else if sb_bias == 1
@@ -455,11 +465,12 @@ sb_bullFvg = low  > high[2]
 sb_fvgShortPx = sb_bearFvg ? (sb_fvgFill == "Proximal" ? high : sb_fvgFill == "Distal" ? low[2] : (high + low[2]) / 2) : na
 sb_fvgLongPx  = sb_bullFvg ? (sb_fvgFill == "Proximal" ? low  : sb_fvgFill == "Distal" ? high[2] : (low + high[2]) / 2) : na
 
-sb_confShort = sb_confMode == "CISD" ? sb_cisdShort : sb_confMode == "Displacement close" ? sb_dispShort : sb_bearFvg
-sb_confLong  = sb_confMode == "CISD" ? sb_cisdLong  : sb_confMode == "Displacement close" ? sb_dispLong  : sb_bullFvg
+// FVG mode: the third candle must close back inside the range.
+sb_confShort = sb_confMode == "CISD" ? sb_cisdShort : sb_confMode == "Displacement close" ? sb_dispShort : sb_bearFvg and close < sb_fHigh
+sb_confLong  = sb_confMode == "CISD" ? sb_cisdLong  : sb_confMode == "Displacement close" ? sb_dispLong  : sb_bullFvg and close > sb_fLow
 
 sb_afterSweep = not na(sb_sweepBar) and (sb_sameBarOK ? bar_index >= sb_sweepBar : bar_index > sb_sweepBar)
-sb_canTrade   = sb_active and sb_symOK and sb_ready and sb_inWin and not sb_taken and sb_afterSweep and sb_fRange > 0
+sb_canTrade   = sb_active and sb_symOK and sb_ready and sb_inWin and not sb_taken and not sb_void and sb_afterSweep and sb_fRange > 0
 
 sb_shortSetup = sb_canTrade and sb_bias == -1 and sb_confShort
 sb_longSetup  = sb_canTrade and sb_bias ==  1 and sb_confLong
@@ -503,9 +514,6 @@ bgcolor(sb_active and sb_showZone and sb_inWin   ? color.new(color.blue, 93)   :
 bgcolor(sb_active and sb_showZone and sb_inFrame ? color.new(color.orange, 94) : na, title = "SB Framework hour")
 plotshape(sb_shortSignal, "SB Short signal", shape.triangledown, location.abovebar, color.red,   size = size.small, text = "SB")
 plotshape(sb_longSignal,  "SB Long signal",  shape.triangleup,   location.belowbar, color.green, size = size.small, text = "SB")
-
-if barstate.islast and sb_enabled and sb_warnTf and not sb_tfOK
-    label.new(bar_index, high, "SB: hidden on this timeframe\n(1H and below only)", style = label.style_label_left, color = color.new(color.gray, 20), textcolor = color.white, size = size.small)
 
 alertcondition(sb_longSignal,  "SB Long",  "{{ticker}} Silver Bullet LONG signal")
 alertcondition(sb_shortSignal, "SB Short", "{{ticker}} Silver Bullet SHORT signal")
@@ -568,7 +576,6 @@ suite_mtfMinConfluence = input.int(2, "MTF Bias: min confluence (of 3)", minval 
 suite_pbMeanBody = input.bool(false, "Propulsion Blocks: mean = body midpoint (off = full range)", group = gSuite)
 suite_psSwingLeft  = input.int(2, "Protected Swings: pivot left bars", minval = 1, group = gSuite)
 suite_psSwingRight = input.int(2, "Protected Swings: pivot right bars", minval = 1, group = gSuite)
-suite_warnTf = input.bool(true, "Suite: show 'switch to Daily chart' notice", group = gSuite)
 
 dailyOnly = timeframe.isdaily
 
@@ -597,10 +604,6 @@ f_clampLeft(setupBar) => math.max(setupBar, bar_index - 400)
 [wvd_curH, wvd_curL] = request.security(syminfo.tickerid, "W", [high, low])
 [wvd_w1H, wvd_w1L] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
 [mtf_pmH, mtf_pmL] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
-
-if not dailyOnly and suite_warnTf and barstate.islast
-    label.new(bar_index, high, "Strategy Suite: switch to the Daily chart\n(EMA5/MTF/Inside Bar/Protected Swings/\nPropulsion Blocks are daily-bar strategies)",
-         style = label.style_label_left, color = color.new(color.gray, 20), textcolor = color.white, size = size.small)
 
 // ----------------------------------------------------------------------------
 // Multi-Timeframe Bias — src/all_strategy.py:1435 _compute_multi_timeframe_bias

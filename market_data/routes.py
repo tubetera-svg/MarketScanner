@@ -139,6 +139,7 @@ class DeleteRecordsRequest(BaseModel):
 
 class AutoSyncStartRequest(BaseModel):
     lookback_days: Optional[int] = Field(default=None, ge=1, le=120)
+    interval_hours: Optional[float] = Field(default=None, ge=0.25, le=24)
 
 
 def _auto_sync():
@@ -161,7 +162,7 @@ def auto_sync_status() -> dict:
 
 @router.post("/api/market-data/auto-sync/start")
 def auto_sync_start(request: AutoSyncStartRequest) -> dict:
-    return _auto_sync().start(request.lookback_days)
+    return _auto_sync().start(request.lookback_days, request.interval_hours)
 
 
 @router.post("/api/market-data/auto-sync/stop")

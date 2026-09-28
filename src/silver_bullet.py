@@ -71,11 +71,18 @@ def evaluate_am_silver_bullet(
     *,
     trading_date: date,
     now: datetime | None = None,
+    bar_minutes: int = 5,
 ) -> SilverBulletSignal | None:
     """Return the first confirmed signal visible at ``now`` for one session.
 
-    The 09:00-10:00 range and 10:00-11:00 New York window are evaluated using
-    completed bars only. A later bar cannot alter an already returned signal.
+    Range = the 09:00-10:00 New York hour. Inside 10:00-11:00 New York, once one
+    side of the range is swept, the setup confirms on the first fair value gap
+    whose middle (displacement) candle is the sweep bar or later and whose third
+    candle closes back inside the range. Entry is the FVG edge nearest price,
+    the stop is the swing extreme since the sweep, and the target is the
+    opposite side of the range. A single bar sweeping both sides, or a sweep of
+    the target side before confirmation, voids the session. Completed bars only,
+    so a later bar cannot alter an already returned signal.
     """
     if not is_commodity_symbol(symbol):
         return None
@@ -86,8 +93,8 @@ def evaluate_am_silver_bullet(
     current = _timestamp(now or datetime.now(NEW_YORK))
     if current is None:
         return None
-    # Exclude the currently forming 15-minute candle; its close is not known yet.
-    frame = frame[frame["timestamp"] + pd.Timedelta(minutes=15) <= current]
+    # Exclude the currently forming candle; its close is not known yet.
+    frame = frame[frame["timestamp"] + pd.Timedelta(minutes=bar_minutes) <= current]
     range_bars = frame[(frame["timestamp"].dt.time >= time(9, 0)) & (frame["timestamp"].dt.time < time(10, 0))]
     window = frame[(frame["timestamp"].dt.time >= time(10, 0)) & (frame["timestamp"].dt.time < time(11, 0))]
     if len(range_bars) == 0 or len(window) == 0:
@@ -95,22 +102,39 @@ def evaluate_am_silver_bullet(
 
     range_high = float(range_bars["high"].max())
     range_low = float(range_bars["low"].min())
-    for _, bar in window.iterrows():
-        high = float(bar["high"])
-        low = float(bar["low"])
-        close = float(bar["close"])
-        if low < range_low and close > range_low:
+    bars = window[["timestamp", "high", "low", "close"]].to_dict("records")
+    swept: str | None = None
+    sweep_index = 0
+    for index, bar in enumerate(bars):
+        took_low = float(bar["low"]) < range_low
+        took_high = float(bar["high"]) > range_high
+        if took_low and took_high:
+            return None  # both liquidity pools taken in one bar: no draw left
+        if swept is None:
+            if not (took_low or took_high):
+                continue
+            swept, sweep_index = ("bullish", index) if took_low else ("bearish", index)
+        elif (swept == "bullish" and took_high) or (swept == "bearish" and took_low):
+            return None  # target side ran before the setup confirmed
+        # FVG = candles (index-2, index-1, index); the displacement candle
+        # (index-1) must be the sweep bar or later.
+        if index < 2 or index - 1 < sweep_index:
+            continue
+        first, third = bars[index - 2], bar
+        if swept == "bullish" and float(third["low"]) > float(first["high"]) and float(third["close"]) > range_low:
+            fvg_low, fvg_high = float(first["high"]), float(third["low"])
             return SilverBulletSignal(
-                symbol=symbol.upper(), direction="bullish", signal_time=bar["timestamp"].isoformat(),
-                range_high=range_high, range_low=range_low, entry=close,
-                stop_loss=low, target=range_high,
-                note="10:00-11:00 NY sell-side sweep and displacement back above 09:00 range low",
+                symbol=symbol.upper(), direction="bullish", signal_time=third["timestamp"].isoformat(),
+                range_high=range_high, range_low=range_low, entry=fvg_high,
+                stop_loss=min(float(item["low"]) for item in bars[sweep_index:index + 1]), target=range_high,
+                note=f"10:00-11:00 NY sell-side sweep, displacement FVG {fvg_low:g}-{fvg_high:g} back above 09:00 range low",
             )
-        if high > range_high and close < range_high:
+        if swept == "bearish" and float(third["high"]) < float(first["low"]) and float(third["close"]) < range_high:
+            fvg_low, fvg_high = float(third["high"]), float(first["low"])
             return SilverBulletSignal(
-                symbol=symbol.upper(), direction="bearish", signal_time=bar["timestamp"].isoformat(),
-                range_high=range_high, range_low=range_low, entry=close,
-                stop_loss=high, target=range_low,
-                note="10:00-11:00 NY buy-side sweep and displacement back below 09:00 range high",
+                symbol=symbol.upper(), direction="bearish", signal_time=third["timestamp"].isoformat(),
+                range_high=range_high, range_low=range_low, entry=fvg_low,
+                stop_loss=max(float(item["high"]) for item in bars[sweep_index:index + 1]), target=range_low,
+                note=f"10:00-11:00 NY buy-side sweep, displacement FVG {fvg_low:g}-{fvg_high:g} back below 09:00 range high",
             )
     return None

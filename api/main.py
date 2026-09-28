@@ -433,12 +433,17 @@ class ScanScheduler:
 
 
 class SilverBulletLiveScanner:
-    """Poll commodity 15-minute bars during the New York AM Silver Bullet window."""
+    """Poll commodity 5-minute bars during the New York AM Silver Bullet window."""
 
     NEW_YORK = ZoneInfo("America/New_York")
     AM_WINDOW_START_HOUR = 10  # 10:00 New York: AM Silver Bullet window opens
     AM_WINDOW_END_HOUR = 11  # 11:00 New York: window closed, live scan retires
-    AUTO_CHECK_SECONDS = 60 * 3  # confirm the live scan is running every 3 minutes (scan poll cadence)
+    AUTO_CHECK_SECONDS = 60 * 3  # confirm the live scan is running every 3 minutes
+    BAR_SECONDS = 60 * 5  # scan cadence: once per 5-minute bar close
+    BAR_CLOSE_DELAY_SECONDS = 20  # let TradingView publish the just-closed bar
+    # One last scan just after 11:00 New York evaluates the 10:55 bar, which only
+    # closes at 11:00 (the historical test sees it too, via now=11:00).
+    FINAL_SCAN_GRACE = timedelta(minutes=5)
 
     def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
@@ -484,7 +489,7 @@ class SilverBulletLiveScanner:
     async def _auto_loop(self) -> None:
         """Confirm every few minutes that a live scan is running in the NY AM window.
 
-        The scan itself is unchanged (15-minute bars polled inside 10:00-11:00 NY);
+        The scan itself is unchanged (5-minute bars polled inside 10:00-11:00 NY);
         this loop only decides *whether* a live scan should be running. It is a
         fallback: an already running scan is never interrupted, and a scan the user
         stopped for this session stays stopped. Once 11:00 New York has passed it
@@ -596,7 +601,10 @@ class SilverBulletLiveScanner:
                 # 10:00 New York.
                 self.next_check_at = None
                 return
-            seconds = 180 - (datetime.now(self.NEW_YORK).second % 180)
+            # Wake just after the next 5-minute bar close.
+            current = datetime.now(self.NEW_YORK)
+            offset = (current.minute * 60 + current.second) % self.BAR_SECONDS
+            seconds = (self.BAR_SECONDS + self.BAR_CLOSE_DELAY_SECONDS - offset) % self.BAR_SECONDS or self.BAR_SECONDS
             self.next_check_at = (datetime.now(self.NEW_YORK) + timedelta(seconds=seconds)).isoformat()
             await asyncio.sleep(max(1, seconds))
 
@@ -604,14 +612,16 @@ class SilverBulletLiveScanner:
         """Scan once if New York wall time is inside the AM window; return ``now``.
 
         The caller retires the scan once the window has closed, so the 10:00-11:00
-        New York session is never scanned outside its own hours.
+        New York session is never scanned outside its own hours (plus one final
+        scan within ``FINAL_SCAN_GRACE`` of 11:00 for the last bar's close).
         """
         now = datetime.now(self.NEW_YORK)
         self.last_check_at = now.isoformat()
         if now.weekday() >= 5:
             self.last_error = None
             return now
-        if now.hour < self.AM_WINDOW_START_HOUR or now.hour >= self.AM_WINDOW_END_HOUR:
+        window_end = now.replace(hour=self.AM_WINDOW_END_HOUR, minute=0, second=0, microsecond=0)
+        if now.hour < self.AM_WINDOW_START_HOUR or now >= window_end + self.FINAL_SCAN_GRACE:
             self.last_error = None
             return now
         await self._scan(now.date(), now)
@@ -630,11 +640,11 @@ class SilverBulletLiveScanner:
                     symbol,
                     scan_date,
                     scan_date,
-                    "15m",
+                    "5m",
                     symbol.split(":", 1)[0] if ":" in symbol else None,
                 )
                 if not rows:
-                    failures.append(f"{symbol}: TradingView returned 0 15m bars for {scan_date}")
+                    failures.append(f"{symbol}: TradingView returned 0 5m bars for {scan_date}")
                     continue
                 signal = evaluate_am_silver_bullet(symbol, rows, trading_date=scan_date, now=now)
                 if signal is None:
@@ -1232,8 +1242,9 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
     syncer = _auto_sync()
     sync_running = syncer.status()["running"]
     if sync["enabled"]:
-        if not sync_running or syncer.lookback_days != sync["lookback_days"]:
-            syncer.start(sync["lookback_days"])
+        changed = (syncer.lookback_days, syncer.interval_hours) != (sync["lookback_days"], sync["interval_hours"])
+        if not sync_running or changed:
+            syncer.start(sync["lookback_days"], sync["interval_hours"])
     elif sync_running:
         syncer.stop()
 

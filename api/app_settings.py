@@ -32,7 +32,7 @@ DEFAULTS: dict[str, Any] = {
         "scan_scheduler": {"enabled": False, "interval_minutes": 15},
         "silver_bullet_auto": {"enabled": True},
         "ipo_scanner": {"enabled": False, "interval_minutes": 60, "lookback_days": 7},
-        "data_auto_sync": {"enabled": False, "lookback_days": 14},
+        "data_auto_sync": {"enabled": False, "lookback_days": 14, "interval_hours": 0.25},
         "ltf_confirmation": {"enabled": False},
     },
     "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
@@ -48,6 +48,11 @@ _INT_LIMITS = {
     ("ipo_scanner", "interval_minutes"): (1, 1440),
     ("ipo_scanner", "lookback_days"): (1, 90),
     ("data_auto_sync", "lookback_days"): (1, 120),
+}
+
+# (section, key) -> (min, max) for float fields
+_FLOAT_LIMITS = {
+    ("data_auto_sync", "interval_hours"): (0.25, 24.0),
 }
 
 
@@ -69,6 +74,11 @@ def _merge(base: dict[str, Any], patch: Any) -> dict[str, Any]:
                 out[key] = int(value)
             except (TypeError, ValueError):
                 pass
+        elif isinstance(default, float):
+            try:
+                out[key] = float(value)
+            except (TypeError, ValueError):
+                pass
         elif isinstance(default, list) and isinstance(value, list):
             out[key] = sorted({str(item).strip() for item in value if str(item).strip()})
         elif isinstance(default, str):
@@ -80,6 +90,9 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
     for (section, key), (low, high) in _INT_LIMITS.items():
         block = settings["automation"][section]
         block[key] = max(low, min(high, int(block[key])))
+    for (section, key), (low, high) in _FLOAT_LIMITS.items():
+        block = settings["automation"][section]
+        block[key] = max(low, min(high, float(block[key])))
     settings["ui"]["hidden_pages"] = [p for p in settings["ui"]["hidden_pages"] if p in HIDEABLE_PAGES]
     for key, choices in STRATEGY_CHOICES.items():
         if settings["strategy"][key] not in choices:

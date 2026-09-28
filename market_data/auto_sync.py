@@ -10,7 +10,7 @@ market's own cut-off (see ``service.latest_final_session``):
   every day including weekends.
 - GIFT Nifty (NSEIX:*): at 03:00 IST the next day (session ends 02:45 IST).
 
-A background thread wakes every ``TICK_SECONDS``; for each market it syncs only
+A background thread wakes every ``interval_hours`` (default 0.25 h = 15 min); for each market it syncs only
 when a newer final session exists than the last one synced. Only missing dates
 are fetched (cache-aside via ``get_ohlc``), so re-runs are cheap. Data sync
 only — no strategy/scan execution.
@@ -34,7 +34,7 @@ MAX_ATTEMPTS_PER_SESSION = 8
 
 
 class DataAutoSync:
-    TICK_SECONDS = 15 * 60
+    DEFAULT_INTERVAL_HOURS = 0.25
 
     def __init__(self, entries_loader: Callable[[], list[tuple[str, object]]]) -> None:
         self._entries_loader = entries_loader
@@ -42,6 +42,7 @@ class DataAutoSync:
         self._stop = threading.Event()
         self._run_lock = threading.Lock()
         self.lookback_days: int = backdate_lookback_days()
+        self.interval_hours: float = self.DEFAULT_INTERVAL_HOURS
         self.last_run_at: Optional[str] = None
         self.last_error: Optional[str] = None
         self.run_count = 0
@@ -49,10 +50,12 @@ class DataAutoSync:
         self.markets: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------ lifecycle
-    def start(self, lookback_days: Optional[int] = None) -> dict[str, Any]:
+    def start(self, lookback_days: Optional[int] = None, interval_hours: Optional[float] = None) -> dict[str, Any]:
         self.stop()
         if lookback_days:
             self.lookback_days = max(1, int(lookback_days))
+        if interval_hours:
+            self.interval_hours = max(0.25, float(interval_hours))
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="market-data-auto-sync", daemon=True)
         self._thread.start()
@@ -74,7 +77,8 @@ class DataAutoSync:
         return {
             "running": self._thread is not None and self._thread.is_alive(),
             "syncing": self._run_lock.locked(),
-            "tick_minutes": self.TICK_SECONDS // 60,
+            "interval_hours": self.interval_hours,
+            "tick_minutes": round(self.interval_hours * 60),
             "lookback_days": self.lookback_days,
             "last_run_at": self.last_run_at,
             "last_error": self.last_error,
@@ -90,7 +94,7 @@ class DataAutoSync:
             except Exception as exc:  # pragma: no cover - defensive
                 self.last_error = f"{exc.__class__.__name__}: {exc}"
                 log.warning("Auto-sync tick failed: %s", exc)
-            stop.wait(self.TICK_SECONDS)
+            stop.wait(self.interval_hours * 3600)
 
     # ------------------------------------------------------------ work
     def run_once(self, now: Optional[datetime] = None) -> dict[str, Any]:

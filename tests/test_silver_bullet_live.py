@@ -27,8 +27,8 @@ HOUR = 3600
 def _clock(*times: datetime) -> type[datetime]:
     """datetime replacement whose ``now()`` walks ``times`` (last value repeats).
 
-    ``_loop`` reads the clock three times per iteration (window check + 3-minute
-    alignment), so callers pass each instant once per read they expect.
+    ``_loop`` reads the clock three times per iteration (window check + 5-minute
+    bar alignment), so callers pass each instant once per read they expect.
     """
     sequence = list(times)
 
@@ -101,7 +101,8 @@ def _drive_auto_loop(
 def test_live_scan_stops_once_new_york_window_closes(monkeypatch):
     scanner = SilverBulletLiveScanner()
     scanner.symbols = ["COMEX:GC1!"]
-    # 09:30 (waiting) -> 10:03 (in window) -> 11:01 (window over).
+    # 09:30 (waiting) -> 10:03 (in window) -> 11:01 (final scan for the 10:55
+    # bar, then the window is over).
     scans = _patched(
         monkeypatch,
         scanner,
@@ -114,7 +115,7 @@ def test_live_scan_stops_once_new_york_window_closes(monkeypatch):
 
     assert status["running"] is False
     assert status["next_check_at"] is None
-    assert [item[1].hour for item in scans] == [10]
+    assert [item[1].hour for item in scans] == [10, 11]
     assert scans[0][0] == date(2026, 9, 22)
     assert scans[0][1].tzinfo is NEW_YORK
 
@@ -126,6 +127,21 @@ def test_live_scan_started_after_the_window_never_scans(monkeypatch):
         monkeypatch,
         scanner,
         *[datetime(2026, 9, 22, 12, 5, tzinfo=NEW_YORK) for _ in range(3)],
+    )
+
+    status = _drive(scanner)
+
+    assert status["running"] is False
+    assert scans == []
+
+
+def test_live_scan_skips_the_final_scan_after_the_grace_period(monkeypatch):
+    scanner = SilverBulletLiveScanner()
+    scanner.symbols = ["COMEX:GC1!"]
+    scans = _patched(
+        monkeypatch,
+        scanner,
+        *[datetime(2026, 9, 22, 11, 6, tzinfo=NEW_YORK) for _ in range(3)],
     )
 
     status = _drive(scanner)

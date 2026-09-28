@@ -76,3 +76,19 @@ def test_window_is_capped(monkeypatch):
     tradingview_source.fetch_timeframe("OANDA:XAUUSD", old, old, "15m", "OANDA")
 
     assert client.calls[0]["n_bars"] == 5000
+
+
+def test_intraday_rows_are_labelled_in_ist(monkeypatch):
+    """Intraday ``date`` is IST wall time whatever zone the bar is stamped in.
+
+    A zone-aware UTC index stands in for a non-IST machine: 13:00 UTC must be
+    stored as 18:30 IST (09:00 New York), not as the raw 13:00.
+    """
+    session = date.today() - timedelta(days=1)
+    index = pd.DatetimeIndex([pd.Timestamp(session).tz_localize("UTC") + pd.Timedelta(hours=13)])
+    frame = pd.DataFrame({"open": [1.0], "high": [2.0], "low": [0.5], "close": [1.5], "volume": [10.0]}, index=index)
+    monkeypatch.setattr(tradingview_source, "_get_client", lambda: _RecordingClient(frame))
+
+    rows = tradingview_source.fetch_timeframe("OANDA:XAUUSD", session, session, "5m", "OANDA")
+
+    assert [row["date"] for row in rows] == [f"{session.isoformat()}T18:30:00"]
