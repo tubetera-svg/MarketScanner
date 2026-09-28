@@ -8,7 +8,8 @@ import Navigation from "../../components/Navigation";
 // Data loads from the local SQLite store on mount/refresh.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Play, RefreshCw, Rocket, SearchX, ScanLine, Square, SlidersHorizontal, Wrench } from "lucide-react";
+import Link from "next/link";
+import { RefreshCw, Rocket, SearchX, ScanLine, SlidersHorizontal, Trash2, Wrench } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -26,6 +27,8 @@ type PerformanceItem = {
   symbol: string;
   exchange: string;
   listing_date: string;
+  age_days: number;
+  age_label: string;
   listing_price: number | null;
   issue_price: number | null;
   latest_date: string | null;
@@ -53,15 +56,20 @@ type LiquidityScreenResult = {
   flags: string[];
   decision: "ADD" | "KEEP" | "WATCH" | "REMOVE";
   reason: string;
-  removed?: {
-    watchlist: boolean;
-    categories: boolean;
-    ohlc_daily: number;
-    ohlc_no_data: number;
-    ipo_metadata: number;
-    tv_symbol_cache: number;
-  };
 };
+
+// One row of the merged review: list-review verdict and/or liquidity-screen decision.
+type MergedReviewRow = {
+  symbol: string;
+  listing_date?: string;
+  age_label?: string;
+  avg_value_cr_60d?: number | null;
+  reviewReasons: string[];
+  screen?: LiquidityScreenResult;
+};
+
+const isSuggestedDelete = (row: MergedReviewRow): boolean =>
+  row.reviewReasons.length > 0 || row.screen?.decision === "REMOVE";
 
 type ScannerStatus = {
   running: boolean;
@@ -75,6 +83,7 @@ type ScannerStatus = {
 type SortKey =
   | "symbol"
   | "listing_date"
+  | "age_days"
   | "listing_price"
   | "current_price"
   | "high_since_listing"
@@ -99,12 +108,15 @@ const STORAGE_KEY = "ipo-page-filters-v1";
 
 type PerfBucket = "all" | "gainers" | "losers" | "flat";
 
-type Freshness = "all" | "15d" | "1m" | "3m";
+type Freshness = "all" | "15d" | "1m" | "3m" | "6m" | "1y" | "2y";
 
 const FRESHNESS_DAYS: Record<Exclude<Freshness, "all">, number> = {
   "15d": 15,
   "1m": 31,
   "3m": 92,
+  "6m": 183,
+  "1y": 365,
+  "2y": 730,
 };
 
 export default function IPOPage() {
@@ -115,7 +127,8 @@ export default function IPOPage() {
   const [status, setStatus] = useState<ScannerStatus | null>(null);
   const [scanning, setScanning] = useState(false);
   const [screening, setScreening] = useState(false);
-  const [screenResults, setScreenResults] = useState<LiquidityScreenResult[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
   const [query, setQuery] = useState("");
   const [year, setYear] = useState("all");
   const [bucket, setBucket] = useState<PerfBucket>("all");
@@ -123,7 +136,7 @@ export default function IPOPage() {
   const [liquidOnly, setLiquidOnly] = useState(true);
   const [signalFilter, setSignalFilter] = useState<SignalFilter>("all");
   const [hydrated, setHydrated] = useState(false);
-  const [review, setReview] = useState<{ discard: ReviewItem[]; keep_count: number } | null>(null);
+  const [review, setReview] = useState<{ rows: MergedReviewRow[]; keep_count: number; screenError?: string } | null>(null);
   const [minPct, setMinPct] = useState("");
   const [maxPct, setMaxPct] = useState("");
   const [neverAbove, setNeverAbove] = useState(false);
@@ -260,16 +273,88 @@ export default function IPOPage() {
     }
   }, []);
 
+  // Runs the list review (local DB) and the liquidity screen (dry-run) together
+  // and merges them per symbol. Deletes nothing.
   const loadReview = async (): Promise<void> => {
+    setScreening(true);
+    setSelected(new Set());
     try {
-      const response = await fetch(`${API}/api/market-data/ipo/review`, { cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
-      setReview({ discard: payload.discard ?? [], keep_count: payload.keep_count ?? 0 });
-      setMessage(`List review: keep ${payload.keep_count}, suggest discard ${payload.discard_count} (nothing deleted)`);
+      const [reviewRes, screenRes] = await Promise.allSettled([
+        fetch(`${API}/api/market-data/ipo/review`, { cache: "no-store" }).then(async (r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch(`${API}/api/ipo-liquidity/screen`, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lookback_days: 60 }),
+        }).then(async (r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+      ]);
+      if (reviewRes.status === "rejected") throw reviewRes.reason;
+      const rows = new Map<string, MergedReviewRow>();
+      for (const item of (reviewRes.value.discard ?? []) as ReviewItem[]) {
+        rows.set(item.symbol, { symbol: item.symbol, listing_date: item.listing_date, age_label: item.age_label, avg_value_cr_60d: item.avg_value_cr_60d, reviewReasons: item.reasons });
+      }
+      const screenError = screenRes.status === "rejected"
+        ? (screenRes.reason instanceof Error ? screenRes.reason.message : String(screenRes.reason))
+        : undefined;
+      if (screenRes.status === "fulfilled") {
+        for (const result of (screenRes.value.results ?? []) as LiquidityScreenResult[]) {
+          if (result.decision !== "REMOVE" && result.decision !== "WATCH") continue;
+          const existing = rows.get(result.symbol);
+          if (existing) existing.screen = result;
+          else {
+            const perf = items.find((i) => i.symbol === result.symbol);
+            rows.set(result.symbol, { symbol: result.symbol, listing_date: perf?.listing_date, age_label: perf?.age_label, avg_value_cr_60d: perf?.avg_value_cr_60d, reviewReasons: [], screen: result });
+          }
+        }
+      }
+      const merged = [...rows.values()].sort((a, b) => Number(isSuggestedDelete(b)) - Number(isSuggestedDelete(a)) || a.symbol.localeCompare(b.symbol));
+      setReview({ rows: merged, keep_count: reviewRes.value.keep_count ?? 0, screenError });
+      const suggested = merged.filter(isSuggestedDelete).length;
+      setMessage(`Review: ${suggested} suggested for deletion, ${merged.length - suggested} to watch (nothing deleted)${screenError ? " · liquidity screen failed" : ""}`);
     } catch (error) {
       setMessage(`List review failed: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setScreening(false);
     }
+  };
+
+  const deleteIpos = async (symbols: string[]): Promise<void> => {
+    if (symbols.length === 0) return;
+    const preview = symbols.slice(0, 10).join(", ") + (symbols.length > 10 ? ` … (+${symbols.length - 10} more)` : "");
+    if (!window.confirm(`Permanently delete ${symbols.length} IPO(s) from the watchlist, categories and price history?\n\n${preview}`)) return;
+    setDeleting(true);
+    try {
+      const response = await fetch(`${API}/api/market-data/ipo`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const gone = new Set(symbols);
+      setReview((prev) => (prev ? { ...prev, rows: prev.rows.filter((row) => !gone.has(row.symbol)) } : prev));
+      setSelected((prev) => new Set([...prev].filter((s) => !gone.has(s))));
+      setMessage(`Deleted ${symbols.length} IPO(s)`);
+      await loadPerformance(true);
+    } catch (error) {
+      setMessage(`Delete failed: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const toggleSelected = (symbol: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol);
+      else next.add(symbol);
+      return next;
+    });
   };
 
   const loadStatus = useCallback(async (): Promise<void> => {
@@ -292,51 +377,43 @@ export default function IPOPage() {
     void loadStatus();
   };
 
-  const runScanner = async (
-    action: "start" | "stop" | "run-once"
-  ): Promise<void> => {
+  // One immediate scan. Recurring scans are configured in Settings -> IPO scanner.
+  const scanNow = async (): Promise<void> => {
     setScanning(true);
     try {
-      const response = await fetch(`${API}/api/ipo-scan/${action}`, {
-        method: "POST",
-        cache: "no-store",
-        ...(action === "start"
-          ? { body: JSON.stringify({ lookback_days: 7 }), headers: { "Content-Type": "application/json" } }
-          : {}),
-      });
+      const response = await fetch(`${API}/api/ipo-scan/run-once`, { method: "POST", cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setStatus(await response.json());
-      await loadPerformance(true);
+      const payload = await response.json();
+      if (payload.skipped) {
+        setMessage(`IPO scan skipped: ${payload.reason}`);
+      } else {
+        const added = (payload.registered ?? []).filter((r: { registered?: boolean }) => r.registered).length;
+        setMessage(`IPO scan ${payload.window_start} → ${payload.window_end}: ${(payload.candidates ?? []).length} candidate(s), ${added} added`);
+      }
+      await Promise.all([loadStatus(), loadPerformance(true)]);
     } catch (error) {
-      setMessage(`Scanner ${action} failed: ${error instanceof Error ? error.message : error}`);
+      setMessage(`IPO scan failed: ${error instanceof Error ? error.message : error}`);
     } finally {
       setScanning(false);
     }
   };
 
-  const runLiquidityScreen = async (autoRemove: boolean): Promise<void> => {
-    if (autoRemove && !window.confirm("Permanently delete illiquid IPOs from the watchlist, categories and price history? Run the dry-run first if unsure.")) return;
-    setScreening(true);
-    setScreenResults(null);
-    try {
-      const response = await fetch(`${API}/api/ipo-liquidity/screen`, {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lookback_days: 60, auto_remove: autoRemove }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
-      setScreenResults(payload.results ?? []);
-      const removedCount = (payload.results ?? []).filter((r: LiquidityScreenResult) => r.decision === "REMOVE").length;
-      setMessage(`Liquidity screen complete: ${payload.count} symbols, ${removedCount} removed${autoRemove ? " (auto-removed)" : " (dry-run)"}`);
-      await loadPerformance(true);
-    } catch (error) {
-      setMessage(`Liquidity screen failed: ${error instanceof Error ? error.message : error}`);
-    } finally {
-      setScreening(false);
-    }
-  };
+  // Symbol cell shared by the review and setups tables: plain click opens the
+  // in-app chart popup; modified/middle click still opens TradingView in a tab.
+  const chartLink = (symbol: string) => (
+    <a
+      href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`}
+      className="chart-link symbol-link"
+      title={`Open ${symbol} TradingView chart`}
+      onClick={(event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        setChart({ symbol, sourceLink: null });
+      }}
+    >
+      <strong>{symbol.replace(/^NSE:/, "")}</strong>
+    </a>
+  );
 
   return (
     <main className="shell">
@@ -356,30 +433,15 @@ export default function IPOPage() {
       </header>
 
       <details className="ipo-maint">
-        <summary><Wrench size={13} /> Maintenance · IPO detection &amp; liquidity screen{status?.running ? " · scanner running" : ""}</summary>
+        <summary><Wrench size={13} /> Maintenance · IPO detection{status?.running ? " · scanner running" : ""}</summary>
         <section className="auto-scan">
         <span className="auto-title"><Rocket size={14} /> Automation</span>
-        {status?.running ? (
-          <button className="test-button stop" type="button" onClick={() => runScanner("stop")} disabled={scanning} title="Stop the automatic IPO detection scanner"><Square size={13} /> Stop IPO scan</button>
-        ) : (
-          <>
-            <button className="test-button" type="button" onClick={() => runScanner("start")} disabled={scanning} title="Start automatic IPO detection (runs on a schedule)"><Play size={13} /> Start IPO scan</button>
-            <button className="test-button" type="button" onClick={() => runScanner("run-once")} disabled={scanning} title="Run IPO detection once immediately (bhavcopy scan)"><ScanLine size={13} /> Scan now</button>
-          </>
-        )}
-        <div className="auto-separator" />
-        <span className="auto-title"><SearchX size={14} /> Liquidity Screen</span>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-          <button className="test-button" type="button" onClick={() => runLiquidityScreen(false)} disabled={screening || scanning} title="Screen all IPO-scope symbols for liquidity (dry-run, no removal)">
-            <SearchX size={14} /> Screen (dry-run)
-          </button>
-          <button className="test-button stop" type="button" onClick={() => runLiquidityScreen(true)} disabled={screening || scanning} title="Screen and auto-remove illiquid IPOs">
-            <SearchX size={14} /> Screen & Auto-Remove
-          </button>
-          {screening && <span className="pulse" style={{ marginLeft: 8 }} />}
-        </div>
+        <button className="test-button" type="button" onClick={() => void scanNow()} disabled={scanning} title="Run IPO detection once now (bhavcopy scan over the Settings lookback window). Recurring scans: Settings → IPO scanner.">
+          <ScanLine size={13} className={scanning ? "spin" : undefined} /> {scanning ? "Scanning…" : "Scan now"}
+        </button>
         <small className="auto-meta">
-          {status?.running ? `RUNNING · every ${status.interval_minutes ?? 60} min` : "IPO detection idle"}
+          {status?.running ? `RUNNING · every ${status.interval_minutes ?? 60} min` : "Auto-scan off"}
+          {" · "}<Link href="/settings">schedule in Settings</Link>
           {status ? ` · lookback ${status.lookback_days ?? 7}d` : ""}
           {status?.last_ran_at ? ` · last ${new Date(status.last_ran_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
           {status?.last_error ? ` · ${status.last_error}` : ""}
@@ -438,6 +500,9 @@ export default function IPOPage() {
               <option value="15d">Fresh: last 15 days</option>
               <option value="1m">Last 1 month</option>
               <option value="3m">Last 3 months</option>
+              <option value="6m">Last 6 months</option>
+              <option value="1y">Last 1 year</option>
+              <option value="2y">Last 2 years</option>
             </select>
             <label className="filter-label">
               Min %
@@ -457,80 +522,80 @@ export default function IPOPage() {
         {anyFilter && (
           <button className="test-button ipo-ghost" type="button" onClick={clearFilters} title="Reset all filters to defaults">Reset</button>
         )}
-        <button className="test-button ipo-ghost" type="button" onClick={() => void loadReview()} title="Suggest which tracked IPOs to discard (non-liquid, stale, non-EQ). Deletes nothing.">
-          <SearchX size={14} /> Review list
+        <button className="test-button ipo-ghost" type="button" onClick={() => void loadReview()} disabled={screening || deleting} title="Check tracked IPOs for deletion: list review (non-EQ, stale, not liquid, official NSE listing date predates first bhavcopy appearance) plus liquidity screen (median 60-day value, zero-trade and circuit-locked days, market presence). Shows one merged table; nothing is deleted until you select rows and confirm.">
+          <SearchX size={14} className={screening ? "spin" : undefined} /> {screening ? "Reviewing…" : "Review list"}
         </button>
       </section>
 
-      {review && (
-        <section className="panel strategy-panel">
-          <div className="panel-heading">
-            <span>Suggested discards · {review.discard.length} (keeping {review.keep_count})</span>
-            <div className="panel-heading-actions">
-              <button className="test-button" type="button" onClick={() => setReview(null)}>Close</button>
+      {review && (() => {
+        const suggested = review.rows.filter(isSuggestedDelete).map((row) => row.symbol);
+        const allSelected = review.rows.length > 0 && review.rows.every((row) => selected.has(row.symbol));
+        return (
+          <section className="panel strategy-panel">
+            <div className="panel-heading">
+              <span>
+                Review · {suggested.length} suggested delete, {review.rows.length - suggested.length} watch (keeping {review.keep_count})
+                {review.screenError ? ` · liquidity screen failed: ${review.screenError}` : ""}
+              </span>
+              <div className="panel-heading-actions">
+                <button className="test-button" type="button" onClick={() => setSelected(new Set(suggested))} disabled={deleting || suggested.length === 0} title="Select every row flagged DISCARD by the list review or REMOVE by the liquidity screen">
+                  Select suggested
+                </button>
+                <button className="test-button stop" type="button" onClick={() => void deleteIpos([...selected])} disabled={deleting || selected.size === 0} title="Permanently delete the selected IPOs">
+                  <Trash2 size={14} /> {deleting ? "Deleting…" : `Delete selected (${selected.size})`}
+                </button>
+                <button className="test-button" type="button" onClick={() => { setReview(null); setSelected(new Set()); }}>Close</button>
+              </div>
             </div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Symbol</th><th>Listed</th><th>Avg value (cr/day)</th><th>Why</th></tr></thead>
-              <tbody>
-                {review.discard.map((item) => (
-                  <tr key={item.symbol}>
-                    <td><strong>{item.symbol}</strong></td>
-                    <td>{item.listing_date}</td>
-                    <td className="number">{number(item.avg_value_cr_60d)}</td>
-                    <td className="muted" style={{ whiteSpace: "normal" }}>{item.reasons.join("; ")}</td>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => setSelected(allSelected ? new Set() : new Set(review.rows.map((row) => row.symbol)))}
+                        aria-label="Select all"
+                      />
+                    </th>
+                    <th title="Click a symbol to open its chart">Symbol</th>
+                    <th>Listed</th>
+                    <th title="Time since listing; over 3 years is suggested for deletion">Age</th>
+                    <th>Avg value (cr/day)</th>
+                    <th>Review</th>
+                    <th>Screen</th>
+                    <th>Why</th>
+                    <th></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {screenResults && (
-        <section className="panel strategy-panel">
-          <div className="panel-heading">
-            <span>Liquidity screen results</span>
-            <div className="panel-heading-actions">
-              <small>{screenResults.length} symbols screened</small>
+                </thead>
+                <tbody>
+                  {review.rows.map((row) => {
+                    const why = [...row.reviewReasons, ...(row.screen ? [row.screen.reason, ...row.screen.flags] : [])];
+                    return (
+                      <tr key={row.symbol}>
+                        <td><input type="checkbox" checked={selected.has(row.symbol)} onChange={() => toggleSelected(row.symbol)} aria-label={`Select ${row.symbol}`} /></td>
+                        <td>{chartLink(row.symbol)}</td>
+                        <td>{row.listing_date ?? "—"}</td>
+                        <td>{row.age_label ?? "—"}</td>
+                        <td className="number">{number(row.avg_value_cr_60d ?? null)}</td>
+                        <td>{row.reviewReasons.length > 0 ? <span className="badge bias-bear">DISCARD</span> : "—"}</td>
+                        <td>{row.screen ? <span className={`badge ${row.screen.decision === "REMOVE" ? "bias-bear" : "bias-neutral"}`}>{row.screen.decision}</span> : "—"}</td>
+                        <td className="muted" style={{ whiteSpace: "normal" }}>{why.join("; ")}</td>
+                        <td>
+                          <button className="test-button stop" type="button" onClick={() => void deleteIpos([row.symbol])} disabled={deleting} title="Permanently delete this IPO">
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Tier</th>
-                  <th>Decision</th>
-                  <th>Flags</th>
-                  <th>Reason</th>
-                  <th>Removed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {screenResults.map((item) => {
-                  const removedInfo = item.removed ? (
-                    <span className="badge bias-bear">
-                      OHLC: {item.removed.ohlc_daily}, IPO: {item.removed.ipo_metadata}, WL: {item.removed.watchlist ? "yes" : "no"}
-                    </span>
-                  ) : "—";
-                  return (
-                    <tr key={item.symbol} style={{ backgroundColor: item.decision === "REMOVE" ? "#fdf4f1" : item.decision === "WATCH" ? "#fef9ee" : item.decision === "KEEP" ? "#f3faf7" : "transparent" }}>
-                      <td><strong>{item.symbol}</strong></td>
-                      <td><span className={`badge ${item.liquidity_tier === "LIQUID" ? "bias-bull" : item.liquidity_tier === "BORDERLINE" ? "bias-neutral" : item.liquidity_tier === "ILLIQUID" ? "bias-bear" : ""}`}>{item.liquidity_tier}</span></td>
-                      <td><span className={`badge ${item.decision === "KEEP" ? "bias-bull" : item.decision === "WATCH" ? "bias-neutral" : item.decision === "REMOVE" ? "bias-bear" : "bias-bull"}`}>{item.decision}</span></td>
-                      <td>{item.flags.join(", ") || "—"}</td>
-                      <td className="muted" style={{ maxWidth: 400, whiteSpace: "normal" }}>{item.reason}</td>
-                      <td>{removedInfo}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+          </section>
+        );
+      })()}
 
       <section className="panel strategy-panel">
         <div className="panel-heading">
@@ -554,6 +619,7 @@ export default function IPOPage() {
                     ["current_price", "Price", "Latest close"],
                     ["avg_value_cr_60d", "Value cr/day", "60-day average traded value"],
                     ["listing_date", "Listed", ""],
+                    ["age_days", "Age", "Time since listing; over 3 years is suggested for deletion by Review list"],
                     ["listing_price", "Listing px", ""],
                     ["high_since_listing", "High since", ""],
                     ["low_since_listing", "Low since", ""],
@@ -581,20 +647,7 @@ export default function IPOPage() {
                     v == null ? "—" : `${v > 0 ? "+" : ""}${v}${suffix}`;
                   return (
                   <tr key={item.symbol} className={item.signal === "LEADER" ? "ipo-row-leader" : undefined}>
-                    <td>
-                      <a
-                        href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(item.symbol)}`}
-                        className="chart-link symbol-link"
-                        title={`Open ${item.symbol} TradingView chart`}
-                        onClick={(event) => {
-                          if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-                          event.preventDefault();
-                          setChart({ symbol: item.symbol, sourceLink: null });
-                        }}
-                      >
-                        <strong>{item.symbol.replace(/^NSE:/, "")}</strong>
-                      </a>
-                    </td>
+                    <td>{chartLink(item.symbol)}</td>
                     <td>
                       <span className={`badge ${item.signal === "LEADER" ? "bias-bull" : item.signal === "WEAK" ? "bias-bear" : "bias-neutral"}`}>
                         {item.signal}{item.strength_score != null ? ` ${item.strength_score}/6` : ""}
@@ -616,6 +669,7 @@ export default function IPOPage() {
                       {number(item.avg_value_cr_60d)}
                     </td>
                     <td>{item.listing_date}</td>
+                    <td>{item.age_label}</td>
                     <td className="number">{number(item.listing_price)}</td>
                     <td className="number">
                       {number(item.high_since_listing)}

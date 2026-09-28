@@ -564,6 +564,53 @@ th.sortable:hover {
   font-size: 0.85rem;
 }
 
+/* chart modal: local OHLC view */
+.chart-modal.expanded { width: 100%; height: 100%; }
+.chart-modal-header { gap: 12px; }
+.chart-modal-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
+.chart-head-quote { display: inline-flex; gap: 8px; font: 500 13px 'DM Mono', monospace; color: var(--ink); }
+.chart-modal-actions { display: flex; align-items: center; gap: 6px; }
+.chart-modal-actions .chart-modal-open { margin: 0; }
+.chart-up { color: #16a34a; }
+.chart-down { color: var(--coral); }
+.chart-seg { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); }
+.chart-seg button { border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: 500 11px 'DM Mono', monospace; padding: 4px 10px; cursor: pointer; text-transform: none; }
+.chart-seg button:hover { color: var(--ink); }
+.chart-seg button.active { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgb(15 23 42 / 12%); }
+.chart-seg.small button { padding: 3px 8px; font-size: 10.5px; }
+.chart-tool-btn { border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--muted); font: 500 11px 'DM Mono', monospace; padding: 4px 8px; cursor: pointer; text-transform: none; }
+.chart-tool-btn:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
+.chart-tool-btn:disabled { opacity: .5; cursor: default; }
+.chart-link-btn { border: 0; background: none; padding: 0; color: var(--teal); font: inherit; text-decoration: underline; cursor: pointer; }
+.chart-control-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.chart-swatch { display: inline-block; width: 10px; height: 3px; border-radius: 2px; }
+.chart-indicator.disabled { opacity: .45; cursor: default; }
+.chart-live-dot { align-self: center; padding: 1px 6px; border-radius: 3px; background: var(--coral-soft); color: var(--coral-ink); font: 600 9.5px 'DM Mono', monospace; letter-spacing: .6px; animation: chart-live-pulse 2s ease-in-out infinite; }
+@keyframes chart-live-pulse { 50% { opacity: .55; } }
+.chart-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 7px 16px; border-bottom: 1px solid var(--line); font: 11.5px 'DM Mono', monospace; color: var(--ink); }
+.chart-stat { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chart-stat em { font-style: normal; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+.chart-stat.warn { color: var(--amber); }
+.chart-stale { font-weight: 500; font-size: 10px; color: #fff; background: var(--amber); border-radius: 3px; padding: 1px 5px; }
+.chart-range-bar { position: relative; display: inline-block; width: 64px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--coral-soft), var(--teal-soft)); }
+.chart-range-bar span { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
+.chart-local { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chart-local .chart-frame-loading { flex: 1; min-height: 0; }
+.ohlc-chart { position: relative; flex: 1; min-height: 0; outline: none; touch-action: none; user-select: none; }
+.ohlc-chart:focus-visible { box-shadow: inset 0 0 0 2px var(--teal-soft); }
+.ohlc-svg { display: block; cursor: crosshair; }
+.ohlc-svg:active { cursor: grabbing; }
+.chart-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; font-size: 13px; }
+.chart-empty .muted { max-width: 560px; font-size: 12px; }
+.chart-empty-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin-top: 6px; font-size: 12px; }
+.chart-empty-actions a { color: var(--teal); }
+.chart-footnote { padding: 5px 16px; border-top: 1px solid var(--line); font: 10px 'DM Mono', monospace; }
+@media (max-width: 640px) {
+  .chart-modal-header { flex-wrap: wrap; padding: 8px 10px; }
+  .chart-control-actions { margin-left: 0; }
+  .chart-footnote { display: none; }
+}
+
 /* IPO table chart link */
 .chart-link {
   display: inline-flex;

@@ -69,6 +69,7 @@ from typing import Iterable, Optional
 from . import database, equity_master, etf_list
 from .config import (
     IPO_MIN_ACTIVE_RATIO,
+    IPO_MAX_AGE_DAYS,
     BORDERLINE_AVG_DAILY_VALUE_CR,
     IPO_MIN_AVG_DAILY_VALUE_CR,
     LIQUID_AVG_DAILY_VALUE_CR,
@@ -615,6 +616,22 @@ STRENGTH_MIN_BARS = 20
 #: A tracked IPO with no bar for this many calendar days is treated as stale
 #: (suspended / stopped trading).
 STALE_DAYS = 10
+#: First bhavcopy appearance may trail the official NSE listing date by a few
+#: days (holidays); a bigger gap means an existing stock, not an IPO.
+OFFICIAL_LISTING_TOLERANCE_DAYS = 7
+
+
+def ipo_age(listing_date: str, ref: date) -> tuple[int, str]:
+    """Calendar days since listing and a compact label like ``2y 4m`` / ``3m`` / ``12d``."""
+    listed = date.fromisoformat(listing_date)
+    days = (ref - listed).days
+    months = (ref.year - listed.year) * 12 + ref.month - listed.month - (1 if ref.day < listed.day else 0)
+    if days < 31 or months < 1:
+        return days, f"{max(days, 0)}d"
+    years, rem = divmod(months, 12)
+    if not years:
+        return days, f"{rem}m"
+    return days, f"{years}y {rem}m" if rem else f"{years}y"
 
 
 def _sma(values: list[float], n: int) -> Optional[float]:
@@ -732,6 +749,7 @@ def ipo_performance(
             "listing_price": meta.get("listing_price"),
             "issue_price": meta.get("issue_price"),
         }
+        item["age_days"], item["age_label"] = ipo_age(meta["listing_date"], ref)
         if bars:
             item["latest_date"] = bars[-1]["date"]
             item["current_price"] = bars[-1]["close"]
@@ -764,10 +782,12 @@ def ipo_review(
     """Read-only keep/discard suggestions for the tracked IPO list.
 
     Nothing is deleted. A tracked IPO is suggested for DISCARD when it is not an
-    NSE main-board EQ equity, is not LIQUID (60-bar avg traded value below
+    NSE main-board EQ equity, is older than ``IPO_MAX_AGE_DAYS``, is not LIQUID (60-bar avg traded value below
     ``LIQUID_AVG_DAILY_VALUE_CR`` or too many zero-volume days), has gone stale,
-    or its listing date equals the discovery-window start (existing stock picked
-    up as an "IPO" - renames/re-listings, not a real listing). Everything else is
+    or it is an existing stock picked up as an "IPO" (renames/re-listings): its
+    official NSE listing date (``EQUITY_L.csv``) predates its first bhavcopy
+    appearance, or - when the master has no date - its first appearance equals
+    the discovery-window start. Everything else is
     KEEP; KEEP items carry the trend ``signal`` so leaders can be tracked first.
     """
     perf = ipo_performance(db_path=db_path, reference_date=reference_date)
@@ -777,6 +797,7 @@ def ipo_review(
     )
     window_start = min((i["listing_date"] for i in perf), default=None)
     master = equity_master.load_equity_master()
+    listing_dates = equity_master.load_listing_dates()
     etf_units = etf_list.load_etf_symbols()
     keep: list[dict] = []
     discard: list[dict] = []
@@ -787,6 +808,11 @@ def ipo_review(
         )
         if inelig:
             reasons.append(inelig)
+        if item["age_days"] > IPO_MAX_AGE_DAYS:
+            reasons.append(
+                f"aged out: listed {item['listing_date']}, {item['age_label']} ago "
+                f"(> {IPO_MAX_AGE_DAYS / 365:g}y)"
+            )
         if item["latest_date"] is None:
             reasons.append("no price data")
         elif (ref - date.fromisoformat(item["latest_date"])).days > STALE_DAYS:
@@ -796,7 +822,15 @@ def ipo_review(
                 f"{item['liquidity'].lower()}: avg value Rs.{item['avg_value_cr_60d']} cr/day, "
                 f"{item['zero_days_20d']} zero-volume day(s) in last 20"
             )
-        if window_start and item["listing_date"] == window_start and window_start < ref.isoformat():
+        official = listing_dates.get(item["symbol"].split(":", 1)[-1].strip().upper())
+        if official is not None:
+            first_seen = date.fromisoformat(item["listing_date"])
+            if (first_seen - official).days > OFFICIAL_LISTING_TOLERANCE_DAYS:
+                reasons.append(
+                    f"NSE listing date {official.isoformat()} predates first bhavcopy "
+                    f"appearance {item['listing_date']} (existing stock, not an IPO)"
+                )
+        elif window_start and item["listing_date"] == window_start and window_start < ref.isoformat():
             reasons.append("listing date = discovery-window start (likely existing stock, not an IPO)")
         row = {**item, "verdict": "DISCARD" if reasons else "KEEP", "reasons": reasons}
         (discard if reasons else keep).append(row)
@@ -815,7 +849,7 @@ def ipo_review(
 def run_ipo_backfill(
     limits: Optional[float] = None,
     *,
-    days: int = 3 * 366,
+    days: int = IPO_MAX_AGE_DAYS,
     db_path: Optional[Path | str] = None,
 ) -> dict:
     """Backfill OHLC history for every tracked IPO from listing_date up to today.

@@ -10,8 +10,10 @@ the current trend continues. It forms in one of two ways:
   the **open (body)** of the three candles that created the gap.
 
 A swing is only **confirmed** once the qualifying close occurs; before that it is
-**anticipated**. After confirmation the swing is **invalidated** if price closes
-back beyond the swept extreme for sweep events or the protected level for FVG events.
+**anticipated**. The level a close must clear is the open of the *first* candle
+of that series (the CISD level). After confirmation the swing is **invalidated**
+when price closes back beyond the protected low/high itself — the extreme made
+from the sweep (or FVG series) through confirmation (``sweep_extreme``).
 
 This module contains *only* point-in-time, deterministic detection logic that
 operates on a daily OHLC ``DataFrame`` (columns ``Open/High/Low/Close`` indexed
@@ -104,6 +106,9 @@ class ProtectedSwing:
     confirm_date: Optional[object] = None
     confirmation_price: Optional[float] = None
     invalidate_date: Optional[object] = None
+    # The protected low/high itself: the extreme price made from the sweep (or
+    # FVG series) through confirmation. Invalidation and stops key off it.
+    sweep_extreme: Optional[float] = None
     # diagnostic
     gap_id: Optional[str] = None
     tag: str = "unknown"  # formation basis: "sweep_based" | "fvg_based"
@@ -142,34 +147,19 @@ def _ohlc_arrays(daily: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarra
 
 
 def _collect_run(o: np.ndarray, c: np.ndarray, anchor: int, down: bool) -> List[int]:
-    """Maximal run of same-direction candles ending at the nearest qualifying
-    candle at or before ``anchor``. Returns no run when ``anchor`` is not
-    directional; a non-directional sweep candle cannot define protection.
+    """The same-direction candle series that delivered price into the sweep.
 
-    ``down=True`` collects down-close candles (close <= open); ``down=False``
-    collects up-close candles (close >= open). The run is walked backward from
-    the anchor so that the swing extreme itself is always included.
+    ``down=True`` collects down-close candles (close < open); ``down=False``
+    collects up-close candles (close > open). The series ends at the sweep
+    candle when it closes in the series direction; otherwise (e.g. a hammer that
+    sweeps the low and closes back up) it ends at the candle immediately before
+    the sweep. Without an adjacent series there is nothing to protect.
     """
     n = len(c)
     if n == 0 or anchor < 0 or anchor >= n:
         return []
-    # Find the end of the run: the largest index <= anchor that qualifies.
-    k = anchor
-    while k >= 0 and not ((c[k] < o[k]) if down else (c[k] > o[k])):
-        if k == anchor:
-            return []
-        k -= 1
-    if k < 0:
-        return []
-    run = [k]
-    j = k - 1
-    while j >= 0 and ((c[j] < o[j]) if down else (c[j] > o[j])):
-        run.append(j)
-        j -= 1
-    run.reverse()
-    if anchor not in run:
-        run.append(anchor)
-    return run
+    directional = (c[anchor] < o[anchor]) if down else (c[anchor] > o[anchor])
+    return _collect_prior_run(o, c, anchor if directional else anchor - 1, down)
 
 
 def _collect_prior_run(o: np.ndarray, c: np.ndarray, anchor: int, down: bool) -> List[int]:
@@ -402,13 +392,16 @@ def _build_sweep_candidate(
         run = _collect_run(o, c, sweep_idx, down=False)
         if not run:
             return None
-        protected_level = float(np.nanmin(o[run]))  # body: lowest open of the green sweep series
-        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False, inclusive=False)
+        protected_level = float(o[run[0]])  # CISD: open of the first green candle of the series
+        # A sweep candle outside the series (e.g. a shooting star) may itself close through it.
+        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False, inclusive=sweep_idx not in run)
         swing_break_idx = _first_after(c, swing_level, sweep_idx, above=True)
         if swing_break_idx is not None and (confirm_idx is None or swing_break_idx <= confirm_idx):
             confirm_idx = None
+        extreme_end = confirm_idx if confirm_idx is not None else len(c) - 1
+        sweep_extreme = float(np.nanmax(h[sweep_idx:extreme_end + 1]))
         invalidate_idx = (
-            invalidate_close(daily, swing_level, confirm_idx, above=True)
+            invalidate_close(daily, sweep_extreme, confirm_idx, above=True)
             if confirm_idx is not None
             else None
         )
@@ -422,13 +415,16 @@ def _build_sweep_candidate(
         run = _collect_run(o, c, sweep_idx, down=True)
         if not run:
             return None
-        protected_level = float(np.nanmax(o[run]))  # body: highest open of the red sweep series
-        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True, inclusive=False)
+        protected_level = float(o[run[0]])  # CISD: open of the first red candle of the series
+        # A sweep candle outside the series (e.g. a hammer) may itself close through it.
+        confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True, inclusive=sweep_idx not in run)
         swing_break_idx = _first_after(c, swing_level, sweep_idx, above=False)
         if swing_break_idx is not None and (confirm_idx is None or swing_break_idx <= confirm_idx):
             confirm_idx = None
+        extreme_end = confirm_idx if confirm_idx is not None else len(c) - 1
+        sweep_extreme = float(np.nanmin(l[sweep_idx:extreme_end + 1]))
         invalidate_idx = (
-            invalidate_close(daily, swing_level, confirm_idx, above=False)
+            invalidate_close(daily, sweep_extreme, confirm_idx, above=False)
             if confirm_idx is not None
             else None
         )
@@ -450,10 +446,11 @@ def _build_sweep_candidate(
         state=state,
         confirm_date=(idx[confirm_idx] if confirm_idx is not None else None),
         confirmation_price=(float(c[confirm_idx]) if confirm_idx is not None else None),
-         invalidate_date=(idx[invalidate_idx] if invalidate_idx is not None else None),
-         gap_id=gap_id,
-         tag=TAG_SWEEP_BASED,
-     )
+        invalidate_date=(idx[invalidate_idx] if invalidate_idx is not None else None),
+        sweep_extreme=sweep_extreme,
+        gap_id=gap_id,
+        tag=TAG_SWEEP_BASED,
+    )
 
 
 def _build_fvg_candidate(
@@ -478,15 +475,17 @@ def _build_fvg_candidate(
         if not series:
             return None
         swing_level = float(np.nanmin(l[series]))
-        protected_level = float(np.nanmax(o[series]))  # body: highest open of red series
+        protected_level = float(o[series[0]])  # CISD: open of the first red candle of the series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=True)
         invalid_before_confirm = _first_after(c, protected_level, sweep_idx, above=False)
         if invalid_before_confirm is not None and (
             confirm_idx is None or invalid_before_confirm < confirm_idx
         ):
             confirm_idx = None
+        extreme_end = confirm_idx if confirm_idx is not None else len(c) - 1
+        sweep_extreme = float(np.nanmin(l[series[0]:extreme_end + 1]))
         invalidate_idx = (
-            invalidate_close(daily, protected_level, confirm_idx, above=False)
+            invalidate_close(daily, sweep_extreme, confirm_idx, above=False)
             if confirm_idx is not None
             else None
         )
@@ -500,15 +499,17 @@ def _build_fvg_candidate(
         if not series:
             return None
         swing_level = float(np.nanmax(h[series]))
-        protected_level = float(np.nanmin(o[series]))  # body: lowest open of green series
+        protected_level = float(o[series[0]])  # CISD: open of the first green candle of the series
         confirm_idx = confirm_close(daily, protected_level, sweep_idx, above=False)
         invalid_before_confirm = _first_after(c, protected_level, sweep_idx, above=True)
         if invalid_before_confirm is not None and (
             confirm_idx is None or invalid_before_confirm < confirm_idx
         ):
             confirm_idx = None
+        extreme_end = confirm_idx if confirm_idx is not None else len(c) - 1
+        sweep_extreme = float(np.nanmax(h[series[0]:extreme_end + 1]))
         invalidate_idx = (
-            invalidate_close(daily, protected_level, confirm_idx, above=True)
+            invalidate_close(daily, sweep_extreme, confirm_idx, above=True)
             if confirm_idx is not None
             else None
         )
@@ -528,10 +529,11 @@ def _build_fvg_candidate(
         state=state,
         confirm_date=(idx[confirm_idx] if confirm_idx is not None else None),
         confirmation_price=(float(c[confirm_idx]) if confirm_idx is not None else None),
-         invalidate_date=(idx[invalidate_idx] if invalidate_idx is not None else None),
-         gap_id=f"{gap.fvg_type}:{i}",
-         tag=TAG_FVG_BASED,
-     )
+        invalidate_date=(idx[invalidate_idx] if invalidate_idx is not None else None),
+        sweep_extreme=sweep_extreme,
+        gap_id=f"{gap.fvg_type}:{i}",
+        tag=TAG_FVG_BASED,
+    )
 
 
 def _lifecycle_state(daily: pd.DataFrame, confirm_idx: Optional[int], invalidate_idx: Optional[int]) -> str:
@@ -563,6 +565,17 @@ def _dedupe_events(events: List[ProtectedSwing]) -> List[ProtectedSwing]:
     return out
 
 
+def _shift_indices(ev: ProtectedSwing, offset: int) -> None:
+    """Re-base an event's positional indices from the scan window to the full frame."""
+    for name in ("idx", "sweep_idx", "confirm_idx", "invalidate_idx", "series_start", "series_end"):
+        value = getattr(ev, name)
+        if value is not None:
+            setattr(ev, name, int(value) + offset)
+    if ev.gap_id:
+        kind = ev.gap_id.split(":", 1)[0]
+        ev.gap_id = f"{kind}:{ev.idx}"
+
+
 def evaluate_protected_swings(
     daily: pd.DataFrame,
     swing_left: int = SWING_LEFT_BARS,
@@ -581,8 +594,12 @@ def evaluate_protected_swings(
     if d.empty or len(d) < 5:
         return ProtectedSwingAnalysis(events=[], active=None, anticipated=None, bias=0, note="insufficient_data")
 
-    # Restrict the scan to the recent window (keeps older noise out).
+    # Restrict the scan to the recent window (keeps older noise out). Event
+    # indices are shifted back by ``offset`` below so they stay positions in the
+    # caller's frame (callers compare e.g. ``confirm_idx == len(frame) - 1``).
+    offset = 0
     if len(d) > swing_lookback:
+        offset = len(d) - swing_lookback
         d = d.iloc[-swing_lookback:].copy()
 
     events: List[ProtectedSwing] = []
@@ -598,6 +615,9 @@ def evaluate_protected_swings(
             events.append(ev)
 
     events = _dedupe_events(events)
+    if offset:
+        for ev in events:
+            _shift_indices(ev, offset)
 
     confirmed = [e for e in events if e.state == STATE_CONFIRMED]
     confirmed.sort(key=lambda e: (e.confirm_idx if e.confirm_idx is not None else -1), reverse=True)

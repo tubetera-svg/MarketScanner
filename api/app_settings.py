@@ -1,7 +1,9 @@
 """Persisted app-level settings (automation, intervals, look-back days, show/hide).
 
 Stored in config/app_settings.json. Strategy on/off flags and the cross-scan
-tracker keep their own files (see strategy_bridge); this file holds the rest.
+tracker keep their own files (see strategy_bridge); this file holds the rest,
+including the ``strategy`` parameter block (LTF confirmation timeframe,
+propulsion mean-threshold definition) that src/all_strategy.py reads.
 Defaults preserve pre-existing behavior: only the Silver Bullet auto-schedule
 armed itself on boot, everything else was started manually.
 """
@@ -17,13 +19,23 @@ SETTINGS_PATH = ROOT / "config" / "app_settings.json"
 
 HIDEABLE_PAGES = ("watchlist", "ipo", "backtest")
 
+# Strategy parameters read by src/all_strategy.py (strategy_setting) and the
+# LTF confirmation watcher. First choice = default; keep in step with
+# all_strategy.STRATEGY_SETTING_CHOICES.
+STRATEGY_CHOICES: dict[str, tuple[str, ...]] = {
+    "ltf_timeframe": ("1h", "15m"),
+    "propulsion_mean_threshold": ("range", "body"),
+}
+
 DEFAULTS: dict[str, Any] = {
     "automation": {
         "scan_scheduler": {"enabled": False, "interval_minutes": 15},
         "silver_bullet_auto": {"enabled": True},
         "ipo_scanner": {"enabled": False, "interval_minutes": 60, "lookback_days": 7},
         "data_auto_sync": {"enabled": False, "lookback_days": 14},
+        "ltf_confirmation": {"enabled": False},
     },
+    "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
     "ui": {
         "hidden_strategies": [],
         "hidden_pages": [],
@@ -59,6 +71,8 @@ def _merge(base: dict[str, Any], patch: Any) -> dict[str, Any]:
                 pass
         elif isinstance(default, list) and isinstance(value, list):
             out[key] = sorted({str(item).strip() for item in value if str(item).strip()})
+        elif isinstance(default, str):
+            out[key] = str(value).strip()
     return out
 
 
@@ -67,6 +81,9 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
         block = settings["automation"][section]
         block[key] = max(low, min(high, int(block[key])))
     settings["ui"]["hidden_pages"] = [p for p in settings["ui"]["hidden_pages"] if p in HIDEABLE_PAGES]
+    for key, choices in STRATEGY_CHOICES.items():
+        if settings["strategy"][key] not in choices:
+            settings["strategy"][key] = choices[0]
     return settings
 
 

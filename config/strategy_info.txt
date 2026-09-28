@@ -1,9 +1,14 @@
 ### `propulsion_blocks`
 Point-in-time propulsion blocks: an order-block displacement, retracement into
 the block, opposite candle, and confirming displacement. The propulsion candle
-open is the entry reference and its midpoint is the invalidation threshold.
-After confirmation, the propulsion block is followed by a protected swing for
-the continuing directional structure.
+open is the entry reference (`entry`; the backtest still fills at the next
+open) and its mean threshold is the invalidation/stop level. The mean
+threshold is the midpoint of the propulsion candle's full range or of its body
+(Settings -> Strategy parameters). A close through the mean invalidates the
+block whether it lands before or after confirmation, and a block price closed
+through before the retrace is discarded. Targets use prior-week / pre-week
+swing liquidity (2R measured-move fallback). A confirmation arms an intraday
+confirmation for the next session (zone = propulsion open to mean).
 
 # Strategy Information
 
@@ -19,10 +24,11 @@ This file contains the exact conditions used by strategy runners in `all_strateg
 - POI rows are informational and do not create backtest positions.
 
 ### `candle_3_closure`
-- Reuses the active protected swing as the point of interest.
-- Requires Candle 2 to reach the POI and close in the opposing direction without a Candle 2 range sweep.
-- Requires Candle 3 to close beyond Candle 2's open in the protected direction.
-- Reports Candle 3 high, low, equilibrium, POI level, and direction only; Candle 4 expansion/retrace remains pending.
+- Detects Candle 2 and Candle 3 closures (TTrades fractal model) at a protected-swing POI; `closure_type` says which.
+- POI (as known before the reaction candles): the FVG -> swing -> CISD point of interest worked from the protected swing, then the protected (CISD) level itself.
+- Candle 2 closure (bullish; bearish mirrors): the latest candle reaches the POI, sweeps the previous candle's low and closes back above it.
+- Candle 3 closure: Candle 2 reached the POI, did NOT sweep Candle 1's low, and closed down; Candle 3 closes over Candle 2's body.
+- Reports the closure candle's high, low, equilibrium, POI level/type and direction; arms an intraday confirmation for the next session in the Candle 4 half (upper half bullish / lower half bearish).
 - Informational only: it does not emit entry, stop-loss, target, R:R, or backtest positions.
 
 ### `inside_bar_pattern_daily_sweep`
@@ -61,8 +67,10 @@ This file contains the exact conditions used by strategy runners in `all_strateg
 
 Six additional strategies in `all_strategy.py` model the weekly profile framework (Classic Expansion, Midweek Reversal, Consolidation Reversal, Intraweek Reversal, Thursday Counter, TGIF Setup). All of them:
 
-- Use only end-of-day NSE bhavcopy daily candles for the current calendar week (Mon=0..Fri=4 weekday tagging), so a mid-week scan evaluates the week in progress and a Friday/weekend anchor evaluates the completed week.
-- Approximate the videos' hourly "change in the state of delivery" confirmation with daily candle-two closures: a strong directional close (body >= 50% of the day range) through the prior day's range.
+- Use only end-of-day NSE bhavcopy daily candles for the current calendar week (Mon=0..Fri=4 weekday tagging), so a mid-week scan evaluates the week in progress and a Friday/weekend anchor evaluates the completed week. "Made on Mon/Tue" style checks use the weekday, so a holiday cannot shift the days.
+- Fire once per week: `final_signal` is True only on the first session a profile matches (earlier sessions of the week are re-evaluated point-in-time); later matching sessions stay listed with `note` "first signalled <date>".
+- A first match at Friday's close is a label only (`state=expired`, `friday_close_label_only`): the weekly profile has played out and the next entry would fall in a different week.
+- Approximate the videos' hourly "change in the state of delivery" confirmation with daily candle-two closures: a strong directional close (body >= 50% of the day range) through the prior day's range. When the intraday confirmation watcher is on, a fired profile also arms an hourly/15m CISD confirmation for the rest of the week (see "Intraday confirmation").
 - Share lookback 60 calendar days (`WEEKLY_PROFILE_LOOKBACK_DAYS`) to cover the pre-week swing/prior-week objective references.
 - Emit result columns `symbol`, `bullish_match`, `bearish_match`, `final_signal`, `status`, plus `profile` (human-readable label) and `note` (phase/detail string), keeping outputs clubbed per strategy in bull/bear/all files and in `main.py`'s combined `all_strategy_matches_*.csv`.
 
@@ -84,22 +92,23 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - `TGIF_EXPANSION_MIN_PCT = 0.01` — minimum expansion leg size off the weekly extreme before Friday may be faded.
 
 ### `classic_expansion_sweep`
-- Bullish requires: week's lowest low made Mon/Tue and never broken after; 1-3 post-extreme sessions (stops after 2-3 expansion days); latest close displaced beyond the first post-extreme open; latest session is a candle-two closure up (close > prior high, bullish body >= 50%) or, on Friday, an upward close vs the prior close (slowing tolerated).
+- Bullish requires: week's lowest low made Mon/Tue and never broken after; 1-3 post-extreme sessions (stops after 2-3 expansion days); latest close displaced beyond the first post-extreme open; latest session is a candle-two closure up (close > prior high, bullish body >= 50%) or, on Friday, an upward close vs the prior close (slowing tolerated — reported as a label only, never a trade, since Friday is not an expansion day).
 - Bearish is the mirror image with the week's highest high made Mon/Tue.
 - Notes report e.g. `extreme_d1_expand2_candle_two_closure`; rejections explain (`weekly_extreme_late_d3`, `expansion_days=4`, `candle_two_pending`, ...).
 
 ### `midweek_reversal_sweep`
-- Bullish requires: early-week decline (Tuesday closes below Monday's close and takes out Monday's low); Wednesday pivot reversal closure above Tuesday's high with a bullish close; every later session holds above the Wednesday pivot close. Matched already on Wednesday evening as `pivot_wed_await_thu_continuation`.
-- Bearish mirrors (early rally, Wednesday closes below Tuesday's low).
-- Wednesday is treated as THE pivot day per the source video.
+- Bullish requires: early-week decline (Tuesday closes below Monday's close and takes out Monday's low); Wednesday pivot reversal closure above Tuesday's high with a bullish close; every later session holds above the pivot close. Matched already on Wednesday evening as `pivot_wed_await_continuation`.
+- Thursday fallback (per the source): when Wednesday lacks a clean closure (`wednesday_unclear_await_thursday`), a Thursday closure above Wednesday's high with a bullish close is the pivot (`pivot_thu_fallback_*`). SL uses the Wed..pivot extreme.
+- Bearish mirrors (early rally, pivot closes below the prior day's low).
 
 ### `consolidation_reversal_sweep`
 - Mon-Wed must be a genuine consolidation: range width <= 5% of Wednesday's close AND net drift from Monday's open <= 2%.
 - Thursday must fake one side: trades beyond the consolidation high but closes back inside (bearish expectation), or below the low closing back inside (bullish expectation). Aggressive entry is signalled immediately on Thursday (`thursday_fake_break_aggressive_entry`).
 - If Friday exists it must expand opposite the fake break (close beyond Thursday's close) for `friday_expansion_confirmed`; a close back outside the range invalidates (`friday_invalidated`).
+- Target: the opposite side of the Mon-Wed consolidation range (source target).
 
 ### `intraweek_reversal_sweep`
-- Bullish requires: Monday directional expansion down (bearish body >= 50%); Tuesday stall (inside bar or body <= 40%); then a strong reversal closure (close beyond the prior day's high, bullish close, body >= 50%) on Wednesday or Thursday - Thursday fallback is allowed when Wednesday is not clean.
+- Bullish requires: Monday directional expansion down (bearish body >= 50%); Tuesday stall (inside bar or body <= 40%); then a reversal closure on Wednesday or Thursday - Thursday fallback is allowed when Wednesday is not clean. Either a Candle 2 closure (close beyond the prior day's high, bullish close, body >= 50%) or a Candle 3 closure (the prior day closed down without sweeping the day before it, and the pivot closes over its body) qualifies; the note says which (`candle_two_closure_dN` / `candle_three_closure_dN`).
 - Later sessions must hold the reversal structure (no close beyond the pivot day's opposite extreme).
 - Bearish mirrors (Monday expansion up, stall, downside reversal closure).
 
@@ -107,48 +116,60 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - Requires an established directional week by Wednesday: |Wednesday close - Monday open| >= 1% of price, with Wednesday extending the extreme (high for up-weeks, low for down-weeks).
 - Thursday must sweep liquidity against nothing - i.e. in an up-week take out Wednesday's high then fail, closing below Wednesday's close (bearish counter); mirror for down-weeks (bullish counter).
 - Signal fires Thursday evening (`thursday_counter_set_friday_pending`); Friday confirms continuation (`friday_continuation_confirmed`) or fails it (`friday_continuation_failed`).
+- Target: the weekly open (Monday's open), the source's most common target.
 
 ### `tgif_setup_sweep`
 - Critical rule enforced: no expansion + no HTF objective reached = no TGIF signal.
-- Requires: weekly extreme formed Mon/Tue; expansion leg completing Wed or Thu with move >= 1% off the weekly extreme; objective actually reached (prior week high/low or the highest/lowest of the 10 sessions before the week); then Friday retracing into the weekly range without new extremes (Friday fade signal - bearish after bullish weeks, bullish after bearish weeks).
-- Scenario handling: if scanned on Thursday with no Friday bar, "Thursday already reversed" variant matches when Thursday closes against the leg without exceeding its extreme (`thursday_reversed_friday_continuation`).
-- Target reference: 20-30% retracement into the weekly range (informational; not part of the match logic).
+- Requires: weekly extreme formed Mon/Tue; expansion leg completing Wed or Thu with move >= 1% off the weekly extreme; objective actually reached — prior week high/low, the 10-session pre-week extreme, or a swing high/low (equal highs/lows included) or FVG edge from the 20 sessions before the week (`TGIF_OBJECTIVE_SESSIONS`), counted only when it lies beyond the weekly open; then Friday retracing into the weekly range without new extremes (Friday fade signal - bearish after bullish weeks, bullish after bearish weeks).
+- Scenario handling: if scanned on Thursday with no Friday bar, "Thursday already reversed" variant matches when Thursday closes against the leg without exceeding its extreme (`thursday_reversed_friday_continuation`). This is the only tradeable variant on daily data; the Friday-close stage is a label (see "Fire once per week" above) and is traded intraday by the confirmation watcher instead.
+- Target: 25% retracement of the weekly range (`TGIF_RETRACE_TARGET_PCT`, midpoint of the source's 20-30%).
 
 ### `multi_timeframe_bias`
 - Replicates the ICT daily bias logic across daily, weekly, and monthly timeframes for backtesting and historical analysis.
-- Daily bias: compares current close to previous day's high/low, accounting for intraday range sweeps and body reclaim (same rules as `ict_scanner.py`).
-- Weekly bias: compares current close to previous completed week's high/low (W-FRI anchored).
+- Daily bias (TTrades rule): a close beyond the previous day's high/low continues that way; a sweep of one side that closes back inside the previous range shifts the bias to the other side. Conflicting reads (an outside day closing inside) are Neutral.
+- Weekly bias: same rule against the previous completed week's high/low (W-FRI anchored), including a sweep of last week's high/low that closes back inside.
 - Monthly bias: compares current close to previous completed month's high/low (month-end anchored).
 - Confluence scoring: Strong (3/3 aligned), Medium (2/3 aligned), Weak (1/3 aligned). Signals fire only when all non-neutral biases agree and confluence meets the active profile's threshold.
 - Strategy Profiles (from `config/strategy_profiles.json`) constrain the analysis to specific date ranges and set the minimum confluence required.
 - Asset selection: evaluates all provided symbols but only emits signals for those with sufficient daily/weekly/monthly history; insufficient-data symbols are marked `no_data`.
 - Output columns: `daily_bias`, `weekly_bias`, `monthly_bias`, `confluence`, `direction`, `entry`, `sl`, `target`, `rr`.
-- SL is previous day's low (bullish) or high (bearish). Target is the furthest higher-timeframe high/low available (weekly or monthly).
+- SL is previous day's low (bullish) or high (bearish). Target is the nearest completed weekly (last 8) or monthly (last 6) high/low still beyond entry — the next HTF draw on liquidity; levels price already broke are behind it. Fallback: a 2R measured move.
 
 ### `daily_bias_invalidation`
 - Establishes the daily bias from completed historical daily candles only.
-- Bullish bias is established when the latest historical close exceeds the prior day's high; bearish bias is the mirror condition.
-- The next completed candle must either close through the historical candle EQ or sweep the bias-side liquidity.
-- A following completed candle must continue in the opposite direction before a signal is emitted.
+- Bullish bias: the reference close exceeds the prior day's high, or the reference candle sweeps the prior low and closes back inside (a candle-2 closure); bearish is the mirror; conflicting reads are Neutral.
+- Invalidation (only two things count, per the source): an opposing setup — the next candle sweeps the reference candle's bias-side extreme and closes back inside it (an opposite candle 2) — or EQ disrespect — the next candle closes through the reference candle's EQ.
+- The following candle must continue the other way (close beyond the invalidation close) without reclaiming EQ.
 - Bullish bias invalidation produces only bearish continuation signals; bearish bias invalidation produces only bullish continuation signals.
-- Wicks, consolidation, drift, and EQ breaches without opposite continuation are ignored.
+- Target is the reference candle's opposite extreme; when price is already beyond it, target and R:R are left empty.
+- Wicks, consolidation, drift, and EQ breaches without opposite continuation are ignored. A signal arms an intraday confirmation for the next session.
 - The runner uses only data available through `as_of_date`, so live scans must provide closed bars and backtests cannot use future data.
 
 ### `protected_swings`
 - Self-contained strategy module (`src/protected_swings.py`) implementing ICT-style **protected swings**: a swing high/low that is expected to hold while the trend continues. Detection primitives are discrete and unit-tested in `tests/test_protected_swings.py`; the thin `run_protected_swings` runner in `all_strategy.py` plugs them into the standard `StrategyExecution` contract.
 - **Swings**: fractal detection (`detect_swing_points`, `SWING_LEFT_BARS=SWING_RIGHT_BARS=2`) identifies candidate short-term swing highs/lows.
 - **FVG**: `find_fvgs` scans the recent window for 3-candle fair value gaps using the *same definition* as `ict_scanner.detect_bullish_fvg`/`detect_bearish_fvg` (`c1.high < c3.low` bullish with a bullish c2; `c1.low > c3.high` bearish with a bearish c2).
-- **Sweep-based protected swing**: bullish — price runs below a recent swing low (liquidity sweep via `detect_liquidity_sweep`), then a candle *closes above the open (body)* of the down-close series that formed that low; bearish is the mirror (sweep above the high, then close *below the open* of the up-close series). Confirmation is CISD-style body (open), not the wick extreme.
-- **FVG-based protected swing**: price trades into an FVG zone (a low reaches `gap_high` for bullish / a high reaches `gap_low` for bearish), then a candle closes beyond the **open (body)** of the three candles that created the gap.
-- **Protected level**: the body-open extremum of the protecting series — `nanmax(open)` of the red (down-close) series for bullish, `nanmin(open)` of the green (up-close) series for bearish. Confirmed when the close breaches this level; invalidated when it later closes back beyond it.
+- **Sweep-based protected swing**: bullish — price runs below a recent swing low (liquidity sweep via `detect_liquidity_sweep`), then a candle *closes above the open* of the down-close series that delivered price into the sweep; bearish is the mirror. The series ends at the sweep candle when it closes in the series direction, otherwise (e.g. a hammer) at the candle before it — so a green sweep candle can itself confirm. Confirmation is CISD-style (open), not the wick extreme.
+- **FVG-based protected swing**: price trades into an FVG zone (a low reaches `gap_high` for bullish / a high reaches `gap_low` for bearish), then a candle closes beyond the open of the same-direction series immediately before that entry.
+- **Protected (CISD) level**: the open of the *first* candle of the protecting series (TTrades CISD definition). Confirmed when a close breaches it.
+- **Protected low/high (`sweep_extreme`)**: the extreme made from the sweep (or FVG series) through confirmation. A later close beyond it invalidates the swing; the stop is placed beyond it (+/- 1 ATR). Targets use prior-week / pre-week swing liquidity (2R measured-move fallback).
+- A confirmation arms an intraday confirmation for the next session (Candle 4 half of the confirmation candle, invalidation = the protected low/high).
 - **Formation tag**: every candidate carries `tag` = `sweep_based` or `fvg_based` (the pathway that produced it); surfaced in results and the UI chip (hover shows full level detail).
 - **Single-day event**: a swing is reported (and a trade plan produced) only on the session it is *confirmed*; a swing that merely persists into later sessions is not re-listed, so the same pattern does not reappear in scan results or re-fire a backtest trade every day. Anticipated (unconfirmed) swings are reported for awareness but never fire a signal.
-- **State machine per swing** (point-in-time, re-derived from the series truncated to `as_of_date`): `anticipated` (swept/traded-in but not yet confirmed) -> `confirmed` (qualifying close landed) -> `invalidated` (price later closes back beyond the protected level). A swing is only a *signal* once `confirmed`.
+- **State machine per swing** (point-in-time, re-derived from the series truncated to `as_of_date`): `anticipated` (swept/traded-in but not yet confirmed) -> `confirmed` (qualifying close landed) -> `invalidated` (price later closes back beyond the protected low/high). A swing is only a *signal* once `confirmed`.
 - **Trend / bias**: the most recent confirmed, non-invalidated protected swing sets the live bias — protected low -> bullish (buys), protected high -> bearish (sells). Each newer confirmed swing in the bias direction becomes the new active "stepping-stone" protected level; an opposite-direction swing flips the bias.
 - **Output**: one result row per symbol with `bullish_match`/`bearish_match`/`final_signal` (True only on the confirmation session), plus `profile`, `note`, `state`, `direction`, `entry`, `sl`/`target`/`rr`, `atr`, `track_mode`, `swing_level`, `protected_level` and `tag`. `entry`/`sl`/`target` reuse the project's standard `_build_trade_plan` (entry = current close, SL = swept swing extreme +/- 1x ATR buffer, target = measured move).
 - **No signal when anticipated**: an anticipated swing populates `state=anticipated` and the detail row but sets `final_signal=False`, so the backtest engine never opens a trade on an unconfirmed close (no look-ahead / repainting).
 - **Lookahead safety**: every primitive only ever reads indices <= the last available bar; the backtest engine slices the `daily_map` to `as_of_date` before calling the runner.
 - **Lookback**: `PROTECTED_SWINGS_LOOKBACK_DAYS = 80` (registered in `run_strategies`'s `lookback_by_strategy`).
+
+## Intraday confirmation (LTF)
+- The TTrades frameworks enter only after an intraday change in the state of delivery (CISD). Daily bars can only show that after the move, so fired signals from the weekly profiles, `daily_bias_invalidation`, `candle_3_closure`, `protected_swings` and `propulsion_blocks` also write `ltf_zone_low/high`, `ltf_invalidation`, `ltf_signal_date` and `ltf_valid_until` (next session; rest of the week for weekly profiles).
+- The watcher (Settings -> Intraday confirmation watcher; `GET /api/ltf-confirmation`, `POST /api/ltf-confirmation/check`) arms these once each market's daily bar is final, then replays completed TradingView bars (1h or 15m — Settings -> Strategy parameters) for armed symbols only through `src/ltf_confirmation.evaluate_ltf`: price must trade into the zone, then close beyond the open of the first candle of the latest opposite-colour series. A close through the invalidation first invalidates; the window running out expires it. Stop = the intraday extreme made in the zone. State persists in `config/ltf_setups.json`.
+- Backtests still run on daily bars only (daily proxy); no intraday history is stored yet.
+
+## Data guard
+- Every runner marks a symbol `status=stale` (no signal) when its latest daily bar is older than the session expected for `as_of_date` in that market (NSE calendar strictly; TradingView tolerates one missing session), so a suspended or unsynced symbol is not reported as current.
 
 ## ICT Scanner (`ict_scanner.py`)
 

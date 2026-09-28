@@ -9,6 +9,9 @@
       "interval_minutes": 60,
       "lookback_days": 7
     },
+    "ltf_confirmation": {
+      "enabled": true
+    },
     "scan_scheduler": {
       "enabled": false,
       "interval_minutes": 15
@@ -16,6 +19,10 @@
     "silver_bullet_auto": {
       "enabled": true
     }
+  },
+  "strategy": {
+    "ltf_timeframe": "1h",
+    "propulsion_mean_threshold": "range"
   },
   "ui": {
     "hidden_pages": [],

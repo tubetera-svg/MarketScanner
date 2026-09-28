@@ -6,7 +6,13 @@ The detector follows the convention used by the strategy runner:
 * displacement closes beyond that block;
 * price retraces into the block and prints an opposite-colour propulsion candle;
 * a later displacement close beyond the block confirms the propulsion block;
-* a close through the propulsion candle midpoint invalidates it.
+* a close through the propulsion candle's mean threshold invalidates it, whether
+  that close lands before or after confirmation;
+* a block that price closed through before the retrace is not a valid block.
+
+The mean threshold is the midpoint of the propulsion candle's full range
+(``MEAN_MODE_RANGE``, default) or of its body (``MEAN_MODE_BODY``); the source
+material does not pin it down, so the runner takes it from app settings.
 
 The frame passed to :func:`evaluate_propulsion_blocks` must already be truncated
 to the evaluation date. No provider or strategy-runner dependency is used here.
@@ -24,6 +30,10 @@ STATE_NONE = "none"
 STATE_ANTICIPATED = "anticipated"
 STATE_CONFIRMED = "confirmed"
 STATE_INVALIDATED = "invalidated"
+
+MEAN_MODE_RANGE = "range"  # (high + low) / 2 of the propulsion candle
+MEAN_MODE_BODY = "body"    # (open + close) / 2 of the propulsion candle
+MEAN_MODES = (MEAN_MODE_RANGE, MEAN_MODE_BODY)
 
 
 @dataclass
@@ -97,18 +107,30 @@ def _first_after_close(c: np.ndarray, level: float, start: int, bullish: bool) -
 
 
 def _resolve_state(
-    c: np.ndarray, confirm_idx: Optional[int], mean_threshold: float, direction: int
-) -> tuple[str, Optional[int]]:
-    if confirm_idx is None:
-        return STATE_ANTICIPATED, None
-    for index in range(confirm_idx + 1, len(c)):
+    c: np.ndarray, retrace_idx: int, confirm_idx: Optional[int], mean_threshold: float, direction: int
+) -> tuple[str, Optional[int], Optional[int]]:
+    """Return ``(state, invalidate_idx, confirm_idx)``.
+
+    The first close through the mean threshold after the propulsion candle
+    invalidates the block; if it lands before the confirming displacement the
+    block never confirms.
+    """
+    breach = None
+    for index in range(retrace_idx + 1, len(c)):
         if np.isfinite(c[index]) and (c[index] < mean_threshold if direction > 0 else c[index] > mean_threshold):
-            return STATE_INVALIDATED, index
-    return STATE_CONFIRMED, None
+            breach = index
+            break
+    if confirm_idx is None or (breach is not None and breach < confirm_idx):
+        if breach is not None:
+            return STATE_INVALIDATED, breach, None
+        return STATE_ANTICIPATED, None, None
+    if breach is not None:
+        return STATE_INVALIDATED, breach, confirm_idx
+    return STATE_CONFIRMED, None, confirm_idx
 
 
 def _candidate(
-    daily: pd.DataFrame, end: int, bullish: bool
+    daily: pd.DataFrame, end: int, bullish: bool, mean_mode: str = MEAN_MODE_RANGE
 ) -> Optional[PropulsionBlock]:
     o, h, l, c = _ohlc(daily)
     n = len(c)
@@ -127,6 +149,8 @@ def _candidate(
 
     retrace = None
     for index in range(impulse + 1, n):
+        if np.isfinite(c[index]) and (c[index] < block_low if bullish else c[index] > block_high):
+            return None  # block closed through before any retrace: no longer valid
         if _inside_block(o[index], h[index], l[index], c[index], block_low, block_high) and _same_colour(o[index], c[index], not bullish):
             retrace = index
             break
@@ -134,8 +158,11 @@ def _candidate(
         return None
 
     confirm = _first_after_close(c, block_high if bullish else block_low, retrace + 1, bullish)
-    mean_threshold = float((h[retrace] + l[retrace]) / 2.0)
-    state, invalidate = _resolve_state(c, confirm, mean_threshold, 1 if bullish else -1)
+    if mean_mode == MEAN_MODE_BODY:
+        mean_threshold = float((o[retrace] + c[retrace]) / 2.0)
+    else:
+        mean_threshold = float((h[retrace] + l[retrace]) / 2.0)
+    state, invalidate, confirm = _resolve_state(c, retrace, confirm, mean_threshold, 1 if bullish else -1)
     return PropulsionBlock(
         idx=retrace,
         date=daily.index[retrace],
@@ -163,19 +190,23 @@ def _candidate(
 def evaluate_propulsion_blocks(
     daily: pd.DataFrame,
     lookback: int = PROPULSION_BLOCKS_LOOKBACK_DAYS,
+    mean_mode: str = MEAN_MODE_RANGE,
 ) -> PropulsionBlockAnalysis:
     if daily.empty or len(daily) < 5:
         return PropulsionBlockAnalysis(note="insufficient_data")
-    frame = daily.iloc[-lookback:].copy() if len(daily) > lookback else daily.copy()
+    # Indices are shifted back by ``offset`` so they stay positions in ``daily``
+    # (the runner compares ``confirm_idx == len(frame) - 1``).
+    offset = max(len(daily) - lookback, 0)
+    frame = daily.iloc[offset:].copy()
     o, _h, _l, c = _ohlc(frame)
     events: List[PropulsionBlock] = []
     for end in range(len(frame) - 1):
         if _same_colour(o[end], c[end], False):
-            candidate = _candidate(frame, end, True)
+            candidate = _candidate(frame, end, True, mean_mode)
             if candidate is not None:
                 events.append(candidate)
         if _same_colour(o[end], c[end], True):
-            candidate = _candidate(frame, end, False)
+            candidate = _candidate(frame, end, False, mean_mode)
             if candidate is not None:
                 events.append(candidate)
 
@@ -183,6 +214,13 @@ def evaluate_propulsion_blocks(
     for event in events:
         unique[(event.direction, event.order_block_start, event.retrace_idx)] = event
     events = list(unique.values())
+    if offset:
+        for event in events:
+            for name in ("idx", "order_block_start", "order_block_end", "impulse_idx",
+                         "retrace_idx", "confirm_idx", "invalidate_idx"):
+                value = getattr(event, name)
+                if value is not None:
+                    setattr(event, name, int(value) + offset)
     confirmed = [event for event in events if event.state == STATE_CONFIRMED]
     anticipated = [event for event in events if event.state == STATE_ANTICIPATED]
     active = max(confirmed, key=lambda event: event.confirm_idx or -1, default=None)
@@ -208,6 +246,9 @@ __all__ = [
     "STATE_ANTICIPATED",
     "STATE_CONFIRMED",
     "STATE_INVALIDATED",
+    "MEAN_MODE_RANGE",
+    "MEAN_MODE_BODY",
+    "MEAN_MODES",
     "PropulsionBlock",
     "PropulsionBlockAnalysis",
     "evaluate_propulsion_blocks",

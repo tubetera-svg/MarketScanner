@@ -17,22 +17,39 @@ type Automation = {
   silver_bullet_auto: { enabled: boolean };
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
   data_auto_sync: { enabled: boolean; lookback_days: number };
+  ltf_confirmation: { enabled: boolean };
 };
-type Settings = { automation: Automation; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
+type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
+type Settings = { automation: Automation; strategy: StrategyParams; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
 type Payload = {
   settings: Settings;
   strategies: Strategy[];
   cross_scan_tracker_enabled: boolean;
   hideable_pages: string[];
+  strategy_choices: Record<keyof StrategyParams, string[]>;
   status: {
     scan_scheduler: { running: boolean; last_run_at: string | null; last_error: string | null };
     silver_bullet: { auto_armed: boolean };
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
     data_auto_sync: { running: boolean; last_run_at: string | null; last_error: string | null };
+    ltf_confirmation: { running: boolean; last_check_at: string | null; last_error: string | null };
   };
 };
 
 const PAGE_LABELS: Record<string, string> = { watchlist: "Database", ipo: "IPO", backtest: "Backtest" };
+const CHOICE_LABELS: Record<string, string> = {
+  "1h": "1 hour", "15m": "15 minutes",
+  range: "Full range (high + low) / 2", body: "Body (open + close) / 2",
+};
+
+function Choice({ value, options, label, onChange }: { value: string; options: string[]; label: string; onChange: (next: string) => void }) {
+  return (
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}
+      style={{ height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace", background: "var(--bg, transparent)", color: "inherit" }}>
+      {options.map((option) => <option key={option} value={option}>{CHOICE_LABELS[option] ?? option}</option>)}
+    </select>
+  );
+}
 
 function Row({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -175,6 +192,21 @@ export default function SettingsPage() {
             </Row>
             <Row title="Cross-scan setup tracker" hint="Tracks setups that appear across strategies">
               <Switch label="Cross-scan tracker" on={data.cross_scan_tracker_enabled} onChange={setTracker} />
+            </Row>
+            <Row title="Intraday confirmation watcher" hint={`Arms daily setups after each market's close, then waits for an intraday CISD in the next session — ${stateNote(status.ltf_confirmation.running, status.ltf_confirmation.last_check_at, status.ltf_confirmation.last_error)}`}>
+              <Switch label="Intraday confirmation watcher" on={auto.ltf_confirmation.enabled} onChange={(v) => patchAuto("ltf_confirmation", { enabled: v })} />
+            </Row>
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Strategy parameters</span><small>applies to the next scan</small></div>
+            <Row title="Intraday confirmation timeframe" hint="Bars the watcher uses to confirm a daily setup with a change in the state of delivery (CISD)">
+              <Choice label="Intraday confirmation timeframe" value={data.settings.strategy.ltf_timeframe} options={data.strategy_choices.ltf_timeframe}
+                onChange={(v) => save({ strategy: { ltf_timeframe: v } })} />
+            </Row>
+            <Row title="Propulsion block mean threshold" hint="Midpoint of the propulsion candle that a close must not cross (sets the invalidation and stop)">
+              <Choice label="Propulsion block mean threshold" value={data.settings.strategy.propulsion_mean_threshold} options={data.strategy_choices.propulsion_mean_threshold}
+                onChange={(v) => save({ strategy: { propulsion_mean_threshold: v } })} />
             </Row>
           </section>
 

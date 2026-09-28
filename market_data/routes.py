@@ -19,7 +19,8 @@ never trigger upstream NSE/TradingView requests.
 from __future__ import annotations
 
 import logging
-from datetime import date
+import time
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -27,11 +28,14 @@ from pydantic import BaseModel, Field
 
 from . import database
 from .config import (
+    IPO_MAX_AGE_DAYS,
     KNOWN_SOURCES,
     backdate_lookback_days,
     load_symbol_aliases,
     normalize_source,
     save_symbol_aliases,
+    source_enabled,
+    source_flag_name,
 )
 from .errors import FetchError, MarketDataError, NoDataError
 from .service import get_ohlc, resolve_session_source, sync_symbol_range
@@ -539,7 +543,7 @@ class IPODiscoverRequest(BaseModel):
 
 
 class IPOBackfillRequest(BaseModel):
-    days: int = Field(default=1098, ge=1, le=10000)
+    days: int = Field(default=IPO_MAX_AGE_DAYS, ge=1, le=10000)
 
 
 @router.get("/api/market-data/ipo/performance")
@@ -567,6 +571,26 @@ def read_ipo_review(reference_date: Optional[date] = Query(default=None)) -> dic
         return ipo_service.ipo_review(reference_date=reference_date)
     except Exception as exc:
         log.exception("Unhandled IPO review error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class DeleteIPORequest(BaseModel):
+    symbols: list[str] = Field(..., min_length=1)
+
+
+@router.delete("/api/market-data/ipo")
+def delete_ipos(request: DeleteIPORequest) -> dict:
+    """Permanently remove tracked IPOs from watchlist, categories and all DB tables."""
+    try:
+        from . import ipo as ipo_service
+
+        results = [
+            {"symbol": sym.strip().upper(), "removed": ipo_service.remove_ipo_completely(sym)}
+            for sym in dict.fromkeys(s for s in request.symbols if s.strip())
+        ]
+        return {"deleted": len(results), "results": results}
+    except Exception as exc:
+        log.exception("Unhandled IPO delete error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -619,6 +643,92 @@ def discover_ipos(request: IPODiscoverRequest) -> dict:
     except Exception as exc:  # unexpected – log full traceback
         log.exception("Unhandled IPO discovery error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+_CHART_CACHE: dict[tuple[str, str, int], tuple[float, dict]] = {}
+_CHART_TTL_SECONDS = {"5m": 20, "15m": 30, "1h": 60, "4h": 120, "1d": 300, "1w": 900, "1M": 1800}
+
+
+@router.get("/api/market-data/chart")
+def read_chart(
+    symbol: str = Query(..., min_length=1, max_length=80),
+    interval: str = Query("1d", pattern="^(5m|15m|1h|4h|1d|1w|1M)$"),
+    bars: int = Query(1000, ge=50, le=5000),
+) -> dict:
+    """Candles for the UI chart popup. Display only: nothing is stored.
+
+    Live bars come from TradingView (tvDatafeed), which serves NSE/BSE too,
+    unlike TradingView's embeddable widget. When that source is disabled or
+    fails, daily/weekly/monthly requests fall back to stored daily OHLC
+    (``interval_served="1d"``; the client rolls it up).
+    """
+    sym = symbol.strip().upper()
+    if ":" not in sym:
+        sym = f"NSE:{sym}"
+    key = (sym, interval, bars)
+    hit = _CHART_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _CHART_TTL_SECONDS[interval]:
+        return {**hit[1], "cached": True}
+
+    notes: list[str] = []
+    if source_enabled("TRADINGVIEW"):
+        tv_symbol: Optional[str] = sym
+        try:
+            if sym.split(":", 1)[0] in {"NSE", "BSE"}:
+                from . import tv_symbol as tv_service
+
+                tv_symbol = tv_service.resolve_tv_symbol(sym).get("tv_symbol")
+            if tv_symbol:
+                from .sources import tradingview_source
+
+                rows = tradingview_source.fetch_recent_bars(tv_symbol, interval, bars)
+                payload = {
+                    "symbol": sym,
+                    "tv_symbol": tv_symbol,
+                    "interval": interval,
+                    "interval_served": interval,
+                    "source": "TRADINGVIEW",
+                    "live": True,
+                    "notes": notes,
+                    "count": len(rows),
+                    "rows": rows,
+                }
+                _CHART_CACHE[key] = (time.monotonic(), payload)
+                return {**payload, "cached": False}
+            notes.append(f"{sym} was not found on TradingView (NSE/BSE).")
+        except Exception as exc:  # upstream/network: fall back to local data
+            log.warning("Chart fetch failed for %s %s: %s", sym, interval, exc)
+            notes.append(f"TradingView fetch failed: {exc}")
+    else:
+        notes.append(f"{source_flag_name('TRADINGVIEW')}=false: live candles disabled.")
+
+    if interval not in {"1d", "1w", "1M"}:
+        raise HTTPException(status_code=503, detail=" ".join(notes) or "Intraday data unavailable.")
+    try:
+        result = get_ohlc(
+            resolve_session_source(sym), sym, date.today() - timedelta(days=5 * 365 + 10), date.today(),
+            auto_fetch=False,
+        )
+    except NoDataError as exc:
+        raise HTTPException(status_code=404, detail=" ".join(notes + [str(exc)])) from exc
+    except (MarketDataError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=" ".join(notes + [str(exc)])) from exc
+    rows = [
+        {k: row.get(k) for k in ("date", "open", "high", "low", "close")} | {"volume": row.get("volume") or 0.0}
+        for row in result.rows
+    ]
+    return {
+        "symbol": sym,
+        "tv_symbol": None,
+        "interval": interval,
+        "interval_served": "1d",
+        "source": result.source,
+        "live": False,
+        "notes": notes + ["Showing stored daily bars."],
+        "count": len(rows),
+        "rows": rows,
+        "cached": False,
+    }
 
 
 @router.get("/api/market-data/tv-symbol")

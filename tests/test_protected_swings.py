@@ -234,6 +234,44 @@ def test_invalidated_after_confirmation():
     assert an.bias == 0
 
 
+def _hammer_rows(hammer):
+    """BULLISH_LOW up to the swing low, a red candle, then ``hammer`` sweeping 84."""
+    return BULLISH_LOW[:8] + [
+        (95, 96, 89, 90),     # 8 red: the down-close series into the sweep (open 95)
+        hammer,               # 9 green sweep candle (low 83 < 84)
+    ]
+
+
+def test_green_sweep_candle_uses_prior_red_series():
+    # A hammer that sweeps the low and closes up no longer disqualifies the
+    # swing: the red series before it defines the CISD level (95).
+    rows = _hammer_rows((90, 93, 83, 92)) + [(92, 100, 91, 97)]  # 10 closes 97 > 95
+    an = ps.evaluate_protected_swings(_df(rows))
+    assert an.active is not None and an.active.direction == 1
+    assert an.active.protected_level == 95.0
+    assert an.active.confirm_idx == 10
+    assert an.active.sweep_extreme == 83.0
+
+
+def test_green_sweep_candle_can_confirm_on_its_own_close():
+    an = ps.evaluate_protected_swings(_df(_hammer_rows((90, 97, 83, 96))))
+    assert an.active is not None and an.active.confirm_idx == 9
+
+
+def test_runner_confirms_on_frames_longer_than_scan_window():
+    # 100 gap-free rising bars (no swings, no FVGs) ahead of the setup push the
+    # frame past the 80-bar scan window. The confirmation day must still fire.
+    pad = [(50 + k * 0.3, 50 + k * 0.3 + 0.7, 50 + k * 0.3 - 0.5, 50 + k * 0.3 + 0.2) for k in range(100)]
+    frame = _df(pad + BULLISH_LOW[:11])
+    assert len(frame) > ps.PROTECTED_SWINGS_LOOKBACK_DAYS
+    an = ps.evaluate_protected_swings(frame)
+    assert an.active is not None and an.active.confirm_idx == len(frame) - 1
+    ex = all_strategy.run_protected_swings(
+        ["TEST"], as_of_date=frame.index[-1].date(), daily_map={"TEST": frame},
+    )
+    assert bool(ex.results.iloc[0]["final_signal"]) is True
+
+
 def test_anticipated_when_only_swept():
     an = ps.evaluate_protected_swings(_df(BULLISH_LOW[:10]))  # sweep bar idx9, no confirm
     assert an.active is None
@@ -338,8 +376,8 @@ def test_sweep_requires_directional_sweep_candle():
 
 
 def test_fvg_invalidated_before_confirmation_cannot_confirm_later():
-    rows = FVG_BULLISH + [
-        (116, 117, 100, 100),  # breaks bullish protection before recovery
+    rows = FVG_BULLISH[:5] + [
+        (101, 104, 95, 100),   # closes below the CISD level (115) before any confirmation
         (100, 120, 99, 121),   # later close above protection must not confirm
     ]
     analysis = ps.evaluate_protected_swings(_df(rows))
@@ -348,6 +386,18 @@ def test_fvg_invalidated_before_confirmation_cannot_confirm_later():
         for event in analysis.events
         if event.mode == ps.MODE_FVG
     )
+
+
+def test_fvg_invalidation_keys_off_protected_low_not_cisd_level():
+    # After confirmation a close back under the CISD open (115) is not
+    # invalidation; only a close through the protected low itself (90) is.
+    held = ps.evaluate_protected_swings(_df(FVG_BULLISH + [(116, 117, 100, 100)]))
+    fvg = [e for e in held.events if e.mode == ps.MODE_FVG]
+    assert fvg and fvg[0].state == ps.STATE_CONFIRMED
+    assert fvg[0].sweep_extreme == 90.0
+    broken = ps.evaluate_protected_swings(_df(FVG_BULLISH + [(116, 117, 88, 89)]))
+    fvg = [e for e in broken.events if e.mode == ps.MODE_FVG]
+    assert fvg and fvg[0].state == ps.STATE_INVALIDATED
 
 
 def test_signal_persists_while_no_newer_confirm():
@@ -462,6 +512,23 @@ def test_points_of_interest_prioritizes_fvg_from_protected_swing():
     assert all_strategy._select_point_of_interest(frame, active) == (108.0, "fvg")
 
 
+def test_points_of_interest_skips_fvg_closed_through():
+    frame = _df([
+        (100, 102, 99, 101),
+        (101, 104, 100, 103),
+        (103, 106, 102, 105),
+        (105, 108, 104, 107),  # protected swing confirmation anchor
+        (107, 109, 105, 108),
+        (108, 112, 111, 112),  # bullish FVG 108-111
+        (112, 118, 110, 116),  # bullish FVG 109-110
+        (116, 117, 106, 107),  # closes below both gaps -> spent
+        (107, 115, 106, 114),
+    ])
+    active = SimpleNamespace(confirm_idx=3, protected_level=100.0, direction=1)
+    poi = all_strategy._select_point_of_interest(frame, active)
+    assert poi is None or poi[1] != "fvg"
+
+
 def test_points_of_interest_is_not_a_backtest_signal():
     execution = all_strategy.run_points_of_interest(
         ["TEST"], as_of_date=date(2026, 1, 19), daily_map={"TEST": _df(BULLISH_LOW[:11])}
@@ -474,31 +541,63 @@ def test_points_of_interest_is_not_a_backtest_signal():
     assert "rr" not in execution.results.columns
 
 
-def test_candle_3_closure_reports_equilibrium_without_trade_plan(monkeypatch):
-    frame = _df([
-        (98, 100, 96, 99),    # history
-        (99, 103, 97, 101),   # history
-        (100, 105, 95, 102),  # Candle 1
-        (101, 104, 90, 99),   # Candle 2 reaches POI, fails bullish closure
-        (99, 110, 98, 106),   # Candle 3 closes above Candle 2 body
-    ])
-    active = SimpleNamespace(direction=1, protected_level=95.0, mode="sweep")
+def _patch_active(monkeypatch, direction=1, protected_level=96.5):
+    active = SimpleNamespace(direction=direction, protected_level=protected_level, mode="sweep")
     monkeypatch.setattr(
         all_strategy,
         "evaluate_protected_swings",
         lambda _frame: SimpleNamespace(active=active),
     )
-    assert all_strategy._candle_3_poi(frame) == (1, 95.0, "sweep")
+
+
+def test_candle_3_closure_reports_equilibrium_without_trade_plan(monkeypatch):
+    frame = _df([
+        (98, 100, 96, 99),    # history
+        (99, 103, 97, 101),   # history
+        (100, 105, 95, 102),  # Candle 1
+        (101, 104, 96, 99),   # Candle 2 reaches POI 96.5, holds candle 1's low (no sweep), closes down
+        (99, 110, 98, 106),   # Candle 3 closes over Candle 2's body
+    ])
+    _patch_active(monkeypatch)
+    closure = all_strategy._candle_closure(frame)
+    assert closure == {"closure_type": "candle_3", "direction": 1, "level": 96.5, "poi_type": "protected"}
     execution = all_strategy.run_candle_3_closure(
         ["TEST"], as_of_date=date(2026, 1, 7), daily_map={"TEST": frame}
     )
     row = execution.results.iloc[0]
     assert row["equilibrium"] == 104.0
+    assert row["closure_type"] == "candle_3"
     assert bool(row["bullish_match"]) is True
     assert bool(row["final_signal"]) is False
     assert "entry" not in execution.results.columns
     assert "sl" not in execution.results.columns
     assert "rr" not in execution.results.columns
+
+
+def test_candle_3_rejected_when_candle_2_swept_candle_1_low(monkeypatch):
+    # Candle 2 took candle 1's low (95 -> 90): that is candle-2 territory, not a
+    # candle 3 closure, even though candle 3 closes over candle 2's body.
+    frame = _df([
+        (98, 100, 96, 99), (99, 103, 97, 101),
+        (100, 105, 95, 102),
+        (101, 104, 90, 99),
+        (99, 110, 98, 106),
+    ])
+    _patch_active(monkeypatch)
+    assert all_strategy._candle_closure(frame) is None
+
+
+def test_candle_2_closure_sweeps_and_closes_back_inside(monkeypatch):
+    frame = _df([
+        (98, 100, 96, 99), (99, 103, 97, 101), (101, 104, 99, 102),
+        (100, 105, 97, 98),   # Candle 1
+        (98, 101, 94, 100),   # Candle 2: reaches POI, sweeps 97, closes back inside
+    ])
+    _patch_active(monkeypatch)
+    closure = all_strategy._candle_closure(frame)
+    assert closure is not None
+    assert closure["closure_type"] == "candle_2"
+    assert closure["direction"] == 1
 
 
 def test_protected_swings_registered_in_registry_and_lookback():

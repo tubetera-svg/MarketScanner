@@ -26,6 +26,7 @@ INFO_PATH = ROOT / "config" / "strategy_info.txt"
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 from weekly_profile_tracker import ProfileTrackerStore  # noqa: E402
+from market_data.service import is_crypto_symbol  # noqa: E402
 
 CORE_STRATEGIES = [
     ("inside_bar_pattern_daily_sweep", "Inside Bar Pattern"),
@@ -211,7 +212,11 @@ def run_scan(
         raise ValueError("No symbols selected — pick watchlist symbols first.")
 
     requested_date = anchor_date if isinstance(anchor_date, date) else date.today()
-    _requested, resolved_date, reason = module.resolve_previous_working_date(requested_date)
+    if any(is_crypto_symbol(sym) for sym in cleaned_symbols):
+        # Crypto trades 24x7: weekends/NSE holidays are valid testing dates.
+        resolved_date, reason = requested_date, None
+    else:
+        _requested, resolved_date, reason = module.resolve_previous_working_date(requested_date)
 
     executions = module.run_strategies(
         strategy_names=requested,
@@ -292,6 +297,54 @@ def run_scan(
         "tracker_alerts": tracker_alerts,
         "tracker_active_count": tracker_active_count,
     }
+
+
+# Strategies whose daily signals arm an intraday (LTF) CISD confirmation.
+LTF_STRATEGIES = {
+    "daily_bias_invalidation", "protected_swings", "candle_3_closure", "propulsion_blocks",
+} | _WEEKLY_NAMES
+
+
+def collect_ltf_setups(symbols: list[str], as_of: date) -> list[Any]:
+    """Run the enabled LTF-capable strategies on daily bars for ``as_of`` and
+    return an ``LtfSetup`` for every row that armed an intraday confirmation."""
+    from ltf_confirmation import LtfSetup, market_for_symbol, setup_key
+
+    module = load_module()
+    catalog, _master = list_strategies()
+    names = [item["name"] for item in catalog if item["enabled"] and item["name"] in LTF_STRATEGIES]
+    cleaned = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
+    if not names or not cleaned:
+        return []
+    executions = module.run_strategies(
+        strategy_names=names, symbols=cleaned, as_of_date=as_of, parallel=True, timeframe="daily",
+    )
+    setups: list[Any] = []
+    for execution in executions:
+        if "ltf_valid_until" not in execution.results.columns:
+            continue
+        for rec in _records(execution.results):
+            if not rec.get("ltf_valid_until") or not rec.get("ltf_signal_date"):
+                continue
+            direction = 1 if rec.get("bullish_match") else (-1 if rec.get("bearish_match") else 0)
+            if direction == 0:
+                continue
+            symbol = str(rec["symbol"]).upper()
+            setups.append(LtfSetup(
+                key=setup_key(symbol, execution.name, str(rec["ltf_signal_date"]), direction),
+                symbol=symbol,
+                strategy=execution.name,
+                direction=direction,
+                zone_low=float(rec["ltf_zone_low"]),
+                zone_high=float(rec["ltf_zone_high"]),
+                invalidation=float(rec["ltf_invalidation"]),
+                signal_date=str(rec["ltf_signal_date"]),
+                valid_until=str(rec["ltf_valid_until"]),
+                market=market_for_symbol(symbol),
+                target=(float(rec["target"]) if rec.get("target") is not None else None),
+                note=str(rec.get("note") or ""),
+            ))
+    return setups
 
 
 def _write_combined(groups: list[dict[str, Any]], resolved_date: date) -> str | None:

@@ -176,3 +176,57 @@ def fetch_daily(
     store_symbol: Optional[str] = None,
 ) -> list[dict]:
     return fetch_timeframe(symbol, start_date, end_date, "1d", exchange, store_symbol)
+
+
+_CHART_INTERVALS = {
+    "5m": "in_5_minute",
+    "15m": "in_15_minute",
+    "1h": "in_1_hour",
+    "4h": "in_4_hour",
+    "1d": "in_daily",
+    "1w": "in_weekly",
+    "1M": "in_monthly",
+}
+_INTRADAY_CHART = {"5m", "15m", "1h", "4h"}
+
+
+def fetch_recent_bars(symbol: str, interval: str, n_bars: int) -> list[dict]:
+    """Most recent ``n_bars`` bars for display only (never stored).
+
+    Intraday bars are labelled ``YYYY-MM-DDTHH:MM`` in IST; higher timeframes
+    use the IST date of the bar open, matching :func:`fetch_timeframe`.
+    """
+    if interval not in _CHART_INTERVALS:
+        raise ValueError(f"Unsupported chart interval: {interval}")
+    exchange_name, sym = split_symbol(symbol)
+    tv = _get_client()
+    from tvDatafeed import Interval
+
+    df = tv.get_hist(
+        symbol=sym,
+        exchange=exchange_name,
+        interval=getattr(Interval, _CHART_INTERVALS[interval]),
+        n_bars=max(10, min(int(n_bars), 5000)),
+    )
+    if df is None or len(df) == 0:
+        raise RuntimeError(f"TradingView returned no {interval} data for {exchange_name}:{sym}")
+
+    rows: list[dict] = []
+    for index, row in df.iterrows():
+        if not hasattr(index, "to_pydatetime"):
+            continue
+        # tvDatafeed stamps bars with naive machine-local open time.
+        opened = index.to_pydatetime().astimezone(_IST)
+        volume = row.get("volume")
+        rows.append(
+            {
+                "date": opened.strftime("%Y-%m-%dT%H:%M") if interval in _INTRADAY_CHART else opened.date().isoformat(),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(volume) if volume is not None and volume == volume else 0.0,
+            }
+        )
+    rows.sort(key=lambda item: item["date"])
+    return rows

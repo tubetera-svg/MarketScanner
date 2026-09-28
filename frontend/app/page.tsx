@@ -58,6 +58,31 @@ type SilverBulletSignal = {
   target: number;
   note: string;
 };
+type LtfSetup = {
+  key: string;
+  symbol: string;
+  strategy: string;
+  direction: number;
+  zone_low: number;
+  zone_high: number;
+  invalidation: number;
+  signal_date: string;
+  valid_until: string;
+  state: "armed" | "triggered" | "invalidated" | "expired";
+  entry: number | null;
+  sl: number | null;
+  target: number | null;
+  triggered_at: string | null;
+  note: string;
+};
+type LtfStatus = {
+  running: boolean;
+  timeframe: string;
+  armed_count: number;
+  last_check_at: string | null;
+  last_error: string | null;
+  setups: LtfSetup[];
+};
 type SilverBulletStatus = {
   running: boolean;
   symbols: string[];
@@ -407,6 +432,10 @@ export default function Home() {
   const [schedule, setSchedule] = useState<ScheduleStatus | null>(null);
     const [silverBullet, setSilverBullet] = useState<SilverBulletStatus | null>(null);
   const [silverBulletLoading, setSilverBulletLoading] = useState(false);
+  const [ltf, setLtf] = useState<LtfStatus | null>(null);
+  const [ltfChecking, setLtfChecking] = useState(false);
+  const announcedLtfRef = useRef<Set<string>>(new Set());
+  const ltfSeededRef = useRef(false);
     const announcedSilverBulletRef = useRef<Set<string>>(new Set());
   const [intervalMinutes, setIntervalMinutes] = useState("15");
   const [countdown, setCountdown] = useState(0);
@@ -428,6 +457,7 @@ export default function Home() {
   const [crossScanTrackerEnabled, setCrossScanTrackerEnabled] = useState(false);
   const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
   const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
+  const [strategyResultsGroupBy, setStrategyResultsGroupBy] = useState<"strategy" | "symbol">("strategy");
   const [activeSection, setActiveSection] = useState<"scan" | "alerts" | "strategies" | "tracker">("scan");
   const [scanProgress, setScanProgress] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({
@@ -1053,6 +1083,44 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, []);
 
+  // Intraday (LTF) confirmation watcher: armed daily setups and their CISD
+  // triggers. Runs server-side (Settings -> Intraday confirmation watcher).
+  useEffect(() => {
+    const poll = () => {
+      fetch(`${API}/api/ltf-confirmation`, { cache: "no-store" })
+        .then((response) => response.json())
+        .then((data: LtfStatus) => setLtf(data))
+        .catch(() => {});
+    };
+    poll();
+    const id = window.setInterval(poll, 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!ltf) return;
+    // The first poll only records what already triggered, so a page load is silent.
+    const seeded = ltfSeededRef.current;
+    ltfSeededRef.current = true;
+    for (const setup of ltf.setups) {
+      if (setup.state !== "triggered" || announcedLtfRef.current.has(setup.key)) continue;
+      announcedLtfRef.current.add(setup.key);
+      if (seeded) playAlertSound(true);
+    }
+  }, [ltf]);
+
+  const checkLtfNow = async () => {
+    setLtfChecking(true);
+    try {
+      const response = await fetch(`${API}/api/ltf-confirmation/check`, { method: "POST" });
+      if (response.ok) setLtf(await response.json());
+    } catch {
+      // status poll will retry
+    } finally {
+      setLtfChecking(false);
+    }
+  };
+
   useEffect(() => {
     for (const signal of silverBullet?.signals ?? []) {
       if (announcedSilverBulletRef.current.has(signal.id)) continue;
@@ -1154,6 +1222,66 @@ export default function Home() {
           : a.key.localeCompare(b.key),
       );
   }, [trackerSetups, trackerGroupBy]);
+  const strategySymbolGroups = useMemo(() => {
+    const map = new Map<string, { symbol: string; bull: number; bear: number; items: { strategy: string; label: string; side: "bull" | "bear"; row: StrategyRow }[] }>();
+    for (const group of strategyGroups) {
+      for (const [side, rows] of [["bull", group.bullish], ["bear", group.bearish]] as const) {
+        for (const row of rows) {
+          let bucket = map.get(row.symbol);
+          if (!bucket) {
+            bucket = { symbol: row.symbol, bull: 0, bear: 0, items: [] };
+            map.set(row.symbol, bucket);
+          }
+          bucket[side] += 1;
+          bucket.items.push({ strategy: group.strategy, label: group.label, side, row });
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.items.length - a.items.length || a.symbol.localeCompare(b.symbol));
+  }, [strategyGroups]);
+  const renderSignalChip = (row: StrategyRow, side: "bull" | "bear", strategy: string, key: string, heading: string) => (
+    <a key={key} href={row.tradingview_link ?? "#"} rel="noreferrer" className={`signal-chip ${side}`} onClick={(event) => openTradingViewChart(event, row)}>
+      {side === "bull" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      <strong>{heading}</strong>
+      {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
+        <span className="bias-badges">
+          {biasBadge(row.monthly_bias, "M")}
+          {biasBadge(row.weekly_bias, "W")}
+          {biasBadge(row.daily_bias, "D")}
+        </span>
+      )}
+      {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
+      {strategy !== "protected_swings" && row.entry != null && (
+        (() => {
+          const detail = "E " + row.entry + (row.sl != null ? ` — SL ${row.sl}` : "") + (row.target != null ? ` — T ${row.target}` : "") + (row.rr != null ? ` — R:R ${row.rr}` : "") + (row.tag ? ` — ${row.tag}` : "");
+          return <small title={detail}>{detail}</small>;
+        })()
+      )}
+      {strategy === "propulsion_blocks" && row.triggered_level != null && (
+        <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
+          PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` — OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
+        </small>
+      )}
+      {strategy === "protected_swings" && row.tag && (
+        <small title={row.note ?? row.tag}>
+          {row.tag === "fvg_based" ? "fvg" : "sweep"}={row.swing_level?.toFixed(2) ?? "-"}
+        </small>
+      )}
+      {row.entry == null && row.note && (
+        <span className="note-tooltip-wrap">
+          <span className="note-tooltip-text">{row.note}</span>
+          <span className="note-tooltip-content">{row.note}</span>
+        </span>
+      )}
+      {(row.flip_level != null || row.signal_date) && (
+        <small>
+          {row.flip_level != null && `Lvl ${row.flip_level}`}
+          {row.signal_date ? `${row.flip_level != null ? " — " : ""}${row.signal_date}` : ""}
+        </small>
+      )}
+      {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
+    </a>
+  );
 
   const commandPaletteItems = useMemo(() => {
     const items: { id: string; label: string; category: string; action: () => void; keywords: string[] }[] = [];
@@ -1373,6 +1501,38 @@ export default function Home() {
                 )}
               </section>
             ) : null}
+            {ltf && (ltf.running || ltf.setups.length > 0) ? (
+              <section className="panel silver-bullet-results" id="ltf-confirmation" style={{ marginBottom: 16 }}>
+                <div className="panel-heading">
+                  <span>Intraday confirmations</span>
+                  <small>
+                    {ltf.running ? `watching ${ltf.armed_count} armed · ${ltf.timeframe} CISD` : "watcher off (Settings)"}
+                    {ltf.last_check_at ? ` · checked ${new Date(ltf.last_check_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </small>
+                  <button className="test-button button-secondary" type="button" onClick={checkLtfNow} disabled={ltfChecking}>
+                    {ltfChecking ? <RefreshCw size={12} className="spin" /> : <RefreshCw size={12} />} Check now
+                  </button>
+                </div>
+                {ltf.last_error && <p className="date-note" title={ltf.last_error}>Last check had errors: {ltf.last_error.slice(0, 140)}</p>}
+                {ltf.setups.some((setup) => setup.state === "armed" || setup.state === "triggered") ? (
+                  <div className="tracker-list">
+                    {ltf.setups.filter((setup) => setup.state === "armed" || setup.state === "triggered").map((setup) => (
+                      <div key={setup.key} className={`signal-chip ${setup.direction > 0 ? "bull" : "bear"}`} title={setup.note}>
+                        {setup.direction > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                        <strong>{setup.symbol}</strong>
+                        <small>
+                          {setup.strategy.replace(/_/g, " ")} · {setup.state === "triggered"
+                            ? `TRIGGERED ${setup.entry ?? ""} · SL ${setup.sl ?? ""}${setup.target != null ? ` · T ${setup.target}` : ""}`
+                            : `armed zone ${setup.zone_low}–${setup.zone_high} · until ${setup.valid_until}`}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="date-note">No armed setups yet — they are added after each market's daily close.</p>
+                )}
+              </section>
+            ) : null}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", marginTop: 8 }}>
         {dateNote && <p className="date-note">Testing date: {dateNote.requested}{dateNote.reason ? ` was unavailable (${dateNote.reason}); using ${dateNote.resolved}.` : ` using ${dateNote.resolved}.`}</p>}
         {syncSummary && (
@@ -1530,98 +1690,26 @@ export default function Home() {
         </div>
         {strategyDateNote && <p className="date-note">{strategyDateNote}</p>}
         {strategyGroups.length > 0 && (
+          <div className="tracker-groupby" role="group" aria-label="Group strategy results by" style={{ marginBottom: 8 }}>
+            <span className="filter-label">Group</span>
+            <div className="filters">
+              {(["strategy", "symbol"] as const).map((option) => (
+                <button key={option} type="button" className={`${strategyResultsGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setStrategyResultsGroupBy(option)}>
+                  {option === "strategy" ? "Strategy" : "Symbol"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {strategyGroups.length > 0 && strategyResultsGroupBy === "strategy" && (
           <div className="strategy-results">
             {strategyGroups.map((group) => (
               <details key={group.strategy} className="strategy-result" open>
                 <summary>{group.label}{group.total > 0 && (group.has_live_data ? <span className="mode-badge live" style={{ marginLeft: 8 }}><Radio size={10} /> Live</span> : <span className="mode-badge hist" style={{ marginLeft: 8 }}><History size={10} /> Historic</span>)} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull_count} BULL</span><span className="badge bearish">{group.bear_count} BEAR</span></span></summary>
                 {group.bull_count + group.bear_count > 0 ? (
                   <div className="signal-list">
-                    {group.bullish.map((row) => (
-                      <a key={`bull-${row.symbol}`} href={row.tradingview_link ?? "#"} rel="noreferrer" className="signal-chip bull" onClick={(event) => openTradingViewChart(event, row)}>
-                        <ArrowUpRight size={12} />
-                        <strong>{row.symbol}</strong>
-                        {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
-                          <span className="bias-badges">
-                            {biasBadge(row.monthly_bias, "M")}
-                            {biasBadge(row.weekly_bias, "W")}
-                            {biasBadge(row.daily_bias, "D")}
-                          </span>
-                        )}
-                        {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
-                        {group.strategy !== "protected_swings" && row.entry != null && (
-                          (() => {
-                            const detail = "E " + row.entry + (row.sl != null ? ` — SL ${row.sl}` : "") + (row.target != null ? ` — T ${row.target}` : "") + (row.rr != null ? ` — R:R ${row.rr}` : "") + (row.tag ? ` — ${row.tag}` : "");
-                            return <small title={detail}>{detail}</small>;
-                          })()
-                        )}
-                        {group.strategy === "propulsion_blocks" && row.triggered_level != null && (
-                          <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
-                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` — OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
-                          </small>
-                        )}
-                        {group.strategy === "protected_swings" && row.tag && (
-                          <small title={row.note ?? row.tag}>
-                            {row.tag === "fvg_based" ? "fvg" : "sweep"}={row.swing_level?.toFixed(2) ?? "-"}
-                          </small>
-                        )}
-                        {row.entry == null && row.note && (
-                          <span className="note-tooltip-wrap">
-                            <span className="note-tooltip-text">{row.note}</span>
-                            <span className="note-tooltip-content">{row.note}</span>
-                          </span>
-                        )}
-                        {(row.flip_level != null || row.signal_date) && (
-                          <small>
-                            {row.flip_level != null && `Lvl ${row.flip_level}`}
-                            {row.signal_date ? ` — ${row.signal_date}` : ""}
-                          </small>
-                        )}
-                        {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
-                      </a>
-                    ))}
-                    {group.bearish.map((row) => (
-                      <a key={`bear-${row.symbol}`} href={row.tradingview_link ?? "#"} rel="noreferrer" className="signal-chip bear" onClick={(event) => openTradingViewChart(event, row)}>
-                        <ArrowDownRight size={12} />
-                        <strong>{row.symbol}</strong>
-                        {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
-                          <span className="bias-badges">
-                            {biasBadge(row.monthly_bias, "M")}
-                            {biasBadge(row.weekly_bias, "W")}
-                            {biasBadge(row.daily_bias, "D")}
-                          </span>
-                        )}
-                        {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
-                        {group.strategy !== "protected_swings" && row.entry != null && (
-                          (() => {
-                            const detail = "E " + row.entry + (row.sl != null ? ` — SL ${row.sl}` : "") + (row.target != null ? ` — T ${row.target}` : "") + (row.rr != null ? ` — R:R ${row.rr}` : "") + (row.tag ? ` — ${row.tag}` : "");
-                            return <small title={detail}>{detail}</small>;
-                          })()
-                        )}
-                        {group.strategy === "propulsion_blocks" && row.triggered_level != null && (
-                          <small title="PB is the propulsion candle open; OB mid is the order-block midpoint">
-                            PB={row.triggered_level.toFixed(2)}{row.order_block_midpoint != null ? ` — OB mid ${row.order_block_midpoint.toFixed(2)}` : ""}
-                          </small>
-                        )}
-                        {group.strategy === "protected_swings" && row.tag && (
-                          <small title={row.note ?? row.tag}>
-                            {row.tag === "fvg_based" ? "fvg" : "sweep"}={row.swing_level?.toFixed(2) ?? "-"}
-                          </small>
-                        )}
-                        {row.entry == null && row.note && (
-                          <span className="note-tooltip-wrap">
-                            <span className="note-tooltip-text">{row.note}</span>
-                            <span className="note-tooltip-content">{row.note}</span>
-                          </span>
-                        )}
-                        {(row.flip_level != null || row.signal_date) && (
-                          <small>
-                            {row.flip_level != null && `Lvl ${row.flip_level}`}
-                            {row.signal_date ? ` — ${row.signal_date}` : ""}
-                          </small>
-                        )}
-                        {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
-                      </a>
-                    ))}
+                    {group.bullish.map((row) => renderSignalChip(row, "bull", group.strategy, `bull-${row.symbol}`, row.symbol))}
+                    {group.bearish.map((row) => renderSignalChip(row, "bear", group.strategy, `bear-${row.symbol}`, row.symbol))}
                   </div>
                 ) : (
                   <div className="empty small-empty"><SearchX size={14} /> No matches for this strategy.</div>
@@ -1629,6 +1717,22 @@ export default function Home() {
               </details>
             ))}
           </div>
+        )}
+        {strategyGroups.length > 0 && strategyResultsGroupBy === "symbol" && (
+          strategySymbolGroups.length > 0 ? (
+            <div className="strategy-results">
+              {strategySymbolGroups.map((group) => (
+                <details key={group.symbol} className="strategy-result" open>
+                  <summary>{group.symbol} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull} BULL</span><span className="badge bearish">{group.bear} BEAR</span></span></summary>
+                  <div className="signal-list">
+                    {group.items.map((item) => renderSignalChip(item.row, item.side, item.strategy, `${item.strategy}-${item.side}-${group.symbol}`, item.label))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          ) : (
+            <div className="empty small-empty"><SearchX size={14} /> No matches for any strategy.</div>
+          )
         )}
 </details>
       <section className="panel tracker-panel" id="tracker" ref={(el) => { sectionRefs.current.tracker = el; }}>

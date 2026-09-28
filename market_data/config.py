@@ -166,4 +166,7 @@ IPO_MIN_AVG_DAILY_VALUE_CR = float(
 )
 IPO_MIN_ACTIVE_RATIO = float(os.environ.get("IPO_MIN_ACTIVE_RATIO", "0.5"))
 IPO_MASTER_REFRESH_DAYS = int(os.environ.get("IPO_MASTER_REFRESH_DAYS", "1"))
+# A tracked IPO older than this (calendar days since listing) is suggested for
+# deletion by the IPO review; also caps backfill depth and the discovery scan.
+IPO_MAX_AGE_DAYS = int(os.environ.get("IPO_MAX_AGE_DAYS", str(3 * 365)))
 

@@ -27,7 +27,7 @@ import app_settings  # noqa: E402  (persisted automation / show-hide settings)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data  # noqa: E402
-from market_data.liquidity_screener import screen_all_ipos, remove_symbol_everywhere  # noqa: E402
+from market_data.liquidity_screener import screen_all_ipos  # noqa: E402
 
 
 class ScanRequest(BaseModel):
@@ -751,6 +751,168 @@ class IPOScanner:
 ipo_scanner = IPOScanner()
 
 
+class LtfConfirmationWatcher:
+    """Intraday (1h/15m) CISD confirmation of armed daily setups.
+
+    Arming: once a market's daily bar is final (NSE after the 17:00 IST
+    bhavcopy; forex/commodities after the NY 17:00 rollover) the enabled
+    LTF-capable strategies run over that market's watchlist symbols for the
+    session, and every row carrying an ``ltf_*`` zone is stored as an armed
+    setup (config/ltf_setups.json via ``ltf_confirmation.LtfSetupStore``).
+
+    Confirmation: each poll fetches intraday bars from TradingView for armed
+    symbols only and replays the completed bars through
+    ``ltf_confirmation.evaluate_ltf`` (the same pure function a future intraday
+    backtest would use). While a market is closed the last fetched bars are
+    reused, so closed sessions cost no requests. Transitions (armed, triggered,
+    invalidated, expired) are kept as alerts for the UI.
+    """
+
+    POLL_SECONDS = 120
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task[None] | None = None
+        self.last_check_at: str | None = None
+        self.last_error: str | None = None
+        self.last_arm: dict[str, str] = {}
+        self.alerts: list[dict[str, Any]] = []
+        self.run_count = 0
+        self._bars: dict[str, Any] = {}
+        self._fetched_while_closed: set[str] = set()
+
+    @staticmethod
+    def _timeframe() -> str:
+        return app_settings.load_settings()["strategy"]["ltf_timeframe"]
+
+    def start(self) -> dict[str, Any]:
+        self.stop()
+        self.task = asyncio.create_task(self._loop())
+        return self.status()
+
+    def stop(self) -> dict[str, Any]:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+        self.task = None
+        return self.status()
+
+    def status(self) -> dict[str, Any]:
+        from ltf_confirmation import LtfSetupStore
+
+        setups = sorted(LtfSetupStore().load().values(), key=lambda s: s.updated_at or "", reverse=True)
+        return {
+            "running": self.task is not None and not self.task.done(),
+            "timeframe": self._timeframe(),
+            "last_check_at": self.last_check_at,
+            "last_error": self.last_error,
+            "last_arm": dict(self.last_arm),
+            "run_count": self.run_count,
+            "armed_count": sum(1 for s in setups if s.state == "armed"),
+            "alerts": self.alerts[-50:],
+            "setups": [{k: v for k, v in asdict(s).items() if k != "events"} for s in setups[:200]],
+        }
+
+    async def _loop(self) -> None:
+        while True:
+            try:
+                await self.check()
+            except Exception as exc:  # keep the watcher alive across one bad poll
+                logging.getLogger(__name__).exception("LTF confirmation poll failed")
+                self.last_error = str(exc)
+            await asyncio.sleep(self.POLL_SECONDS)
+
+    async def check(self, force_arm: bool = False) -> dict[str, Any]:
+        """Arm any newly final sessions, then replay intraday bars for armed setups."""
+        self.last_check_at = datetime.now(timezone.utc).isoformat()
+        errors = await self._arm_due(force_arm)
+        errors += await self._confirm()
+        self.last_error = "; ".join(errors) if errors else None
+        self.run_count += 1
+        return self.status()
+
+    def _alert(self, setup: Any, state: str) -> None:
+        self.alerts.append({
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "symbol": setup.symbol, "strategy": setup.strategy, "state": state,
+            "direction": setup.direction, "entry": setup.entry, "sl": setup.sl,
+            "target": setup.target, "note": setup.note,
+        })
+        self.alerts = self.alerts[-100:]
+
+    async def _arm_due(self, force: bool) -> list[str]:
+        from ltf_confirmation import LtfSetupStore, market_for_symbol
+        from market_data.service import latest_final_session
+
+        by_market: dict[str, list[str]] = {}
+        for entry in service.watchlist():
+            symbol = str(entry.get("symbol", "")).strip().upper()
+            if symbol and not symbol.startswith("CRYPTO:"):
+                by_market.setdefault(market_for_symbol(symbol), []).append(symbol)
+        errors: list[str] = []
+        for market, symbols in by_market.items():
+            source = "NSE" if market == "NSE" else "TRADINGVIEW"
+            session = latest_final_session(source, symbol=symbols[0])
+            if session is None or (not force and self.last_arm.get(market) == session.isoformat()):
+                continue
+            try:
+                setups = await asyncio.to_thread(strategy_bridge.collect_ltf_setups, symbols, session)
+                for setup in LtfSetupStore().arm(setups):
+                    self._alert(setup, "armed")
+                self.last_arm[market] = session.isoformat()
+            except Exception as exc:
+                errors.append(f"arm {market}: {exc}")
+        return errors
+
+    async def _confirm(self) -> list[str]:
+        import ict_scanner  # type: ignore  (src/ is on sys.path via strategy_bridge)
+        from ltf_confirmation import LtfSetupStore, bars_from_rows, evaluate_ltf
+        from market_data.sources import tradingview_source
+
+        timeframe = self._timeframe()
+        store = LtfSetupStore()
+        now = datetime.now(timezone.utc)
+        by_symbol: dict[str, list[Any]] = {}
+        for setup in store.active():
+            by_symbol.setdefault(setup.symbol, []).append(setup)
+
+        errors: list[str] = []
+        for symbol, setups in by_symbol.items():
+            session = ict_scanner.Session.NSE if setups[0].market == "NSE" else ict_scanner.Session.FOREX_24_5
+            market_open = ict_scanner.is_market_open(session)
+            key = f"{symbol}|{timeframe}"
+            start = min(date.fromisoformat(s.signal_date) for s in setups) + timedelta(days=1)
+            # Open market: fetch every poll (the completed-bar filter makes
+            # repeats harmless). Closed: once, to pick up the session's last bars.
+            if start > date.today():
+                need_fetch = False  # the session after the signal has not started yet
+            elif market_open:
+                self._fetched_while_closed.discard(key)
+                need_fetch = True
+            else:
+                need_fetch = key not in self._fetched_while_closed
+            if need_fetch:
+                try:
+                    rows = await asyncio.to_thread(
+                        tradingview_source.fetch_timeframe, symbol, start, date.today(), timeframe,
+                        symbol.split(":", 1)[0] if ":" in symbol else "NSE",
+                    )
+                    self._bars[key] = bars_from_rows(rows)
+                    if not market_open:
+                        self._fetched_while_closed.add(key)
+                except Exception as exc:
+                    errors.append(f"{symbol}: {exc}")
+            bars = self._bars.get(key)
+            if bars is None:
+                bars = bars_from_rows([])
+            for setup in setups:
+                changed = store.apply(setup.key, evaluate_ltf(setup, bars, now, timeframe))
+                if changed is not None:
+                    self._alert(changed, changed.state)
+        return errors
+
+
+ltf_watcher = LtfConfirmationWatcher()
+
+
 service = ScannerService()
 scheduler = ScanScheduler(service)
 silver_bullet_scanner = SilverBulletLiveScanner()
@@ -777,6 +939,7 @@ async def stop_silver_bullet_auto_schedule() -> None:
     if silver_bullet_scanner.auto_task is not None:
         silver_bullet_scanner.auto_task.cancel()
         silver_bullet_scanner.auto_task = None
+    ltf_watcher.stop()
 
 
 app.add_middleware(
@@ -1074,6 +1237,13 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
     elif sync_running:
         syncer.stop()
 
+    ltf = auto["ltf_confirmation"]
+    ltf_running = ltf_watcher.task is not None and not ltf_watcher.task.done()
+    if ltf["enabled"] and not ltf_running:
+        ltf_watcher.start()
+    elif not ltf["enabled"] and ltf_running:
+        ltf_watcher.stop()
+
 
 def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
     strategies, master = strategy_bridge.list_strategies()
@@ -1087,8 +1257,14 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
             "silver_bullet": {"auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done()},
             "ipo_scanner": ipo_scanner.status(),
             "data_auto_sync": _auto_sync().status(),
+            "ltf_confirmation": {
+                "running": ltf_watcher.task is not None and not ltf_watcher.task.done(),
+                "last_check_at": ltf_watcher.last_check_at,
+                "last_error": ltf_watcher.last_error,
+            },
         },
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
+        "strategy_choices": {key: list(values) for key, values in app_settings.STRATEGY_CHOICES.items()},
     }
 
 
@@ -1103,6 +1279,18 @@ async def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
     settings = app_settings.save_settings(patch)
     apply_automation(settings)
     return _settings_payload(settings)
+
+
+@app.get("/api/ltf-confirmation")
+def get_ltf_confirmation() -> dict[str, Any]:
+    """Armed / triggered intraday-confirmation setups and watcher status."""
+    return ltf_watcher.status()
+
+
+@app.post("/api/ltf-confirmation/check")
+async def check_ltf_confirmation() -> dict[str, Any]:
+    """Re-arm from the latest final daily session and replay intraday bars now."""
+    return await ltf_watcher.check(force_arm=True)
 
 
 @app.get("/api/schedule")
@@ -1145,26 +1333,13 @@ async def stop_silver_bullet() -> dict[str, Any]:
     return silver_bullet_scanner.stop(manual=True)
 
 
-class IPOScannerRequest(BaseModel):
-    lookback_days: int = Field(default=7, ge=1, le=90)
-
-
 @app.get("/api/ipo-scan")
 def get_ipo_scanner_status() -> dict[str, Any]:
     return ipo_scanner.status()
 
 
-@app.post("/api/ipo-scan/start")
-async def start_ipo_scanner(request: IPOScannerRequest) -> dict[str, Any]:
-    ipo_scanner.lookback_days = max(1, int(request.lookback_days))
-    return ipo_scanner.start()
-
-
-@app.post("/api/ipo-scan/stop")
-async def stop_ipo_scanner() -> dict[str, Any]:
-    return ipo_scanner.stop()
-
-
+# Scheduling is owned by Settings -> Automation -> IPO scanner (persisted);
+# this only runs one scan now.
 @app.post("/api/ipo-scan/run-once")
 async def run_ipo_scan_once() -> dict[str, Any]:
     return await asyncio.to_thread(ipo_scanner.run_once)
@@ -1172,43 +1347,20 @@ async def run_ipo_scan_once() -> dict[str, Any]:
 
 class LiquidityScreenRequest(BaseModel):
     lookback_days: int = Field(default=60, ge=1, le=250)
-    auto_remove: bool = False
-
-
-@app.get("/api/ipo-liquidity/status")
-async def get_liquidity_status() -> dict[str, Any]:
-    """Get cached/latest liquidity screening results."""
-    # Could add persistent storage later; for now just indicate endpoint exists
-    return {"status": "ready", "endpoints": ["/api/ipo-liquidity/screen", "/api/ipo-liquidity/remove"]}
 
 
 @app.post("/api/ipo-liquidity/screen")
 async def run_liquidity_screen(request: LiquidityScreenRequest) -> dict[str, Any]:
     """Screen all IPO-scope symbols for liquidity and market presence.
 
-    Returns screening results for each symbol. If auto_remove=true, symbols
-    with REMOVE decision are purged from watchlist, categories, and database.
+    Returns screening results for each symbol. Read-only: nothing is removed.
     """
     try:
         results = await asyncio.to_thread(
             screen_all_ipos,
             lookback_days=request.lookback_days,
-            auto_remove=request.auto_remove,
         )
         return {"count": len(results), "results": results}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/api/ipo-liquidity/remove")
-async def remove_illiquid_symbol(request: WatchlistRemoveRequest) -> dict[str, Any]:
-    """Manually remove a symbol from watchlist, categories, and all DB tables."""
-    try:
-        removed = await asyncio.to_thread(
-            remove_symbol_everywhere,
-            request.symbol,
-        )
-        return {"symbol": request.symbol.upper(), "removed": removed}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

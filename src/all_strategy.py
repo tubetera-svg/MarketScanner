@@ -130,6 +130,78 @@ def _source_for_symbol(symbol: str) -> str:
     return normalize_source(SOURCE_NSE)
 
 
+# User-tunable strategy parameters (Settings page -> config/app_settings.json
+# "strategy" block, owned by api/app_settings.py). The first choice is the default.
+STRATEGY_SETTING_CHOICES: Dict[str, tuple[str, ...]] = {
+    "ltf_timeframe": ("1h", "15m"),
+    "propulsion_mean_threshold": ("range", "body"),
+}
+
+
+def strategy_setting(key: str) -> str:
+    """Current value of a strategy parameter; re-read per call so a Settings
+    change applies to the next scan. Missing/invalid values fall back to the default."""
+    import json
+    from pathlib import Path
+
+    choices = STRATEGY_SETTING_CHOICES[key]
+    path = Path(__file__).resolve().parent.parent / "config" / "app_settings.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("strategy", {}).get(key)
+    except (OSError, ValueError, AttributeError):
+        value = None
+    return value if value in choices else choices[0]
+
+
+_EXPECTED_SESSION_CACHE: Dict[tuple, Optional[date]] = {}
+
+
+def _expected_last_session(symbol: str, as_of_date: date) -> Optional[date]:
+    """Latest session whose *final* daily bar should exist for ``as_of_date``.
+
+    Live (as_of today or later) uses each market's own cut-off (NSE bhavcopy
+    17:00 IST, forex NY 17:00 rollover); historical dates use the calendar.
+    """
+    md = _get_md_service()
+    source = _source_for_symbol(symbol)
+    if as_of_date >= date.today():
+        return md.latest_final_session(source, symbol=symbol)
+    prefix = str(symbol).upper().split(":", 1)[0] if ":" in str(symbol) else ""
+    key = (source, prefix, as_of_date)
+    if key not in _EXPECTED_SESSION_CACHE:
+        if len(_EXPECTED_SESSION_CACHE) > 4096:
+            _EXPECTED_SESSION_CACHE.clear()
+        dates = md.expected_trading_dates(source, as_of_date - timedelta(days=12), as_of_date, symbol)
+        _EXPECTED_SESSION_CACHE[key] = dates[-1] if dates else None
+    return _EXPECTED_SESSION_CACHE[key]
+
+
+def _is_stale(symbol: str, daily: pd.DataFrame, as_of_date: date) -> bool:
+    """True when the latest bar is older than the session expected at ``as_of_date``
+    (suspended symbol / missing data), so old bars are not reported as current.
+
+    NSE uses its holiday calendar strictly; TradingView's calendar has no
+    holiday list, so one missing session is tolerated there.
+    """
+    if daily is None or daily.empty:
+        return False
+    try:
+        expected = _expected_last_session(symbol, as_of_date)
+        if expected is None:
+            return False
+        last = pd.Timestamp(daily.index[-1]).date()
+        if last >= expected:
+            return False
+        source = _source_for_symbol(symbol)
+        if source == "NSE":
+            return True
+        missing = _get_md_service().expected_trading_dates(source, last + timedelta(days=1), expected, symbol)
+        return len(missing) > 1
+    except Exception as exc:  # calendar unavailable: never block a scan on it
+        log.debug("Stale check skipped for %s: %s", symbol, exc)
+        return False
+
+
 def _rows_to_daily_df(rows: list[dict]) -> pd.DataFrame:
     """Convert stored/fetched OHLC rows into the daily frame the evaluators use."""
     if not rows:
@@ -342,6 +414,80 @@ def _protected_swing_frame(
     return _rows_to_daily_df(rows)
 
 
+def _daily_frame_stale(symbol: str, daily: pd.DataFrame, as_of_date: date, timeframe: str) -> bool:
+    """Stale guard for the structure strategies (intraday frames are fetched live)."""
+    return str(timeframe).strip().lower() in ("daily", "weekly") and _is_stale(symbol, daily, as_of_date)
+
+
+def _liquidity_context(daily: pd.DataFrame, as_of_date: date) -> Dict[str, object]:
+    """Prior-week and pre-week swing extremes: the pools ``_build_trade_plan`` targets."""
+    if daily is None or daily.empty:
+        return {"prior_weeks": [], "swing": {}}
+    return {
+        "prior_weeks": _prior_week_extremes(daily, as_of_date),
+        "swing": _pre_week_swing_extremes(daily, as_of_date) or {},
+    }
+
+
+def _next_session(symbol: str, frame: pd.DataFrame, sessions: int = 1) -> Optional[date]:
+    """The ``sessions``-th trading day after the frame's last bar (may be in the
+    future, unlike ``expected_trading_dates`` which never returns future dates)."""
+    if frame is None or frame.empty:
+        return None
+    day = pd.Timestamp(frame.index[-1]).date()
+    nse = _source_for_symbol(symbol) == "NSE"
+    found = 0
+    while found < sessions:
+        day += timedelta(days=1)
+        if day.weekday() < 5 and not (nse and day in NSE_HOLIDAYS):
+            found += 1
+    return day
+
+
+# Lower-timeframe confirmation contract (consumed by src/ltf_confirmation.py and
+# the API's LTF confirmation watcher). A daily setup that should be confirmed
+# intraday carries a zone, an invalidation level and the last valid session.
+LTF_COLUMNS = ("ltf_zone_low", "ltf_zone_high", "ltf_invalidation", "ltf_signal_date", "ltf_valid_until")
+
+
+def _set_ltf_setup(
+    results: pd.DataFrame,
+    idx: int,
+    direction: int,
+    high: float,
+    low: float,
+    signal_date: object,
+    valid_until: Optional[date],
+    timeframe: str = "daily",
+    invalidation: Optional[float] = None,
+    full_zone: bool = False,
+) -> None:
+    """Arm an intraday (1h/15m) CISD confirmation for a daily signal candle.
+
+    Zone follows the fractal-model Candle 4 rule: a bullish setup is expected to
+    wick into the upper half of the signal candle, a bearish one into the lower
+    half. ``full_zone`` uses the whole ``low..high`` span instead (e.g. a
+    propulsion block). Invalidation defaults to the far side of the candle.
+    """
+    if str(timeframe).strip().lower() != "daily" or direction == 0 or valid_until is None:
+        return
+    eq = (float(high) + float(low)) / 2.0
+    if full_zone:
+        zone_low, zone_high = float(low), float(high)
+    else:
+        zone_low, zone_high = (eq, float(high)) if direction > 0 else (float(low), eq)
+    if invalidation is None:
+        invalidation = float(low) if direction > 0 else float(high)
+    for column in LTF_COLUMNS:
+        if column not in results.columns:
+            results[column] = pd.Series([None] * len(results), index=results.index, dtype=object)
+    results.at[idx, "ltf_zone_low"] = round(zone_low, 4)
+    results.at[idx, "ltf_zone_high"] = round(zone_high, 4)
+    results.at[idx, "ltf_invalidation"] = round(float(invalidation), 4)
+    results.at[idx, "ltf_signal_date"] = pd.Timestamp(signal_date).date().isoformat()
+    results.at[idx, "ltf_valid_until"] = valid_until.isoformat()
+
+
 def _build_candles_from_daily(daily: pd.DataFrame) -> Optional[CandleSet]:
     if daily.empty:
         return None
@@ -505,7 +651,7 @@ def _build_tradingview_link(symbol: str) -> str:
 
 
 def _extract_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    extra_cols = [c for c in ("daily_bias", "weekly_bias", "monthly_bias", "confluence", "note") if c in results.columns]
+    extra_cols = [c for c in ("daily_bias", "weekly_bias", "monthly_bias", "confluence", "note", "signal_date") if c in results.columns]
     bullish = (
         results.loc[results["bullish_match"] == True, ["symbol"] + extra_cols]
         .sort_values("symbol")
@@ -546,6 +692,10 @@ def run_weekly_vs_daily(
             daily = _fetch_daily_from_bhavcopy(symbol=symbol_upper, as_of_date=as_of_date, max_lookback_days=420)
         else:
             daily = daily_map.get(symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
+
+        if _is_stale(symbol_upper, daily, as_of_date):
+            results.at[idx, "status"] = "stale"
+            continue
 
         candles = _build_candles_from_daily(daily)
         if candles is None:
@@ -611,6 +761,10 @@ def run_inside_bar_daily_sweep(
                 print(f"{symbol}: SKIPPED (no_data)")
             continue
 
+        if _is_stale(str(symbol).upper(), daily, as_of_date):
+            results.at[idx, "status"] = "stale"
+            continue
+
         values = _inside_bar_points(daily)
         bullish = _inside_bar_bullish(values)
         bearish = _inside_bar_bearish(values)
@@ -660,6 +814,10 @@ def run_ema5_sweep(
             results.at[idx, "status"] = "no_data"
             if verbose:
                 print(f"{symbol}: SKIPPED (no_data)")
+            continue
+
+        if _is_stale(str(symbol).upper(), daily, as_of_date):
+            results.at[idx, "status"] = "stale"
             continue
 
         values = _ema5_sweep_points(daily)
@@ -748,6 +906,10 @@ def run_protected_swings(
 
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
+        if _daily_frame_stale(symbol_upper, daily, as_of_date, timeframe):
+            results.at[idx, "status"] = "stale"
+            results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+            continue
 
         try:
             frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
@@ -803,19 +965,26 @@ def run_protected_swings(
 
             if confirmed_window:
                 current_close = float(frame.iloc[-1]["Close"])
+                protected_extreme = swing.sweep_extreme if swing.sweep_extreme is not None else swing.swing_level
                 outcome = {
                     "bullish": bool(bullish and confirmed_window),
                     "bearish": bool(bearish and confirmed_window),
-                    "sl_level": float(swing.swing_level),
+                    # Stop beyond the protected low/high itself (the sweep extreme).
+                    "sl_level": float(protected_extreme),
                     "entry_ref": current_close,
                 }
-                context = {"prior_weeks": [], "swing": {}}
-                plan = _build_trade_plan(outcome, context, _daily_atr(frame))
+                plan = _build_trade_plan(outcome, _liquidity_context(daily, as_of_date), _daily_atr(frame))
                 results.at[idx, "entry"] = plan["entry"]
                 results.at[idx, "sl"] = plan["sl"]
                 results.at[idx, "target"] = plan["target"]
                 results.at[idx, "rr"] = plan["rr"]
                 results.at[idx, "atr"] = plan["atr"]
+                confirm_bar = frame.iloc[-1]
+                _set_ltf_setup(
+                    results, idx, direction, float(confirm_bar["High"]), float(confirm_bar["Low"]),
+                    frame.index[-1], _next_session(symbol_upper, frame, 1), timeframe,
+                    invalidation=float(protected_extreme),
+                )
 
             results.at[idx, "note"] = analysis.note
         else:
@@ -866,11 +1035,28 @@ def _select_point_of_interest(
     def in_path(level: float) -> bool:
         return anchor < level < current if direction > 0 else current < level < anchor
 
+    closes = pd.to_numeric(frame["Close"], errors="coerce").to_numpy(dtype=float)
+    highs = pd.to_numeric(frame["High"], errors="coerce").to_numpy(dtype=float)
+    lows = pd.to_numeric(frame["Low"], errors="coerce").to_numpy(dtype=float)
+
+    def gap_intact(gap) -> bool:
+        # A gap a later candle has closed through (bullish: below its low,
+        # bearish: above its high) is spent and no longer a POI.
+        later = closes[gap.idx + 1:]
+        return not (later < gap.gap_low).any() if direction > 0 else not (later > gap.gap_high).any()
+
+    def swing_untaken(swing) -> bool:
+        # A swing whose liquidity was already run by a later candle is no longer a POI.
+        if swing.is_high:
+            return not (highs[swing.idx + 1:] > swing.high).any()
+        return not (lows[swing.idx + 1:] < swing.low).any()
+
     gaps = [
         gap for gap in find_fvgs(frame)
         if gap.idx > anchor_idx
         and gap.fvg_type == ("bullish" if direction > 0 else "bearish")
         and in_path(gap.gap_low if direction > 0 else gap.gap_high)
+        and gap_intact(gap)
     ]
     if gaps:
         gap = min(gaps, key=lambda item: abs((item.gap_low if direction > 0 else item.gap_high) - anchor))
@@ -880,6 +1066,7 @@ def _select_point_of_interest(
     swings = [
         swing for swing in detect_swing_points(frame)
         if swing.idx > anchor_idx and in_path(swing.high if swing.is_high else swing.low)
+        and swing_untaken(swing)
     ]
     if swings:
         swing = min(swings, key=lambda item: abs((item.high if item.is_high else item.low) - anchor))
@@ -926,6 +1113,9 @@ def run_points_of_interest(
         )
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
+        if _daily_frame_stale(symbol_upper, daily, as_of_date, timeframe):
+            results.at[idx, "status"] = "stale"
+            continue
         try:
             frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
@@ -950,7 +1140,9 @@ def run_points_of_interest(
             results.at[idx, "type"] = poi_type
             results.at[idx, "bullish_match"] = candidate.direction > 0
             results.at[idx, "bearish_match"] = candidate.direction < 0
-            results.at[idx, "note"] = f"{poi_type} POI from protected swing at {candidate.protected_level:.4f}"
+            results.at[idx, "note"] = (
+                f"{poi_type} POI at {level:.4f} | protected swing level {candidate.protected_level:.4f}"
+            )
             continue
 
         if verbose:
@@ -965,30 +1157,68 @@ def run_points_of_interest(
     )
 
 
-def _candle_3_poi(frame: pd.DataFrame) -> Optional[tuple[int, float, str]]:
+def _closure_pois(frame: pd.DataFrame, active, reaction_bars: int) -> List[tuple[float, str]]:
+    """POI levels in priority order, as known *before* the reaction candles:
+    the FVG -> swing -> CISD POI worked from the protected swing toward price,
+    then the protected (CISD) level of the swing itself."""
+    levels: List[tuple[float, str]] = []
+    history = frame.iloc[: len(frame) - reaction_bars]
+    confirm_idx = getattr(active, "confirm_idx", None)
+    if confirm_idx is not None and confirm_idx < len(history):
+        poi = _select_point_of_interest(history, active)
+        if poi is not None:
+            levels.append(poi)
+    levels.append((float(active.protected_level), "protected"))
+    return levels
+
+
+def _poi_reached(bar: pd.Series, direction: int, levels: List[tuple[float, str]]) -> Optional[tuple[float, str]]:
+    for level, kind in levels:
+        if (direction > 0 and float(bar["Low"]) <= level) or (direction < 0 and float(bar["High"]) >= level):
+            return level, kind
+    return None
+
+
+def _candle_closure(frame: pd.DataFrame) -> Optional[Dict[str, object]]:
+    """Candle 2 / Candle 3 closure on the latest bar at a protected-swing POI.
+
+    TTrades fractal model (bullish; bearish mirrors):
+    * Candle 2 closure: the candle reaches the POI, sweeps the previous
+      candle's low and closes back above it (early reversal confirmation).
+    * Candle 3 closure: candle 2 reached the POI but did NOT sweep candle 1's
+      low and closed down; candle 3 then closes over candle 2's body.
+    """
     if len(frame) < 5:
         return None
     analysis: ProtectedSwingAnalysis = evaluate_protected_swings(frame)
     active = analysis.active
     if active is None:
         return None
-    candle_2 = frame.iloc[-2]
-    candle_3 = frame.iloc[-1]
     direction = int(active.direction)
-    poi_level = float(active.protected_level)
+
+    c1, c2 = frame.iloc[-2], frame.iloc[-1]
+    hit = _poi_reached(c2, direction, _closure_pois(frame, active, 1))
     if direction > 0:
-        reached = float(candle_2["Low"]) <= poi_level
-        failed_candle_2 = float(candle_2["Close"]) <= float(candle_2["Open"])
-        body_closure = float(candle_3["Close"]) > float(candle_2["Open"])
-        no_candle_2_sweep = float(candle_2["High"]) <= float(frame.iloc[-3]["High"])
+        candle_2 = float(c2["Low"]) < float(c1["Low"]) and float(c2["Close"]) > float(c1["Low"])
     else:
-        reached = float(candle_2["High"]) >= poi_level
-        failed_candle_2 = float(candle_2["Close"]) >= float(candle_2["Open"])
-        body_closure = float(candle_3["Close"]) < float(candle_2["Open"])
-        no_candle_2_sweep = float(candle_2["Low"]) >= float(frame.iloc[-3]["Low"])
-    if not (reached and failed_candle_2 and body_closure and no_candle_2_sweep):
-        return None
-    return direction, poi_level, active.mode
+        candle_2 = float(c2["High"]) > float(c1["High"]) and float(c2["Close"]) < float(c1["High"])
+    if hit is not None and candle_2:
+        return {"closure_type": "candle_2", "direction": direction, "level": hit[0], "poi_type": hit[1]}
+
+    c1, c2, c3 = frame.iloc[-3], frame.iloc[-2], frame.iloc[-1]
+    hit = _poi_reached(c2, direction, _closure_pois(frame, active, 2))
+    c2_open, c2_close = float(c2["Open"]), float(c2["Close"])
+    if direction > 0:
+        no_sweep = float(c2["Low"]) >= float(c1["Low"])
+        failed = c2_close <= c2_open
+        body_closure = float(c3["Close"]) > max(c2_open, c2_close)
+    else:
+        no_sweep = float(c2["High"]) <= float(c1["High"])
+        failed = c2_close >= c2_open
+        body_closure = float(c3["Close"]) < min(c2_open, c2_close)
+    if hit is not None and no_sweep and failed and body_closure:
+        return {"closure_type": "candle_3", "direction": direction, "level": hit[0], "poi_type": hit[1]}
+    return None
 
 
 def run_candle_3_closure(
@@ -999,7 +1229,11 @@ def run_candle_3_closure(
     daily_map: Optional[Dict[str, pd.DataFrame]] = None,
     timeframe: str = "daily",
 ) -> StrategyExecution:
-    """Report Candle 3 closures at an existing protected-swing point of interest."""
+    """Report Candle 2 / Candle 3 closures at a protected-swing point of interest.
+
+    ``candle_3_high/low/equilibrium`` describe the closure candle (the latest
+    bar) whichever closure type fired; ``closure_type`` says which one.
+    """
     _ = print_values
     results = pd.DataFrame(
         {
@@ -1013,6 +1247,7 @@ def run_candle_3_closure(
             "state": STATE_NONE,
             "direction": 0,
             "triggered_level": None,
+            "closure_type": "",
             "candle_3_high": None,
             "candle_3_low": None,
             "equilibrium": None,
@@ -1029,6 +1264,9 @@ def run_candle_3_closure(
         )
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
+        if _daily_frame_stale(symbol_upper, daily, as_of_date, timeframe):
+            results.at[idx, "status"] = "stale"
+            continue
         try:
             frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
@@ -1037,25 +1275,34 @@ def run_candle_3_closure(
         results.at[idx, "status"] = "complete" if len(frame) >= 5 else "no_data"
         if len(frame) < 5:
             continue
-        closure = _candle_3_poi(frame)
+        closure = _candle_closure(frame)
         if closure is None:
             continue
-        direction, poi_level, poi_type = closure
-        candle_3 = frame.iloc[-1]
-        high = float(candle_3["High"])
-        low = float(candle_3["Low"])
+        direction = int(closure["direction"])
+        closure_type = str(closure["closure_type"])
+        candle = frame.iloc[-1]
+        high = float(candle["High"])
+        low = float(candle["Low"])
         results.at[idx, "direction"] = direction
-        results.at[idx, "triggered_level"] = round(poi_level, 4)
+        results.at[idx, "triggered_level"] = round(float(closure["level"]), 4)
+        results.at[idx, "closure_type"] = closure_type
         results.at[idx, "candle_3_high"] = round(high, 4)
         results.at[idx, "candle_3_low"] = round(low, 4)
         results.at[idx, "equilibrium"] = round((high + low) / 2.0, 4)
-        results.at[idx, "poi_type"] = poi_type
+        results.at[idx, "poi_type"] = str(closure["poi_type"])
         results.at[idx, "state"] = STATE_CONFIRMED
         results.at[idx, "bullish_match"] = direction > 0
         results.at[idx, "bearish_match"] = direction < 0
-        results.at[idx, "note"] = "Candle 3 body closure; Candle 4 expansion/retrace pending"
+        results.at[idx, "note"] = (
+            "Candle 2 closure (sweep + close back inside); Candle 3 continuation pending"
+            if closure_type == "candle_2"
+            else "Candle 3 body closure; Candle 4 expansion/retrace pending"
+        )
+        _set_ltf_setup(
+            results, idx, direction, high, low, frame.index[-1], _next_session(symbol_upper, frame, 1), timeframe
+        )
         if verbose:
-            print(f"{symbol_upper}: candle_3 direction={direction} eq={results.at[idx, 'equilibrium']}")
+            print(f"{symbol_upper}: {closure_type} direction={direction} eq={results.at[idx, 'equilibrium']}")
 
     bullish, bearish = _extract_candle_3_frames(results)
     return StrategyExecution(
@@ -1076,6 +1323,7 @@ def run_propulsion_blocks(
 ) -> StrategyExecution:
     """Run the point-in-time propulsion-block lifecycle strategy."""
     _ = print_values
+    mean_mode = strategy_setting("propulsion_mean_threshold")
     results = pd.DataFrame(
         {
             "symbol": list(symbols), "bullish_match": False, "bearish_match": False,
@@ -1098,6 +1346,10 @@ def run_propulsion_blocks(
         )
         if _track_mode_for(symbol_upper) == "eod_confirm":
             daily = _trim_in_progress_daily(daily)
+        if _daily_frame_stale(symbol_upper, daily, as_of_date, timeframe):
+            results.at[idx, "status"] = "stale"
+            results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+            continue
         try:
             frame = _protected_swing_frame(symbol_upper, timeframe, daily, as_of_date)
         except Exception as exc:
@@ -1108,7 +1360,7 @@ def run_propulsion_blocks(
             results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
             continue
 
-        analysis: PropulsionBlockAnalysis = evaluate_propulsion_blocks(frame)
+        analysis: PropulsionBlockAnalysis = evaluate_propulsion_blocks(frame, mean_mode=mean_mode)
         active = analysis.active
         anticipated = analysis.anticipated
         candidate = active if active is not None else anticipated
@@ -1143,11 +1395,22 @@ def run_propulsion_blocks(
                 "bullish": candidate.direction > 0,
                 "bearish": candidate.direction < 0,
                 "sl_level": candidate.mean_threshold,
-                "entry_ref": float(frame.iloc[-1]["Close"]),
+                # Entry reference is the propulsion candle's open (a resting
+                # level). The backtest engine still fills at the next open.
+                "entry_ref": float(candidate.propulsion_open),
             }
-            plan = _build_trade_plan(outcome, {"prior_weeks": [], "swing": {}}, _daily_atr(frame))
+            plan = _build_trade_plan(outcome, _liquidity_context(daily, as_of_date), _daily_atr(frame))
             for key in ("entry", "sl", "target", "rr", "atr"):
                 results.at[idx, key] = plan[key]
+            # Intraday confirmation zone: the propulsion candle between its open
+            # and the mean threshold; invalidation is a close through the mean.
+            _set_ltf_setup(
+                results, idx, candidate.direction,
+                max(candidate.propulsion_open, candidate.mean_threshold),
+                min(candidate.propulsion_open, candidate.mean_threshold),
+                frame.index[-1], _next_session(symbol_upper, frame, 1), timeframe,
+                invalidation=candidate.mean_threshold, full_zone=True,
+            )
         if verbose:
             print(f"{symbol_upper}: propulsion_blocks state={candidate.state} {analysis.note}")
 
@@ -1208,21 +1471,25 @@ def _compute_multi_timeframe_bias(daily: pd.DataFrame, price: float) -> dict:
     curr = daily.iloc[-1]
     pd_ = daily.iloc[-2]
 
-    pd_o = float(pd_["Open"])
     pd_h = float(pd_["High"])
     pd_l = float(pd_["Low"])
-    pd_c = float(pd_["Close"])
-    pd_body_hi = max(pd_o, pd_c)
-    pd_body_lo = min(pd_o, pd_c)
 
     today_high = float(curr["High"])
     today_low = float(curr["Low"])
 
-    daily_bias = "Neutral"
-    if price > pd_h or (today_low < pd_l and price >= pd_body_lo):
-        daily_bias = "Bullish"
-    if price < pd_l or (today_high > pd_h and price <= pd_body_hi):
-        daily_bias = "Bearish"
+    def _sweep_bias(high: float, low: float, ref_high: float, ref_low: float) -> str:
+        # TTrades daily bias: a close beyond the reference range continues; a
+        # sweep of one side that closes back inside the range shifts the bias
+        # the other way. Conflicting reads (outside bar closing inside) = Neutral.
+        bull = price > ref_high or (low < ref_low and price > ref_low)
+        bear = price < ref_low or (high > ref_high and price < ref_high)
+        if bull and not bear:
+            return "Bullish"
+        if bear and not bull:
+            return "Bearish"
+        return "Neutral"
+
+    daily_bias = _sweep_bias(today_high, today_low, pd_h, pd_l)
 
     weekly_bias = "Neutral"
     pw_h = None
@@ -1234,12 +1501,10 @@ def _compute_multi_timeframe_bias(daily: pd.DataFrame, price: float) -> dict:
     )
     if len(weekly) >= 2:
         pw = weekly.iloc[-2]
+        cw = weekly.iloc[-1]  # current (possibly partial) week up to the latest bar
         pw_h = float(pw["High"])
         pw_l = float(pw["Low"])
-        if price > pw_h:
-            weekly_bias = "Bullish"
-        elif price < pw_l:
-            weekly_bias = "Bearish"
+        weekly_bias = _sweep_bias(float(cw["High"]), float(cw["Low"]), pw_h, pw_l)
 
     monthly_bias = "Neutral"
     pm_h = None
@@ -1269,7 +1534,14 @@ def _compute_multi_timeframe_bias(daily: pd.DataFrame, price: float) -> dict:
     else:
         direction = 0
 
+    # Completed weekly/monthly extremes (current bucket excluded): the
+    # higher-timeframe liquidity the target is drawn from.
+    htf_highs = [float(v) for v in weekly["High"].iloc[-9:-1]] + [float(v) for v in monthly["High"].iloc[-7:-1]]
+    htf_lows = [float(v) for v in weekly["Low"].iloc[-9:-1]] + [float(v) for v in monthly["Low"].iloc[-7:-1]]
+
     return {
+        "htf_highs": htf_highs,
+        "htf_lows": htf_lows,
         "daily_bias": daily_bias,
         "weekly_bias": weekly_bias,
         "monthly_bias": monthly_bias,
@@ -1345,6 +1617,9 @@ def run_multi_timeframe_bias(
             if verbose:
                 print(f"{symbol_upper}: SKIPPED (no_data)")
             continue
+        if _is_stale(symbol_upper, daily, as_of_date):
+            results.at[idx, "status"] = "stale"
+            continue
 
         price = float(daily.iloc[-1]["Close"])
         bias = _compute_multi_timeframe_bias(daily, price)
@@ -1367,20 +1642,23 @@ def run_multi_timeframe_bias(
         target = None
         rr = None
 
+        # Target: the nearest completed weekly/monthly extreme still beyond
+        # entry (the next HTF draw on liquidity); levels price has already
+        # broken are behind it. Fallback: a 2R measured move.
         if bullish:
             sl = bias["pd_l"]
-            highs = [h for h in (bias["pw_h"], bias["pm_h"]) if h is not None]
-            if highs:
-                candidate = max(highs)
-                if candidate > entry:
-                    target = candidate
+            above = [h for h in bias["htf_highs"] if h > entry]
+            if above:
+                target = min(above)
+            elif sl is not None and sl < entry:
+                target = entry + 2.0 * (entry - sl)
         elif bearish:
             sl = bias["pd_h"]
-            lows = [l for l in (bias["pw_l"], bias["pm_l"]) if l is not None]
-            if lows:
-                candidate = min(lows)
-                if candidate < entry:
-                    target = candidate
+            below = [l for l in bias["htf_lows"] if l < entry]
+            if below:
+                target = max(below)
+            elif sl is not None and sl > entry:
+                target = entry - 2.0 * (sl - entry)
 
         if sl is not None and target is not None and entry is not None:
             risk = abs(entry - sl)
@@ -1456,7 +1734,13 @@ def _empty_mtf_bias_results(symbols: Sequence[str], status: str) -> StrategyExec
 
 
 def _daily_bias_from_history(history: pd.DataFrame) -> tuple[str, float | None, float | None, float | None]:
-    """Resolve the historical daily bias and its candle range references."""
+    """Resolve the historical daily bias and its candle range references.
+
+    Bias comes from the reference candle vs the one before it: a close beyond
+    the prior range, or a candle-2 closure (sweep one side of the prior range
+    and close back inside it -> bias toward the other side). Conflicting reads
+    are Neutral.
+    """
     if history is None or len(history) < 2:
         return "Neutral", None, None, None
     reference = history.iloc[-1]
@@ -1465,7 +1749,11 @@ def _daily_bias_from_history(history: pd.DataFrame) -> tuple[str, float | None, 
     reference_low = float(reference["Low"])
     reference_eq = (reference_high + reference_low) / 2.0
     close = float(reference["Close"])
-    bias = "Bullish" if close > float(prior["High"]) else "Bearish" if close < float(prior["Low"]) else "Neutral"
+    prior_high = float(prior["High"])
+    prior_low = float(prior["Low"])
+    bull = close > prior_high or (reference_low < prior_low and close > prior_low)
+    bear = close < prior_low or (reference_high > prior_high and close < prior_high)
+    bias = "Bullish" if bull and not bear else "Bearish" if bear and not bull else "Neutral"
     return bias, reference_eq, reference_high, reference_low
 
 
@@ -1476,8 +1764,16 @@ def run_daily_bias_invalidation(
     print_values: bool = False,
     daily_map: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> StrategyExecution:
-    """Trade only invalidation of a previously established daily bias."""
-    _ = (as_of_date, print_values)
+    """Trade only invalidation of a previously established daily bias.
+
+    Per the TTrades invalidation framework only two things count:
+    * opposing setup — the next candle sweeps the bias-side extreme of the
+      reference candle and closes back inside it (an opposite candle 2);
+    * EQ disrespect — the next candle closes through the reference candle's EQ.
+    The following candle must then continue the other way without reclaiming
+    EQ. Anything else (drift, consolidation, wicks) is noise.
+    """
+    _ = print_values
     results = pd.DataFrame(
         {
             "symbol": list(symbols),
@@ -1494,15 +1790,23 @@ def run_daily_bias_invalidation(
             "target": None,
             "rr": None,
             "note": "",
+            "signal_date": None,
         }
     )
 
     for idx, symbol in enumerate(symbols):
         symbol_upper = str(symbol).upper()
-        daily = (daily_map or {}).get(symbol_upper, pd.DataFrame())
-        daily = _trim_in_progress_daily(daily)
+        if daily_map is None:
+            daily = _fetch_daily_from_bhavcopy(symbol_upper, as_of_date, 600)
+        else:
+            daily = daily_map.get(symbol_upper, pd.DataFrame())
+        if _track_mode_for(symbol_upper) == "eod_confirm":
+            daily = _trim_in_progress_daily(daily)
         if daily is None or len(daily) < 4:
             results.at[idx, "status"] = "no_data"
+            continue
+        if _is_stale(symbol_upper, daily, as_of_date):
+            results.at[idx, "status"] = "stale"
             continue
 
         history = daily.iloc[:-2]
@@ -1522,15 +1826,18 @@ def run_daily_bias_invalidation(
             (bias == "Bullish" and invalidation_close < eq)
             or (bias == "Bearish" and invalidation_close > eq)
         )
-        swept = (
-            (bias == "Bullish" and float(invalidation["High"]) > reference_high)
-            or (bias == "Bearish" and float(invalidation["Low"]) < reference_low)
+        # Opposing setup = an opposite candle 2: sweep the bias-side extreme,
+        # then close back inside the reference range.
+        opposing_setup = (
+            (bias == "Bullish" and float(invalidation["High"]) > reference_high and invalidation_close < reference_high)
+            or (bias == "Bearish" and float(invalidation["Low"]) < reference_low and invalidation_close > reference_low)
         )
-        opposite_close = (
-            (bias == "Bullish" and continuation_close < invalidation_close)
-            or (bias == "Bearish" and continuation_close > invalidation_close)
+        # Continuation the other way that does not reclaim EQ.
+        continuation_ok = (
+            (bias == "Bullish" and continuation_close < invalidation_close and continuation_close < eq)
+            or (bias == "Bearish" and continuation_close > invalidation_close and continuation_close > eq)
         )
-        if not (opposite_close and (eq_disrespected or swept)):
+        if not (continuation_ok and (eq_disrespected or opposing_setup)):
             results.at[idx, "note"] = "daily bias intact or continuation unconfirmed"
             continue
 
@@ -1539,9 +1846,11 @@ def run_daily_bias_invalidation(
         entry = continuation_close
         sl = float(invalidation["High"] if direction < 0 else invalidation["Low"])
         target = reference_low if direction < 0 else reference_high
+        # A reference extreme price has already passed is behind the entry, not a target.
+        if (direction < 0 and target >= entry) or (direction > 0 and target <= entry):
+            target = None
         risk = abs(entry - sl)
-        reward = abs(target - entry)
-        rr = reward / risk if risk > 0 else None
+        rr = abs(target - entry) / risk if (target is not None and risk > 0) else None
         results.at[idx, "invalidation_direction"] = direction
         results.at[idx, "invalidation_type"] = invalidation_type
         results.at[idx, "bullish_match"] = direction > 0
@@ -1552,6 +1861,12 @@ def run_daily_bias_invalidation(
         results.at[idx, "target"] = target
         results.at[idx, "rr"] = rr
         results.at[idx, "note"] = f"{bias} daily bias invalidated via {invalidation_type}; opposite continuation confirmed"
+        # Date of the continuation (signal) candle, shown on the UI chip.
+        results.at[idx, "signal_date"] = pd.Timestamp(daily.index[-1]).date().isoformat()
+        _set_ltf_setup(
+            results, idx, direction, float(continuation["High"]), float(continuation["Low"]),
+            daily.index[-1], _next_session(symbol_upper, daily, 1), invalidation=sl,
+        )
         if verbose:
             print(f"{symbol_upper}: {results.at[idx, 'note']}")
 
@@ -1615,6 +1930,8 @@ CONSOLIDATION_MAX_DRIFT_PCT = 0.02
 INTRAWEEK_STALL_BODY_RATIO = 0.4
 THURSDAY_COUNTER_BIAS_MIN_PCT = 0.01
 TGIF_EXPANSION_MIN_PCT = 0.01
+TGIF_RETRACE_TARGET_PCT = 0.25  # midpoint of the source's 20-30% weekly-range retrace
+TGIF_OBJECTIVE_SESSIONS = 20    # pre-week sessions scanned for FVG / swing objectives
 
 WEEKLY_PROFILE_LABELS: Dict[str, str] = {
     "classic_expansion_sweep": "Classic Expansion",
@@ -1694,6 +2011,30 @@ def _pre_week_swing_extremes(daily: pd.DataFrame, as_of_date: date, sessions: in
     return {"high": float(tail["High"].max()), "low": float(tail["Low"].min())}
 
 
+def _pre_week_objectives(
+    daily: pd.DataFrame, as_of_date: date, sessions: int = TGIF_OBJECTIVE_SESSIONS
+) -> Dict[str, List[float]]:
+    """Higher-timeframe objectives formed before the current week.
+
+    Swing highs/lows (equal highs/lows are swing points at the same price) and
+    the FVG edges an expansion would trade into (a rally reaches the bottom of a
+    bearish gap above; a sell-off reaches the top of a bullish gap below).
+    """
+    monday = pd.Timestamp(_week_start_end(as_of_date)[0])
+    history = daily[daily.index < monday].tail(sessions)
+    if len(history) < 5:
+        return {"highs": [], "lows": []}
+    swings = detect_swing_points(history)
+    highs = [s.high for s in swings if s.is_high]
+    lows = [s.low for s in swings if not s.is_high]
+    for gap in find_fvgs(history, lookback=sessions):
+        if gap.fvg_type == "bearish":
+            highs.append(gap.gap_low)
+        else:
+            lows.append(gap.gap_high)
+    return {"highs": highs, "lows": lows}
+
+
 def _extract_weekly_profile_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     columns = [
         "symbol", "profile", "state", "direction", "entry", "sl", "target", "rr",
@@ -1740,7 +2081,7 @@ def _extract_points_of_interest_frames(results: pd.DataFrame) -> tuple[pd.DataFr
 
 def _extract_candle_3_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     columns = [
-        "symbol", "profile", "state", "direction", "triggered_level", "poi_type",
+        "symbol", "profile", "state", "direction", "triggered_level", "closure_type", "poi_type",
         "candle_3_high", "candle_3_low", "equilibrium", "note",
     ]
     bullish = results.loc[results["bullish_match"] == True].reindex(columns=columns).sort_values("symbol").reset_index(drop=True)
@@ -1763,8 +2104,11 @@ def _evaluate_classic_expansion(context: Dict[str, object]) -> Dict[str, object]
 
     def side(direction: int) -> tuple[bool, str]:
         extreme_idx = low_idx if direction > 0 else high_idx
-        if extreme_idx > 1:
-            return False, f"weekly_extreme_late_d{extreme_idx + 1}"
+        # Judge "Mon/Tue" by weekday, not bar position, so a Monday holiday
+        # cannot promote Wednesday to an "early" extreme.
+        extreme_weekday = int(bars[extreme_idx]["weekday"])
+        if extreme_weekday > 1:
+            return False, f"weekly_extreme_late_d{extreme_weekday + 1}"
         post = bars[extreme_idx + 1:]
         if not 1 <= len(post) <= CLASSIC_EXPANSION_MAX_EXPANSION_DAYS:
             return False, f"expansion_days={len(post)}"
@@ -1802,7 +2146,7 @@ def _evaluate_classic_expansion(context: Dict[str, object]) -> Dict[str, object]
         if not closure:
             return False, "candle_two_pending"
         tag = "friday_slowing" if friday_slowing else "candle_two_closure"
-        return True, f"extreme_d{extreme_idx + 1}_expand{len(post)}_{tag}"
+        return True, f"extreme_d{extreme_weekday + 1}_expand{len(post)}_{tag}"
 
     bullish, bullish_note = side(1)
     bearish, bearish_note = side(-1)
@@ -1818,33 +2162,45 @@ def _evaluate_midweek_reversal(context: Dict[str, object]) -> Dict[str, object]:
 
     mon = weekday_bars[0]
     tue = weekday_bars[1]
-    wed = weekday_bars[2]
-    later = [bar for bar in context["bars"] if int(bar["weekday"]) > 2]
 
-    def side(direction: int) -> tuple[bool, str]:
+    def pivot_closure(direction: int, day: int) -> bool:
+        pivot = weekday_bars.get(day)
+        prev = weekday_bars.get(day - 1)
+        if pivot is None or prev is None:
+            return False
+        if direction > 0:
+            return float(pivot["close"]) > float(prev["high"]) and float(pivot["close"]) > float(pivot["open"])
+        return float(pivot["close"]) < float(prev["low"]) and float(pivot["close"]) < float(pivot["open"])
+
+    def side(direction: int) -> tuple[bool, str, Optional[int]]:
         if direction > 0:
             early_move = float(tue["close"]) < float(mon["close"]) and float(tue["low"]) < float(mon["low"])
-            pivot = float(wed["close"]) > float(tue["high"]) and float(wed["close"]) > float(wed["open"])
         else:
             early_move = float(tue["close"]) > float(mon["close"]) and float(tue["high"]) > float(mon["high"])
-            pivot = float(wed["close"]) < float(tue["low"]) and float(wed["close"]) < float(wed["open"])
         if not early_move:
-            return False, "no_early_week_move"
-        if not pivot:
-            return False, "wednesday_closure_pending"
+            return False, "no_early_week_move", None
+        # Wednesday is THE pivot; when it lacks a clean closure the source says
+        # wait for Thursday's confirmation instead.
+        pivot_day = next((day for day in (2, 3) if pivot_closure(direction, day)), None)
+        if pivot_day is None:
+            if 3 not in weekday_bars:
+                return False, "wednesday_unclear_await_thursday", None
+            return False, "reversal_not_confirmed", None
+        pivot_close = float(weekday_bars[pivot_day]["close"])
+        later = [bar for bar in context["bars"] if int(bar["weekday"]) > pivot_day]
         for bar in later:
-            if direction > 0 and float(bar["close"]) < float(wed["close"]):
-                return False, "continuation_failed"
-            if direction < 0 and float(bar["close"]) > float(wed["close"]):
-                return False, "continuation_failed"
-        if later:
-            return True, "pivot_wed_continuing"
-        return True, "pivot_wed_await_thu_continuation"
+            if direction > 0 and float(bar["close"]) < pivot_close:
+                return False, "continuation_failed", pivot_day
+            if direction < 0 and float(bar["close"]) > pivot_close:
+                return False, "continuation_failed", pivot_day
+        label = "pivot_wed" if pivot_day == 2 else "pivot_thu_fallback"
+        return True, f"{label}_continuing" if later else f"{label}_await_continuation", pivot_day
 
-    bullish, bullish_note = side(1)
-    bearish, bearish_note = side(-1)
+    bullish, bullish_note, bullish_pivot = side(1)
+    bearish, bearish_note, bearish_pivot = side(-1)
     note = bullish_note if bullish else (bearish_note if bearish else bullish_note)
-    return {"bullish": bullish, "bearish": bearish, "note": note}
+    pivot_weekday = bullish_pivot if bullish else (bearish_pivot if bearish else None)
+    return {"bullish": bullish, "bearish": bearish, "note": note, "pivot_weekday": pivot_weekday}
 
 
 def _evaluate_consolidation_reversal(context: Dict[str, object]) -> Dict[str, object]:
@@ -1904,6 +2260,8 @@ def _evaluate_consolidation_reversal(context: Dict[str, object]) -> Dict[str, ob
         "bullish": bool(direction > 0 and matched),
         "bearish": bool(direction < 0 and matched),
         "note": note,
+        # Source target: the opposite side of the consolidation range.
+        "target_level": cons_low if direction < 0 else cons_high,
     }
 
 
@@ -1931,17 +2289,35 @@ def _evaluate_intraweek_reversal(context: Dict[str, object]) -> Dict[str, object
             return False, "no_tuesday_stall"
 
         reversal_day = None
+        closure = ""
         for candidate in (2, 3):
             pivot = weekday_bars.get(candidate)
             prev = weekday_bars.get(candidate - 1)
             if pivot is None or prev is None:
                 continue
             if direction > 0 and float(pivot["close"]) > float(prev["high"]) and float(pivot["close"]) > float(pivot["open"]) and _body_ratio(pivot) >= 0.5:
-                reversal_day = candidate
+                reversal_day, closure = candidate, "candle_two_closure"
                 break
             if direction < 0 and float(pivot["close"]) < float(prev["low"]) and float(pivot["close"]) < float(pivot["open"]) and _body_ratio(pivot) >= 0.5:
-                reversal_day = candidate
+                reversal_day, closure = candidate, "candle_two_closure"
                 break
+            # Candle 3 closure: the prior candle (candle 2) failed without
+            # sweeping the one before it, and this candle closes over its body.
+            before = weekday_bars.get(candidate - 2)
+            if before is not None:
+                p_open, p_close = float(prev["open"]), float(prev["close"])
+                if (
+                    direction > 0 and p_close <= p_open and float(prev["low"]) >= float(before["low"])
+                    and float(pivot["close"]) > max(p_open, p_close) and float(pivot["close"]) > float(pivot["open"])
+                ):
+                    reversal_day, closure = candidate, "candle_three_closure"
+                    break
+                if (
+                    direction < 0 and p_close >= p_open and float(prev["high"]) <= float(before["high"])
+                    and float(pivot["close"]) < min(p_open, p_close) and float(pivot["close"]) < float(pivot["open"])
+                ):
+                    reversal_day, closure = candidate, "candle_three_closure"
+                    break
         if reversal_day is None:
             return False, "reversal_not_confirmed"
 
@@ -1952,7 +2328,7 @@ def _evaluate_intraweek_reversal(context: Dict[str, object]) -> Dict[str, object
                 return False, "continuation_violated"
             if direction < 0 and float(bar["close"]) > float(pivot["high"]):
                 return False, "continuation_violated"
-        return True, f"candle_two_closure_d{reversal_day + 1}"
+        return True, f"{closure}_d{reversal_day + 1}"
 
     bullish, bullish_note = side(1)
     bearish, bearish_note = side(-1)
@@ -1992,11 +2368,14 @@ def _evaluate_thursday_counter(context: Dict[str, object]) -> Dict[str, object]:
     if not grab_failure:
         return {"bullish": False, "bearish": False, "note": "no_thursday_grab_failure"}
 
+    # Source: the weekly open is the most common target of the counter move.
+    weekly_open = float(mon["open"])
     if fri is None:
         return {
             "bullish": bool(direction > 0),
             "bearish": bool(direction < 0),
             "note": "thursday_counter_set_friday_pending",
+            "target_level": weekly_open,
         }
 
     if direction < 0:
@@ -2008,6 +2387,7 @@ def _evaluate_thursday_counter(context: Dict[str, object]) -> Dict[str, object]:
         "bullish": bool(direction > 0 and confirmed),
         "bearish": bool(direction < 0 and confirmed),
         "note": note,
+        "target_level": weekly_open,
     }
 
 
@@ -2031,14 +2411,20 @@ def _evaluate_tgif(context: Dict[str, object]) -> Dict[str, object]:
 
     prior_weeks = context["prior_weeks"]
     swing = context["swing"]
-    refs_high: List[float] = []
-    refs_low: List[float] = []
+    objectives = context.get("objectives") or {}
+    refs_high: List[float] = list(objectives.get("highs", []))
+    refs_low: List[float] = list(objectives.get("lows", []))
     if prior_weeks:
         refs_high.append(float(prior_weeks[-1]["high"]))
         refs_low.append(float(prior_weeks[-1]["low"]))
     if swing:
         refs_high.append(float(swing["high"]))
         refs_low.append(float(swing["low"]))
+    # An objective must sit beyond where the week started; a level already
+    # below (above) the weekly open is not something the expansion reached for.
+    week_open = float(weekday_bars[0]["open"])
+    refs_high = [level for level in refs_high if level > week_open]
+    refs_low = [level for level in refs_low if level < week_open]
 
     def fade_of(direction: int) -> tuple[bool, str]:
         """direction=+1 fades a completed bullish expansion week (bearish signal)."""
@@ -2063,22 +2449,23 @@ def _evaluate_tgif(context: Dict[str, object]) -> Dict[str, object]:
         else:
             faded = float(fri["low"]) >= float(thu["low"]) and float(fri["close"]) > float(thu["close"])
 
+        # Weekday-based (not bar position) so a holiday cannot shift the days.
         if direction > 0:
-            extreme_early = low_idx <= 1
+            extreme_early = int(thru_thu[low_idx]["weekday"]) <= 1
             leg_closes = [float(bar["close"]) for bar in leg_bars]
             extreme_close_idx = leg_closes.index(max(leg_closes))
-            leg_completed_late = extreme_close_idx >= 2
+            leg_completed_late = int(leg_bars[extreme_close_idx]["weekday"]) >= 2
             expansion = week_low > 0 and (max(leg_closes) - week_low) / week_low >= TGIF_EXPANSION_MIN_PCT
             leg_objective = max(float(bar["high"]) for bar in leg_bars)
-            objective = bool(refs_high) and min(refs_high) <= leg_objective
+            objective = any(level <= leg_objective for level in refs_high)
         else:
-            extreme_early = high_idx <= 1
+            extreme_early = int(thru_thu[high_idx]["weekday"]) <= 1
             leg_closes = [float(bar["close"]) for bar in leg_bars]
             extreme_close_idx = leg_closes.index(min(leg_closes))
-            leg_completed_late = extreme_close_idx >= 2
+            leg_completed_late = int(leg_bars[extreme_close_idx]["weekday"]) >= 2
             expansion = week_high > 0 and (week_high - min(leg_closes)) / week_high >= TGIF_EXPANSION_MIN_PCT
             leg_objective = min(float(bar["low"]) for bar in leg_bars)
-            objective = bool(refs_low) and max(refs_low) >= leg_objective
+            objective = any(level >= leg_objective for level in refs_low)
 
         if not extreme_early:
             return False, "weekly_extreme_made_late"
@@ -2096,7 +2483,14 @@ def _evaluate_tgif(context: Dict[str, object]) -> Dict[str, object]:
     bullish = fade_down_matched
     bearish = fade_up_matched
     note = fade_down_note if bullish else (fade_up_note if bearish else fade_up_note)
-    return {"bullish": bullish, "bearish": bearish, "note": note}
+    # Source target: a 20-30% retracement of the weekly range; use its midpoint.
+    week_range = week_high - week_low
+    target_level = None
+    if bearish:
+        target_level = week_high - TGIF_RETRACE_TARGET_PCT * week_range
+    elif bullish:
+        target_level = week_low + TGIF_RETRACE_TARGET_PCT * week_range
+    return {"bullish": bullish, "bearish": bearish, "note": note, "target_level": target_level}
 
 
 def _daily_atr(daily: pd.DataFrame, period: int = 14) -> Optional[float]:
@@ -2171,11 +2565,15 @@ def _profile_levels(profile_key: str, context: Dict[str, object]) -> Dict[str, O
     if profile_key == "classic_expansion_sweep":
         sl_bull, sl_bear = min(lows), max(highs)
     elif profile_key == "midweek_reversal_sweep":
-        wed = by.get(2)
-        if wed is None:
+        # Pivot is Wednesday, or Thursday under the source's fallback.
+        pivot_day = int(context.get("pivot_weekday") or 2)
+        pivot = by.get(pivot_day)
+        if pivot is None:
             return {"sl_bull": None, "sl_bear": None, "entry_ref": entry_ref}
-        sl_bull, sl_bear = float(wed["low"]), float(wed["high"])
-        entry_ref = float(wed["close"])
+        span = [by[day] for day in range(2, pivot_day + 1) if day in by]
+        sl_bull = min(float(b["low"]) for b in span)
+        sl_bear = max(float(b["high"]) for b in span)
+        entry_ref = float(pivot["close"])
     elif profile_key == "consolidation_reversal_sweep":
         thu = by.get(3)
         if thu is None:
@@ -2201,8 +2599,10 @@ def _profile_levels(profile_key: str, context: Dict[str, object]) -> Dict[str, O
 def _build_trade_plan(outcome: Dict[str, object], context: Dict[str, object], atr: Optional[float]) -> Dict[str, object]:
     """Turn the evaluator outcome + structural levels into an actionable plan.
 
-    SL = invalidation extreme +/- a >=1xATR buffer; target = opposite prior-week
-    or swing extreme (the liquidity pool the profile expands toward). R:R is
+    SL = invalidation extreme +/- a >=1xATR buffer; target = the profile's own
+    source target (``outcome["target_level"]``, e.g. weekly open, range side,
+    retrace level) when it lies beyond entry, else the opposite prior-week or
+    swing extreme (the liquidity pool the profile expands toward). R:R is
     reported so sub-minimum setups can be filtered by the caller/UI.
     """
     direction = 1 if outcome.get("bullish") else (-1 if outcome.get("bearish") else 0)
@@ -2223,7 +2623,12 @@ def _build_trade_plan(outcome: Dict[str, object], context: Dict[str, object], at
     # Measured-move fallback = entry +/- 2x risk, i.e. a clean 1:2 R:R when no
     # valid liquidity pool sits beyond the entry.
     measured = (entry + 2.0 * (entry - sl)) if direction > 0 else (entry - 2.0 * (sl - entry))
-    if direction > 0:
+    override = outcome.get("target_level")
+    if override is not None and (
+        (direction > 0 and float(override) > entry) or (direction < 0 and float(override) < entry)
+    ):
+        target = float(override)
+    elif direction > 0:
         cands = [float(p["high"]) for p in pw] + ([float(swing["high"])] if swing else [])
         # Only count pools that are genuinely above entry; a pool below entry is
         # behind price and would put the target behind the entry (broken R:R).
@@ -2284,6 +2689,38 @@ def _trim_in_progress_daily(daily: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
+def _weekly_context(daily: pd.DataFrame, as_of_date: date) -> Optional[Dict[str, object]]:
+    """Point-in-time evaluator context for the week containing ``as_of_date``."""
+    bars = _week_bars(daily, as_of_date)
+    if not bars:
+        return None
+    return {
+        "bars": bars,
+        "by_weekday": _bars_by_weekday(bars),
+        "latest": bars[-1],
+        "prior_weeks": _prior_week_extremes(daily, as_of_date),
+        "swing": _pre_week_swing_extremes(daily, as_of_date),
+        "objectives": _pre_week_objectives(daily, as_of_date),
+    }
+
+
+def _first_weekly_trigger(
+    evaluator: Callable[[Dict[str, object]], Dict[str, object]],
+    daily: pd.DataFrame,
+    bars: List[Dict[str, object]],
+    direction: int,
+) -> Optional[date]:
+    """Earliest earlier session this week on which the profile already matched
+    in ``direction`` (evaluated on data truncated to that session), else None."""
+    key = "bullish" if direction > 0 else "bearish"
+    for bar in bars[:-1]:
+        stamp = pd.Timestamp(bar["date"])
+        context = _weekly_context(daily[daily.index <= stamp], stamp.date())
+        if context is not None and evaluator(context).get(key):
+            return stamp.date()
+    return None
+
+
 def run_weekly_profile(
     symbols: Sequence[str],
     as_of_date: date,
@@ -2336,24 +2773,22 @@ def run_weekly_profile(
             if verbose:
                 print(f"{symbol_upper}: SKIPPED (no_data)")
             continue
+        if _is_stale(symbol_upper, daily, as_of_date):
+            results.at[idx, "status"] = "stale"
+            continue
 
-        bars = _week_bars(daily, as_of_date)
-        if not bars:
+        context = _weekly_context(daily, as_of_date)
+        if context is None:
             results.at[idx, "status"] = "no_week_data"
             if verbose:
                 print(f"{symbol_upper}: SKIPPED (no_week_data)")
             continue
+        bars = context["bars"]
 
-        context = {
-            "bars": bars,
-            "by_weekday": _bars_by_weekday(bars),
-            "latest": bars[-1],
-            "prior_weeks": _prior_week_extremes(daily, as_of_date),
-            "swing": _pre_week_swing_extremes(daily, as_of_date),
-        }
         outcome = evaluator(context)
         bullish = bool(outcome["bullish"])
         bearish = bool(outcome["bearish"])
+        context["pivot_weekday"] = outcome.get("pivot_weekday")
 
         levels = _profile_levels(profile_key, context)
         direction = 1 if bullish else (-1 if bearish else 0)
@@ -2361,12 +2796,28 @@ def run_weekly_profile(
         outcome["entry_ref"] = levels["entry_ref"]
         plan = _build_trade_plan(outcome, context, _daily_atr(daily))
         state = _signal_state(outcome, context)
+        note = str(outcome["note"])
+
+        # A profile fires once per week: only the first session it matches
+        # (re-evaluated point-in-time on the earlier sessions of this week).
+        # A first match at Friday's close is a label only — the weekly profile
+        # has played out and the next entry would fall in a different week.
+        fires = direction != 0
+        if fires:
+            first_date = _first_weekly_trigger(evaluator, daily, bars, direction)
+            if first_date is not None:
+                fires = False
+                note = f"{note} | first signalled {first_date.isoformat()}"
+            elif int(bars[-1]["weekday"]) == 4:
+                fires = False
+                state = "expired"
+                note = f"{note} | friday_close_label_only"
 
         results.at[idx, "bullish_match"] = bullish
         results.at[idx, "bearish_match"] = bearish
-        results.at[idx, "final_signal"] = bullish or bearish
+        results.at[idx, "final_signal"] = fires
         results.at[idx, "status"] = "complete"
-        results.at[idx, "note"] = str(outcome["note"])
+        results.at[idx, "note"] = note
         results.at[idx, "state"] = state
         results.at[idx, "direction"] = direction
         results.at[idx, "entry"] = plan["entry"]
@@ -2375,9 +2826,17 @@ def run_weekly_profile(
         results.at[idx, "rr"] = plan["rr"]
         results.at[idx, "atr"] = plan["atr"]
         results.at[idx, "track_mode"] = _track_mode_for(symbol_upper)
+        if fires:
+            # Intraday confirmation window: the remaining sessions of this week.
+            latest = bars[-1]
+            _set_ltf_setup(
+                results, idx, direction, float(latest["high"]), float(latest["low"]),
+                latest["date"], _week_start_end(as_of_date)[1],
+                invalidation=outcome["sl_level"],
+            )
 
         if verbose:
-            print(f"{symbol_upper}: {label} bullish={bullish}, bearish={bearish}, note={outcome['note']}")
+            print(f"{symbol_upper}: {label} bullish={bullish}, bearish={bearish}, note={note}")
 
     bullish_frame, bearish_frame = _extract_weekly_profile_signal_frames(results)
     return StrategyExecution(name=profile_key, results=results, bullish=bullish_frame, bearish=bearish_frame)
@@ -2607,7 +3066,7 @@ def run_strategies(
             "print_values": print_values,
             "daily_map": daily_map,
         }
-        if name in {"protected_swings", "propulsion_blocks"}:
+        if name in {"protected_swings", "points_of_interest", "candle_3_closure", "propulsion_blocks"}:
             runner_kwargs["timeframe"] = normalized_timeframe
         execution = registry[name].runner(**runner_kwargs)
         executions.append(execution)

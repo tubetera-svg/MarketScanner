@@ -27,6 +27,7 @@ from __future__ import annotations
 import csv
 import logging
 import time
+from datetime import date, datetime
 from io import StringIO
 from pathlib import Path
 from typing import Optional
@@ -49,6 +50,8 @@ _HEADERS = {
 
 _CACHE: dict[str, str] = {}
 _CACHE_LOADED_AT: float = 0.0
+_LISTING_DATES: dict[str, date] = {}
+_LISTING_DATES_MTIME: float = 0.0
 
 
 def _parse(content: str) -> dict[str, str]:
@@ -162,10 +165,52 @@ def is_main_board_equity(symbol: str, **kwargs) -> Optional[bool]:
     return master.get(key) == "EQ"
 
 
+def _parse_listing_dates(content: str) -> dict[str, date]:
+    """Return ``{SYMBOL: DATE OF LISTING}`` from the equity-master CSV text."""
+    out: dict[str, date] = {}
+    reader = csv.DictReader(StringIO(content))
+    if not reader.fieldnames:
+        return out
+    fields = {str(name).strip().upper(): name for name in reader.fieldnames if name}
+    symbol_field = fields.get("SYMBOL")
+    date_field = fields.get("DATE OF LISTING")
+    if not symbol_field or not date_field:
+        return out
+    for row in reader:
+        symbol = str(row.get(symbol_field, "") or "").strip().upper()
+        try:
+            out[symbol] = datetime.strptime(str(row.get(date_field, "")).strip(), "%d-%b-%Y").date()
+        except ValueError:
+            continue
+    return out
+
+
+def load_listing_dates(**kwargs) -> dict[str, date]:
+    """Official NSE listing date per main-board symbol (empty when unavailable).
+
+    Refreshes the master via ``load_equity_master`` first, then parses the
+    on-disk copy. Never raises.
+    """
+    global _LISTING_DATES, _LISTING_DATES_MTIME
+    load_equity_master(**kwargs)
+    try:
+        mtime = CACHE_PATH.stat().st_mtime
+    except OSError:
+        return _LISTING_DATES
+    if mtime != _LISTING_DATES_MTIME:
+        try:
+            content = CACHE_PATH.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return _LISTING_DATES
+        _LISTING_DATES, _LISTING_DATES_MTIME = _parse_listing_dates(content), mtime
+    return _LISTING_DATES
+
+
 def reset_cache() -> None:
     """Test helper: drop the in-memory cache."""
-    global _CACHE, _CACHE_LOADED_AT
+    global _CACHE, _CACHE_LOADED_AT, _LISTING_DATES, _LISTING_DATES_MTIME
     _CACHE, _CACHE_LOADED_AT = {}, 0.0
+    _LISTING_DATES, _LISTING_DATES_MTIME = {}, 0.0
 
 
 def cache_path() -> Path:
@@ -178,6 +223,7 @@ __all__ = [
     "cache_path",
     "is_main_board_equity",
     "load_equity_master",
+    "load_listing_dates",
     "main_board_symbols",
     "reset_cache",
 ]

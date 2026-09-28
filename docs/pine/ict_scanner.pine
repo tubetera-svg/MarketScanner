@@ -1,0 +1,906 @@
+//@version=6
+indicator("OHLC, BB, SMA, VWAP, CPR, Silver Bullet + Strategy Suite v2", overlay=true, max_boxes_count=150, max_labels_count=200)
+
+// ====== INPUTS ======
+// Group inputs for clarity
+showPreviousDays = input.bool(true, "Show Previous Days' Data")
+// showBB = input.bool(false, "Show Bollinger Bands")
+showMA = input.bool(true, "Show Moving Averages")
+dp = input.bool(true, "Display Floor Pivots")
+// hl_m = input.bool(false, "Display Monthly Highs/Lows")
+hl_w = input.bool(true, "Display Weekly Highs/Lows")
+
+processBars = input.int(300, "Processing Lookback")
+process = (last_bar_index - bar_index) <= processBars
+
+
+//====================================================
+// Previous Day OHLC Function
+//====================================================
+fnPrevDayOHLC() =>
+    [dayOpen, prevHigh, prevLow, prevClose, todayOpen] = request.security(
+                              syminfo.tickerid, "D", [open[1], high[1], low[1], close[1], open], lookahead = barmerge.lookahead_on)
+
+    prevMid = (prevHigh + prevLow) / 2
+
+    isToday = year(time) == year(timenow) and month(time) == month(timenow) and dayofmonth(time) == dayofmonth(timenow)
+
+    pdOpen = isToday and showPreviousDays and timeframe.isintraday ? todayOpen : na
+    pdHigh = isToday and showPreviousDays and timeframe.isintraday ? prevHigh : na
+    pdLow  = isToday and showPreviousDays and timeframe.isintraday ? prevLow : na
+    pdMid  = isToday and showPreviousDays and timeframe.isintraday ? prevMid : na
+    pdClose = isToday and showPreviousDays and timeframe.isintraday ? prevClose : na
+
+    pivot = isToday and showPreviousDays and timeframe.isintraday ? ((pdHigh + pdLow + pdClose) / 3.0) : na
+
+    [pdOpen, pdHigh, pdLow, pdMid, pivot]
+
+//====================================================
+// Get values
+//====================================================
+
+[pdOpen, pdHigh, pdLow, pdMid, pivot] = fnPrevDayOHLC()
+
+//====================================================
+// Labels
+//====================================================
+
+var label pdOpenLabel = na
+var label pdHighLabel = na
+var label pdLowLabel  = na
+var label pdMidLabel  = na
+var label pdpvtLabel = na
+
+if barstate.islast
+
+    label.delete(pdOpenLabel)
+    label.delete(pdHighLabel)
+    label.delete(pdLowLabel)
+    label.delete(pdpvtLabel)
+    label.delete(pdMidLabel)
+
+    pdOpenLabel := label.new(bar_index + 4, pdOpen, "Open", style=label.style_none, textcolor=color.black, size=size.small)
+    pdHighLabel := label.new(bar_index + 4, pdHigh, "PDH", style=label.style_none, textcolor=color.black, size=size.small)
+    pdLowLabel := label.new(bar_index + 4, pdLow, "PDL", style=label.style_none, textcolor=color.black, size=size.small)
+    pdMidLabel := label.new(bar_index + 4, pdMid, "Mid", style=label.style_none, textcolor=color.black, size=size.small)
+    pdpvtLabel := label.new(bar_index + 4, pivot, "Pvt", style=label.style_none, textcolor=color.black, size=size.small)
+
+//====================================================
+// Plots
+//====================================================
+
+plot(pdOpen, title="Day Open", color=#004cff, linewidth=1)
+plot(pdHigh, title="Previous Day High", color=color.green, linewidth=1)
+plot(pdLow, title="Previous Day Low", color=color.red, linewidth=1)
+plot(pdMid, title="Previous Day Mid", color=color.gray, linewidth=1)
+plot(pivot, title="Pivot", linewidth=1, offset = 0, color=#FF007F, style=plot.style_line)
+
+// Right extension
+
+plot(pdOpen, title="Day Open Offset", color=#004cff, linewidth=1, offset=3)
+plot(pdHigh, title="Previous Day High Offset", color=color.green, linewidth=1, offset=3)
+plot(pdLow, title="Previous Day Low Offset", color=color.red, linewidth=1, offset=3)
+plot(pdMid, title="Previous Day Mid Offset", color=color.gray, linewidth=1, offset=3)
+plot(pivot, title="Pivot", linewidth=1, offset = 3, color=#FF007F, style=plot.style_line)
+
+
+//==================================================
+// Weekly High / Low
+//==================================================
+
+[whigh, wlow] = request.security( syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+in_lookback = input.bool(true, "Enable Lookback Filter")
+
+showWeeks = year(time) == year(timenow) and weekofyear(time) == weekofyear(timenow)
+
+showWeekly = (timeframe.isintraday or timeframe.isdaily) and hl_w and (not in_lookback or showWeeks)
+
+plot(showWeekly ? whigh : na, title="Weekly High", style=plot.style_cross, linewidth=2, color=color.rgb(0,185,222,13))
+plot(showWeekly ? wlow : na, title="Weekly Low", style=plot.style_cross, linewidth=2, color=#FF7F00)
+
+//  Right extension ==============
+
+plot(showWeekly ? whigh : na, title="Weekly High", style=plot.style_cross, linewidth=2, color=color.rgb(0,185,222,13), offset=3)
+plot(showWeekly ? wlow : na, title="Weekly Low", style=plot.style_cross, linewidth=2, color=#FF7F00, offset=3)
+
+
+//=============================================
+// Weekly Labels
+//=============================================
+
+var label pwhLabel = na
+var label pwlLabel = na
+
+if barstate.islast and showWeekly
+
+    label.delete(pwhLabel)
+    label.delete(pwlLabel)
+
+    pwhLabel := label.new( bar_index + 4, whigh, "PWH", style=label.style_none, textcolor=color.black, size=size.small)
+    pwlLabel := label.new( bar_index + 4, wlow, "PWL", style=label.style_none, textcolor=color.black, size=size.small)
+
+
+
+// ====== VWAP ======
+vwap = ta.vwap(hlc3)
+plot(vwap, color = bar_index % 2 == 0 ? color.lime : color.gray, linewidth = 2, title = "VWAP")
+
+// ====== BOLLINGER BANDS ======
+// lengthBB = 20
+// multBB = 2
+
+// basisBB = ta.sma(close, lengthBB)
+// devBB = multBB * ta.stdev(close, lengthBB)
+// upperBB = basisBB + devBB
+// lowerBB = basisBB - devBB
+
+// plot(showBB ? basisBB : na, color = bar_index % 2 == 0 ? color.black : color.orange, linewidth = 2, title = "Basis")
+// plot(showBB ? upperBB : na, color = color.gray, linewidth = 1, title = "Upper BB")
+// plot(showBB ? lowerBB : na, color = color.gray, linewidth = 1, title = "Lower BB")
+
+// ====== MOVING AVERAGES ======
+ema5 = ta.ema(close, 5)
+// sma50 = ta.sma(close, 50)
+sma200 = ta.sma(close, 200)
+// ema9 = ta.ema(close, 9)
+// ema15 = ta.ema(close, 15)
+
+
+// Example of commented out SMA100 - keep for reference
+// sma100 = ta.sma(close, 100)
+
+plot(showMA ? ema5 : na, color = color.rgb(254, 109, 109), linewidth = 3, title = "EMA 5")
+// plot(showMA ? sma50 : na, color = color.gray, linewidth = 2, title = "SMA 50")
+plot(showMA ? sma200 : na, color = #e7d534, linewidth = 3, title = "SMA 200")
+// plot(showMA ? ema9 : na, color = color.gray, linewidth = 1, title = "EMA 9")
+// plot(showMA ? ema15 : na, color = color.gray, linewidth = 2, title = "EMA 15")
+// plot(showMA ? sma100 : na, color=color.purple, linewidth=2, title="SMA 100")
+
+// // ======= EMA 9 updating color based on angle
+
+// lookbackBars = 3
+// slope = ema9 - ema9[lookbackBars]
+
+// // scaling factor to normalize slope
+// scale = 100
+
+// // angle (in degrees) without using math.degrees()
+// angleRadians = math.atan(slope * scale)
+// angle = angleRadians * 180 / math.pi
+
+// angleUp   = angle > 40
+// angleDown = angle < -40
+
+// plot(ema9, color = angleUp ? color.green : angleDown ? color.red : color.gray, linewidth = 2)
+
+// ================================================
+
+
+// ==========================================================================
+// "EMA5 Sweep" — tightened to match src/all_strategy.py::_ema5_sweep_bullish
+// / _ema5_sweep_bearish exactly (daily-bar strategy: gated to the Daily chart
+// so `ema5`/`high`/`low`/`close` here are the same closed daily bars Python's
+// evaluator sees; the [1] history refs are fully-closed, non-repainting bars).
+// Replaces the previous ad-hoc "5▼ / 5▲" reversal signal.
+// ==========================================================================
+e5_bullish = timeframe.isdaily and low > ema5 and low[1] > ema5[1] and high > high[1] and close < high[1]
+e5_bearish = timeframe.isdaily and high < ema5 and high[1] < ema5[1] and low < low[1] and close > low[1]
+
+plotshape(e5_bullish, title="EMA5 Sweep Bullish", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, text="E5")
+plotshape(e5_bearish, title="EMA5 Sweep Bearish", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="E5")
+
+// =============================================
+
+
+//============================================
+// Sweep Status
+//============================================
+getSweepStatus(offset) =>
+    prevHigh = high[offset + 1]
+    prevLow  = low[offset + 1]
+
+    currHigh = high[offset]
+    currLow  = low[offset]
+    currClose = close[offset]
+
+    bearSweep = currHigh > prevHigh and currClose < prevHigh and currLow > prevLow
+    bearClose = currClose < prevLow
+
+    bullSweep = currLow < prevLow and currClose > prevLow and currHigh < prevHigh
+    bullClose = currClose > prevHigh
+
+    bearSweep ? "▼S" :
+     bearClose ? "▼C" :
+     bullSweep ? "▲S" :
+     bullClose ? "▲C" :
+     ""
+
+// Return both completed candles in ONE security() call
+getSweepPair() =>
+    [getSweepStatus(1), getSweepStatus(2)]
+
+//============================================
+// MA Status
+//============================================
+getMAStatus(tf) =>
+    [sma200, h, l] = request.security(syminfo.tickerid, tf, [ta.sma(close,200), high, low])
+
+    txt = sma200 > h ? "▼" : sma200 < l ? "▲" : ""
+
+    bg = sma200 > h ? color.red : sma200 < l ? color.green : color.aqua
+
+    [txt, bg]
+
+//============================================
+// Color helper
+//============================================
+getColor(status) =>
+    switch status
+        "▼S" => color.red
+        "▼C" => color.red
+        "▲S" => color.green
+        "▲C" => color.green
+        => color.gray
+
+//============================================
+// Tables
+//============================================
+var table sweepTable = table.new(position.top_right, 3, 7, border_width=1)
+var table rules = table.new(position.bottom_right, 1, 2, border_width=1)
+
+//============================================
+// 1m / 3m Status
+//============================================
+[_1mStatus,_1mColor] = getMAStatus("1")
+[_3mStatus,_3mColor] = getMAStatus("3")
+
+//============================================
+// Helper to draw a row
+//============================================
+drawRow(row, tf, s1, s2) =>
+    table.cell(sweepTable,0,row,tf,bgcolor=color.black,text_color=color.white)
+
+    table.cell(sweepTable,1,row,s1, bgcolor=getColor(s1), text_color=color.white)
+
+    table.cell(sweepTable,2,row,s2, bgcolor=getColor(s2), text_color=color.white)
+
+//============================================
+// Draw Tables
+//============================================
+if barstate.islast
+
+    //----- Sweep Status (5 security calls only)
+
+    [mStatus1,mStatus2] = request.security(syminfo.tickerid,"M",getSweepPair())
+
+    [wStatus1,wStatus2] = request.security(syminfo.tickerid,"W",getSweepPair())
+
+    [dStatus1,dStatus2] = request.security(syminfo.tickerid,"D",getSweepPair())
+
+    [h4Status1,h4Status2] = request.security(syminfo.tickerid,"240",getSweepPair())
+
+    [h1Status1,h1Status2] = request.security(syminfo.tickerid,"60",getSweepPair())
+
+    // Header
+    table.cell(sweepTable,0,0,"TF",bgcolor=color.black,text_color=color.white)
+    table.cell(sweepTable,1,0,"1",bgcolor=color.black,text_color=color.white)
+    table.cell(sweepTable,2,0,"2",bgcolor=color.black,text_color=color.white)
+
+    drawRow(1,"M",mStatus1,mStatus2)
+    drawRow(2,"W",wStatus1,wStatus2)
+    drawRow(3,"D",dStatus1,dStatus2)
+    drawRow(4,"4H",h4Status1,h4Status2)
+    drawRow(5,"1H",h1Status1,h1Status2)
+
+    table.cell(sweepTable,0,6,"3/1", bgcolor=color.black, text_color=color.white)
+
+    table.cell(sweepTable,1,6,_3mStatus, bgcolor=_3mColor, text_color=color.white)
+
+    table.cell(sweepTable,2,6,_1mStatus,
+        bgcolor=_1mColor,
+        text_color=color.white)
+
+    // Rules Table
+    table.cell(rules, 0, 0, "TRADE RULES", bgcolor=color.red, text_color=color.white, text_halign=text.align_left)
+
+    table.cell(rules, 0, 1, "Save Capital\nPDL/PDH sweep\nMSS/CISD\nProtected swings\nRR > 1:2\nJournal trade",
+               bgcolor=color.rgb(255, 255, 188), text_halign=text.align_left)
+
+
+// ============================================================================
+//  AM SILVER BULLET — added, commodities & crypto gated
+//  Framework hour range -> liquidity sweep in the trade window -> CISD /
+//  displacement / FVG confirmation -> stop beyond sweep, target opposite side.
+//  Signal-only: this is an indicator, so it plots/labels/alerts — it does not
+//  place trades. Pair with a strategy script if you want auto-execution.
+// ============================================================================
+gSB = "Silver Bullet"
+sb_enabled     = input.bool(true, "SB: Enable Silver Bullet signals", group = gSB)
+sb_allowCrypto = input.bool(true,  "SB: Trade crypto",      group = gSB)
+sb_allowComm   = input.bool(true,  "SB: Trade commodities", group = gSB)
+sb_commList    = input.string(
+     "XAU,XAG,XPT,XPD,GOLD,SILVER,GC,MGC,SI,SIL,HG,PL,PA,CL,MCL,NG,QG,RB,HO,BZ,WTI,USOIL,UKOIL,BRENT,NATGAS,ZC,ZS,ZW,ZL,ZM,KC,SB,CC,CT,OJ,LE,HE,GF",
+     "SB: Commodity roots / fragments", group = gSB)
+sb_forceAllow  = input.bool(false, "SB: Override asset filter", group = gSB)
+
+sb_tz        = input.string("America/New_York", "SB: Timezone", group = gSB)
+sb_frameSess = input.session("0900-1000:1234567", "SB: Framework hour", group = gSB)
+sb_tradeSess = input.session("1000-1100:1234567", "SB: Trade window", group = gSB)
+
+sb_confMode   = input.string("CISD", "SB: Confirmation", options = ["CISD", "Displacement close", "FVG"], group = gSB)
+sb_sameBarOK  = input.bool(false, "SB: Allow confirmation on sweep candle", group = gSB)
+sb_useFvgLmt  = input.bool(true,  "SB: Use FVG fill as entry price", group = gSB)
+sb_fvgFill    = input.string("CE", "SB: FVG fill level", options = ["Proximal", "CE", "Distal"], group = gSB)
+sb_minBodyAtr = input.float(0.35, "SB: Min displacement body (× ATR14)", minval = 0.0, step = 0.05, group = gSB)
+
+sb_stopBuf    = input.float(0.05, "SB: Stop buffer (% of range)", minval = 0.0, step = 0.01, group = gSB)
+sb_minRR      = input.float(1.5,  "SB: Minimum R:R", minval = 0.0, step = 0.1, group = gSB)
+
+sb_showRange  = input.bool(true, "SB: Draw framework range", group = gSB)
+sb_showZone   = input.bool(true, "SB: Shade windows",        group = gSB)
+sb_showLvls   = input.bool(true, "SB: Draw stop / target lines", group = gSB)
+sb_warnTf     = input.bool(true, "SB: Show 'wrong timeframe' notice", group = gSB)
+
+// Only run/display on 1H and below — the model is an intraday session play
+// and produces meaningless boxes/signals on daily+ bars.
+sb_tfOK     = timeframe.isintraday and timeframe.in_seconds(timeframe.period) <= 3600
+sb_active   = sb_enabled and sb_tfOK
+
+// Human-readable chart timeframe for drawing labels ("5m", "1H", "4H", "D").
+f_tfName() =>
+    timeframe.isdaily ? "D" : timeframe.isweekly ? "W" : timeframe.ismonthly ? "M" : timeframe.isminutes ? (timeframe.multiplier % 60 == 0 ? str.tostring(int(timeframe.multiplier / 60)) + "H" : str.tostring(timeframe.multiplier) + "m") : timeframe.period
+
+// Small text tag at the right end of an SL/TP line (lines can't carry text).
+f_lineTag(x, y, txt, col) =>
+    label.new(x, y, txt, style = label.style_label_left, color = color.new(color.white, 100), textcolor = col, size = size.tiny)
+
+var float sb_fHigh    = na
+var float sb_fLow     = na
+var bool  sb_ready    = false
+var int   sb_bias     = 0
+var float sb_sweepPx  = na
+var bool  sb_taken    = false
+var int   sb_sweepBar = na
+var box   sb_rngBox   = na
+var float sb_upRunOpen = na
+var float sb_dnRunOpen = na
+var line  sb_slLine   = na
+var line  sb_tpLine   = na
+var float sb_stopPx   = na
+var float sb_targetPx = na
+var float sb_entryPx  = na
+
+sb_atr = ta.atr(14)
+
+sb_symMatch() =>
+    tick  = str.upper(syminfo.ticker)
+    rt    = str.upper(syminfo.root)
+    parts = str.split(str.replace_all(str.upper(sb_commList), " ", ""), ",")
+    bool hit = false
+    for i = 0 to array.size(parts) - 1
+        p = array.get(parts, i)
+        if str.length(p) > 0 and (str.contains(tick, p) or (str.length(rt) > 0 and rt == p))
+            hit := true
+    hit
+
+sb_isCrypto    = syminfo.type == "crypto"
+sb_isCommodity = not sb_isCrypto and sb_symMatch()
+sb_symOK       = sb_forceAllow or (sb_isCrypto and sb_allowCrypto) or (sb_isCommodity and sb_allowComm)
+
+sb_inFrame = not na(time(timeframe.period, sb_frameSess, sb_tz))
+sb_inWin   = not na(time(timeframe.period, sb_tradeSess, sb_tz))
+
+sb_frameStart = sb_inFrame and not sb_inFrame[1]
+sb_frameEnd   = not sb_inFrame and sb_inFrame[1]
+
+if sb_active and sb_frameStart
+    sb_fHigh    := high
+    sb_fLow     := low
+    sb_ready    := false
+    sb_bias     := 0
+    sb_sweepPx  := na
+    sb_taken    := false
+    sb_entryPx  := na
+    sb_stopPx   := na
+    sb_targetPx := na
+else if sb_active and sb_inFrame
+    sb_fHigh := math.max(sb_fHigh, high)
+    sb_fLow  := math.min(sb_fLow,  low)
+
+if sb_active and sb_frameEnd and not na(sb_fHigh)
+    sb_ready := true
+    if sb_showRange
+        sb_rngBox := box.new(bar_index, sb_fHigh, bar_index + 1, sb_fLow,
+             border_color = color.new(color.gray, 40), bgcolor = color.new(color.gray, 92),
+             text = "SB range [" + f_tfName() + "]", text_size = size.tiny, text_color = color.gray,
+             text_halign = text.align_left, text_valign = text.align_top)
+
+if sb_active and sb_ready and not na(sb_rngBox) and sb_inWin
+    box.set_right(sb_rngBox, bar_index + 1)
+
+sb_fRange = sb_fHigh - sb_fLow
+
+if sb_active and sb_ready and sb_inWin and not sb_taken
+    sb_hitHigh = high > sb_fHigh
+    sb_hitLow  = low  < sb_fLow
+    if sb_bias == 0 and (sb_hitHigh or sb_hitLow)
+        sb_exUp = high - sb_fHigh
+        sb_exDn = sb_fLow - low
+        sb_bias     := sb_hitHigh and (not sb_hitLow or sb_exUp >= sb_exDn) ? -1 : 1
+        sb_sweepPx  := sb_bias == -1 ? high : low
+        sb_sweepBar := bar_index
+    else if sb_bias == -1
+        sb_sweepPx := math.max(sb_sweepPx, high)
+    else if sb_bias == 1
+        sb_sweepPx := math.min(sb_sweepPx, low)
+
+sb_upBar = close > open
+sb_dnBar = close < open
+if sb_upBar and not sb_upBar[1]
+    sb_upRunOpen := open
+if sb_dnBar and not sb_dnBar[1]
+    sb_dnRunOpen := open
+
+sb_cisdShort = not na(sb_upRunOpen) and close < sb_upRunOpen and sb_dnBar
+sb_cisdLong  = not na(sb_dnRunOpen) and close > sb_dnRunOpen and sb_upBar
+
+sb_bodyOK    = math.abs(close - open) >= sb_minBodyAtr * sb_atr
+sb_dispShort = sb_dnBar and sb_bodyOK and close < sb_fHigh and close < low[1]
+sb_dispLong  = sb_upBar and sb_bodyOK and close > sb_fLow  and close > high[1]
+
+sb_bearFvg = high < low[2]
+sb_bullFvg = low  > high[2]
+
+sb_fvgShortPx = sb_bearFvg ? (sb_fvgFill == "Proximal" ? high : sb_fvgFill == "Distal" ? low[2] : (high + low[2]) / 2) : na
+sb_fvgLongPx  = sb_bullFvg ? (sb_fvgFill == "Proximal" ? low  : sb_fvgFill == "Distal" ? high[2] : (low + high[2]) / 2) : na
+
+sb_confShort = sb_confMode == "CISD" ? sb_cisdShort : sb_confMode == "Displacement close" ? sb_dispShort : sb_bearFvg
+sb_confLong  = sb_confMode == "CISD" ? sb_cisdLong  : sb_confMode == "Displacement close" ? sb_dispLong  : sb_bullFvg
+
+sb_afterSweep = not na(sb_sweepBar) and (sb_sameBarOK ? bar_index >= sb_sweepBar : bar_index > sb_sweepBar)
+sb_canTrade   = sb_active and sb_symOK and sb_ready and sb_inWin and not sb_taken and sb_afterSweep and sb_fRange > 0
+
+sb_shortSetup = sb_canTrade and sb_bias == -1 and sb_confShort
+sb_longSetup  = sb_canTrade and sb_bias ==  1 and sb_confLong
+sb_longSignal  = false
+sb_shortSignal = false
+
+if sb_shortSetup
+    sb_ePx = sb_useFvgLmt and not na(sb_fvgShortPx) ? sb_fvgShortPx : close
+    sb_sPx = sb_sweepPx + sb_fRange * sb_stopBuf / 100
+    sb_tPx = sb_fLow
+    sb_rr  = (sb_ePx - sb_tPx) / math.max(sb_sPx - sb_ePx, syminfo.mintick)
+    if sb_rr >= sb_minRR and sb_sPx > sb_ePx and sb_tPx < sb_ePx
+        sb_entryPx     := sb_ePx
+        sb_stopPx      := sb_sPx
+        sb_targetPx    := sb_tPx
+        sb_taken       := true
+        sb_shortSignal := true
+
+if sb_longSetup
+    sb_ePx = sb_useFvgLmt and not na(sb_fvgLongPx) ? sb_fvgLongPx : close
+    sb_sPx = sb_sweepPx - sb_fRange * sb_stopBuf / 100
+    sb_tPx = sb_fHigh
+    sb_rr  = (sb_tPx - sb_ePx) / math.max(sb_ePx - sb_sPx, syminfo.mintick)
+    if sb_rr >= sb_minRR and sb_sPx < sb_ePx and sb_tPx > sb_ePx
+        sb_entryPx    := sb_ePx
+        sb_stopPx     := sb_sPx
+        sb_targetPx   := sb_tPx
+        sb_taken      := true
+        sb_longSignal := true
+
+if sb_active and sb_showLvls and (sb_longSignal or sb_shortSignal)
+    sb_slLine := line.new(bar_index, sb_stopPx,   bar_index + 20, sb_stopPx,   color = color.red,   style = line.style_dashed)
+    sb_tpLine := line.new(bar_index, sb_targetPx, bar_index + 20, sb_targetPx, color = color.green, style = line.style_dashed)
+    f_lineTag(bar_index + 20, sb_stopPx,   "SB SL [" + f_tfName() + "]", color.red)
+    f_lineTag(bar_index + 20, sb_targetPx, "SB TP [" + f_tfName() + "]", color.green)
+
+// plots
+plot(sb_active and sb_showRange and sb_ready and sb_inWin ? sb_fHigh : na, "SB Framework high", color.new(color.red,   0), 1, plot.style_linebr)
+plot(sb_active and sb_showRange and sb_ready and sb_inWin ? sb_fLow  : na, "SB Framework low",  color.new(color.green, 0), 1, plot.style_linebr)
+bgcolor(sb_active and sb_showZone and sb_inWin   ? color.new(color.blue, 93)   : na, title = "SB Trade window")
+bgcolor(sb_active and sb_showZone and sb_inFrame ? color.new(color.orange, 94) : na, title = "SB Framework hour")
+plotshape(sb_shortSignal, "SB Short signal", shape.triangledown, location.abovebar, color.red,   size = size.small, text = "SB")
+plotshape(sb_longSignal,  "SB Long signal",  shape.triangleup,   location.belowbar, color.green, size = size.small, text = "SB")
+
+if barstate.islast and sb_enabled and sb_warnTf and not sb_tfOK
+    label.new(bar_index, high, "SB: hidden on this timeframe\n(1H and below only)", style = label.style_label_left, color = color.new(color.gray, 20), textcolor = color.white, size = size.small)
+
+alertcondition(sb_longSignal,  "SB Long",  "{{ticker}} Silver Bullet LONG signal")
+alertcondition(sb_shortSignal, "SB Short", "{{ticker}} Silver Bullet SHORT signal")
+
+
+// ============================================================================
+//  STRATEGY SUITE — mirrors src/all_strategy.py::strategy_registry(),
+//  src/protected_swings.py and src/propulsion_blocks.py so the rest of the
+//  scanner's strategies can be tracked in parallel on the chart.
+//
+//  IMPORTANT — daily-bar strategies, daily chart only:
+//  Every strategy below (ema5_sweep, multi_timeframe_bias,
+//  inside_bar_pattern_daily_sweep, protected_swings, points_of_interest,
+//  propulsion_blocks, and the weekly-profile read) is fed *daily* OHLC frames in Python and only ever
+//  evaluated once a session's daily bar is fully published (is_daily_bar_ready
+//  / bhavcopy at 17:00 IST). The Pine equivalent is to gate every section to
+//  `timeframe.isdaily` and read history with [1]/[2]/[3] — those are always
+//  fully-closed daily bars, so nothing here can retroactively change a signal
+//  that already fired on a closed bar (no repainting of history).
+//
+//  LIVE/PROVISIONAL CAVEAT (flagging per AGENTS.md §3 — this is expected
+//  live-chart behavior, not a bug, but is a real drift vs. Python): unlike
+//  the EOD-gated Python scanner, the *current, still-forming* daily bar's
+//  open/high/low/close on a live Daily chart update continuously during the
+//  session, so a state shown here can flicker intrabar and only firms up at
+//  the session's close — exactly like any other live daily-timeframe
+//  indicator. Treat anything referencing bare `open/high/low/close` (not
+//  `[1]` or later) as "live/provisional until today's candle closes".
+//
+//  PERFORMANCE: gated behind `timeframe.isdaily` (zero cost on intraday
+//  charts); every state machine below uses O(1) persistent `var` scalars,
+//  no loops or arrays over history; only 3 total request.security() calls
+//  (one weekly live, one weekly closed-bar bundle, one monthly closed-bar
+//  bundle) cover every strategy in this whole suite.
+//
+//  SIMPLIFICATIONS vs. the Python reference (flagged, not silent — see
+//  RUNBOOK.md entry and the chat summary for the same list):
+//  - Protected Swings / Points of Interest and
+//    Propulsion Blocks track only the single most-recent active/anticipated
+//    setup per symbol (an incremental state machine), not Python's full
+//    multi-candidate historical replay + dedup. Mechanically equivalent
+//    (sweep/FVG -> CISD confirm -> mean/protected-level invalidate), but not
+//    a byte-for-byte backtest replica.
+//  - Multi-Timeframe Bias's target uses only the single nearest prior closed
+//    week/month extreme (+2R fallback), not Python's ~8-week/6-month scan.
+//  - The Weekly Profile row is a best-effort structural read (Mon/Tue range
+//    vs. later-week expansion) built from the six profiles' one-line
+//    descriptions in all_strategy.py — the six sub-profile functions
+//    themselves were not read line-by-line, so treat this row as informal
+//    and verify against all_strategy.py before trading off it.
+// ============================================================================
+gSuite = "Strategy Suite"
+suite_showEMA5 = input.bool(true, "Suite: EMA5 Sweep table row", group = gSuite)
+suite_showMTF  = input.bool(true, "Suite: Multi-Timeframe Bias", group = gSuite)
+suite_showIB   = input.bool(true, "Suite: Inside Bar Daily Sweep", group = gSuite)
+suite_showPS   = input.bool(true, "Suite: Protected Swings / POI", group = gSuite)
+suite_showPB   = input.bool(true, "Suite: Propulsion Blocks", group = gSuite)
+suite_showWP   = input.bool(true, "Suite: Weekly Profile (structural read)", group = gSuite)
+suite_mtfMinConfluence = input.int(2, "MTF Bias: min confluence (of 3)", minval = 1, maxval = 3, group = gSuite)
+suite_pbMeanBody = input.bool(false, "Propulsion Blocks: mean = body midpoint (off = full range)", group = gSuite)
+suite_psSwingLeft  = input.int(2, "Protected Swings: pivot left bars", minval = 1, group = gSuite)
+suite_psSwingRight = input.int(2, "Protected Swings: pivot right bars", minval = 1, group = gSuite)
+suite_warnTf = input.bool(true, "Suite: show 'switch to Daily chart' notice", group = gSuite)
+
+dailyOnly = timeframe.isdaily
+
+// ---- helper functions (declared once, used by several sections) ----
+f_sweepBias(hi, lo, refH, refL, px) =>
+    bull = px > refH or (lo < refL and px > refL)
+    bear = px < refL or (hi > refH and px < refH)
+    bull and not bear ? "Bullish" : bear and not bull ? "Bearish" : "Neutral"
+
+f_nearestBeyond(a, b, entry, dirUp) =>
+    aOK = not na(a) and (dirUp ? a > entry : a < entry)
+    bOK = not na(b) and (dirUp ? b > entry : b < entry)
+    aOK and bOK ? (dirUp ? math.min(a, b) : math.max(a, b)) : aOK ? a : bOK ? b : na
+
+// A setup can stay "confirmed" for thousands of bars (a long-lived trend that
+// never breaches its invalidation level). Re-anchoring a box/line's left edge
+// at the ORIGINAL setup bar every single bar then eventually exceeds Pine's
+// bar-index distance limit for drawing objects (runtime error RE10026: "Bar
+// index value of the left argument is too far from the current bar index").
+// Clamp the left edge to a bounded recent window instead — it's a "current
+// active zone" marker, not a historical record, so an old setup's box/line
+// simply starts visually at the clamped point rather than its true origin.
+f_clampLeft(setupBar) => math.max(setupBar, bar_index - 400)
+
+// ---- bundled HTF reads: 3 security() calls cover the whole suite ----
+[wvd_curH, wvd_curL] = request.security(syminfo.tickerid, "W", [high, low])
+[wvd_w1H, wvd_w1L] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[mtf_pmH, mtf_pmL] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+if not dailyOnly and suite_warnTf and barstate.islast
+    label.new(bar_index, high, "Strategy Suite: switch to the Daily chart\n(EMA5/MTF/Inside Bar/Protected Swings/\nPropulsion Blocks are daily-bar strategies)",
+         style = label.style_label_left, color = color.new(color.gray, 20), textcolor = color.white, size = size.small)
+
+// ----------------------------------------------------------------------------
+// Multi-Timeframe Bias — src/all_strategy.py:1435 _compute_multi_timeframe_bias
+// ----------------------------------------------------------------------------
+mtf_dailyBias   = dailyOnly ? f_sweepBias(high, low, high[1], low[1], close) : "Neutral"
+mtf_weeklyBias  = dailyOnly ? f_sweepBias(wvd_curH, wvd_curL, wvd_w1H, wvd_w1L, close) : "Neutral"
+mtf_monthlyBias = dailyOnly ? (close > mtf_pmH ? "Bullish" : close < mtf_pmL ? "Bearish" : "Neutral") : "Neutral"
+
+mtf_confluence = (mtf_dailyBias != "Neutral" ? 1 : 0) + (mtf_weeklyBias != "Neutral" ? 1 : 0) + (mtf_monthlyBias != "Neutral" ? 1 : 0)
+mtf_anyBull = mtf_dailyBias == "Bullish" or mtf_weeklyBias == "Bullish" or mtf_monthlyBias == "Bullish"
+mtf_anyBear = mtf_dailyBias == "Bearish" or mtf_weeklyBias == "Bearish" or mtf_monthlyBias == "Bearish"
+mtf_direction = mtf_confluence >= suite_mtfMinConfluence and mtf_anyBull and not mtf_anyBear ? 1 :
+     mtf_confluence >= suite_mtfMinConfluence and mtf_anyBear and not mtf_anyBull ? -1 : 0
+
+mtf_entry = close
+mtf_sl = mtf_direction > 0 ? low[1] : mtf_direction < 0 ? high[1] : na
+float mtf_target = na
+if mtf_direction > 0
+    mtf_target := f_nearestBeyond(wvd_w1H, mtf_pmH, mtf_entry, true)
+    if na(mtf_target) and not na(mtf_sl) and mtf_sl < mtf_entry
+        mtf_target := mtf_entry + 2.0 * (mtf_entry - mtf_sl)
+if mtf_direction < 0
+    mtf_target := f_nearestBeyond(wvd_w1L, mtf_pmL, mtf_entry, false)
+    if na(mtf_target) and not na(mtf_sl) and mtf_sl > mtf_entry
+        mtf_target := mtf_entry - 2.0 * (mtf_sl - mtf_entry)
+
+var line mtf_slLine = na
+var line mtf_tpLine = na
+var label mtf_slTag = na
+var label mtf_tpTag = na
+if dailyOnly and suite_showMTF and mtf_direction != 0 and mtf_direction != mtf_direction[1]
+    line.delete(mtf_slLine)
+    line.delete(mtf_tpLine)
+    label.delete(mtf_slTag)
+    label.delete(mtf_tpTag)
+    mtf_slLine := line.new(bar_index, mtf_sl, bar_index + 15, mtf_sl, color = color.red, style = line.style_dotted)
+    mtf_slTag := f_lineTag(bar_index + 15, mtf_sl, "MTF SL [D]", color.red)
+    if not na(mtf_target)
+        mtf_tpLine := line.new(bar_index, mtf_target, bar_index + 15, mtf_target, color = color.green, style = line.style_dotted)
+        mtf_tpTag := f_lineTag(bar_index + 15, mtf_target, "MTF TP [D]", color.green)
+
+// ----------------------------------------------------------------------------
+// Inside Bar Pattern + Daily Sweep — src/all_strategy.py:582 _inside_bar_bullish/_bearish
+// ----------------------------------------------------------------------------
+ib_bullish = dailyOnly and open[2] < close[2] and math.abs(close[2] - open[2]) > math.abs(high[2] - low[2]) * 0.6 and high[1] <= high[2] and low[1] >= low[2] and low < low[1] and high < high[1] and close > low[1]
+ib_bearish = dailyOnly and open[2] > close[2] and math.abs(open[2] - close[2]) > math.abs(high[2] - low[2]) * 0.6 and high[1] < high[2] and low[1] > low[2] and high > high[1] and low > low[1] and close < high[1]
+
+plotshape(suite_showIB and ib_bullish, title="Inside Bar Daily Sweep Bull", style=shape.triangleup, location=location.belowbar, color=color.new(color.purple, 0), size=size.tiny, text="IB")
+plotshape(suite_showIB and ib_bearish, title="Inside Bar Daily Sweep Bear", style=shape.triangledown, location=location.abovebar, color=color.new(color.purple, 0), size=size.tiny, text="IB")
+
+// ----------------------------------------------------------------------------
+// Protected Swings + Points of Interest
+// src/protected_swings.py (sweep/FVG -> CISD confirm -> invalidate) and
+// src/all_strategy.py:1061 (points_of_interest), :1162 (_candle_closure)
+// Single-most-recent-setup incremental tracker (see SIMPLIFICATIONS above).
+// ----------------------------------------------------------------------------
+ps_pivHi = ta.pivothigh(suite_psSwingLeft, suite_psSwingRight)
+ps_pivLo = ta.pivotlow(suite_psSwingLeft, suite_psSwingRight)
+
+var float ps_lastPivHi = na
+var float ps_lastPivLo = na
+if not na(ps_pivHi)
+    ps_lastPivHi := ps_pivHi
+if not na(ps_pivLo)
+    ps_lastPivLo := ps_pivLo
+
+ps_bullFvg = low > high[2]
+ps_bearFvg = high < low[2]
+
+var float  ps_protectedLevel = na
+var float  ps_cisdLevel = na
+var int    ps_direction = 0
+var string ps_state = "none"
+var string ps_mode = ""
+var int    ps_setupBar = na
+
+// Re-arm from none/invalidated/confirmed (a newer setup supersedes an old
+// confirmed one, matching Python's "most recent confirmed event wins");
+// never clobber a setup that is still "anticipated" mid-progress.
+if dailyOnly and ps_state != "anticipated"
+    if not na(ps_lastPivLo) and low < ps_lastPivLo and close > ps_lastPivLo
+        ps_protectedLevel := low
+        ps_cisdLevel := open
+        ps_direction := 1
+        ps_state := "anticipated"
+        ps_mode := "sweep"
+        ps_setupBar := bar_index
+    else if not na(ps_lastPivHi) and high > ps_lastPivHi and close < ps_lastPivHi
+        ps_protectedLevel := high
+        ps_cisdLevel := open
+        ps_direction := -1
+        ps_state := "anticipated"
+        ps_mode := "sweep"
+        ps_setupBar := bar_index
+    else if ps_bullFvg
+        ps_protectedLevel := high[2]
+        ps_cisdLevel := open[2]
+        ps_direction := 1
+        ps_state := "anticipated"
+        ps_mode := "fvg"
+        ps_setupBar := bar_index
+    else if ps_bearFvg
+        ps_protectedLevel := low[2]
+        ps_cisdLevel := open[2]
+        ps_direction := -1
+        ps_state := "anticipated"
+        ps_mode := "fvg"
+        ps_setupBar := bar_index
+
+if dailyOnly and ps_state == "anticipated" and bar_index > ps_setupBar
+    if (ps_direction > 0 and close < ps_protectedLevel) or (ps_direction < 0 and close > ps_protectedLevel)
+        ps_state := "invalidated"
+    else if (ps_direction > 0 and close > ps_cisdLevel) or (ps_direction < 0 and close < ps_cisdLevel)
+        ps_state := "confirmed"
+
+if dailyOnly and ps_state == "confirmed" and bar_index > ps_setupBar
+    if (ps_direction > 0 and close < ps_protectedLevel) or (ps_direction < 0 and close > ps_protectedLevel)
+        ps_state := "invalidated"
+
+ps_justConfirmed = ps_state == "confirmed" and ps_state[1] != "confirmed"
+
+var box   ps_zoneBox = na
+var label ps_stateLabel = na
+if dailyOnly and suite_showPS
+    if ps_state == "anticipated" or ps_state == "confirmed"
+        box.delete(ps_zoneBox)
+        ps_zoneBox := box.new(f_clampLeft(ps_setupBar), math.max(ps_protectedLevel, ps_cisdLevel), bar_index + 2, math.min(ps_protectedLevel, ps_cisdLevel),
+             border_color = ps_direction > 0 ? color.green : color.red, bgcolor = color.new(ps_direction > 0 ? color.green : color.red, 88),
+             text = "PSw zone [D] " + (ps_mode == "fvg" ? "Daily FVG" : "Sweep") + " · " + (ps_direction > 0 ? "bull" : "bear"),
+             text_size = size.tiny, text_color = ps_direction > 0 ? color.green : color.red,
+             text_halign = text.align_left, text_valign = text.align_bottom)
+    if barstate.islast
+        label.delete(ps_stateLabel)
+        ps_stateLabel := label.new(bar_index + 2, ps_protectedLevel,
+             "PSw [D]: " + ps_state + (ps_mode == "fvg" ? " (daily FVG)" : ps_mode != "" ? " (" + ps_mode + ")" : ""), style = label.style_label_left,
+             color = color.new(color.gray, 20), textcolor = color.white, size = size.small)
+
+
+// ----------------------------------------------------------------------------
+// Propulsion Blocks — src/propulsion_blocks.py (order block -> impulse ->
+// retrace -> mean-threshold confirm/invalidate). Single-active-candidate
+// incremental tracker; the "run" state below is updated with TODAY'S candle
+// only at the very end of this block, so every check above it sees the run
+// as it stood through YESTERDAY — mirrors Python's block-ends-at/impulse-at
+// end+1 sequencing without any backward loop.
+// ----------------------------------------------------------------------------
+var float  pb_runLow = na
+var float  pb_runHigh = na
+var int    pb_runDir = 0
+var float  pb_blockLow = na
+var float  pb_blockHigh = na
+var float  pb_propMeanThreshold = na
+var int    pb_direction = 0
+var string pb_state = "none"
+var int    pb_setupBar = na
+
+pb_isUp = close > open
+pb_isDn = close < open
+
+// Re-arm from none/invalidated/confirmed (mirrors the protected-swing fix
+// above — a newer block supersedes an old confirmed one instead of the
+// tracker freezing on the first confirmation forever); never clobber a
+// block still "pending_retrace"/"anticipated" mid-progress.
+pb_flat = pb_state == "none" or pb_state == "invalidated" or pb_state == "confirmed"
+if dailyOnly and pb_flat and pb_runDir == -1 and pb_isUp and close > pb_runHigh
+    pb_blockLow := pb_runLow
+    pb_blockHigh := pb_runHigh
+    pb_direction := 1
+    pb_state := "pending_retrace"
+    pb_setupBar := bar_index
+else if dailyOnly and pb_flat and pb_runDir == 1 and pb_isDn and close < pb_runLow
+    pb_blockLow := pb_runLow
+    pb_blockHigh := pb_runHigh
+    pb_direction := -1
+    pb_state := "pending_retrace"
+    pb_setupBar := bar_index
+
+if dailyOnly and pb_state == "pending_retrace" and bar_index > pb_setupBar
+    pb_closedThrough = pb_direction > 0 ? close < pb_blockLow : close > pb_blockHigh
+    pb_insideBlock = open >= pb_blockLow and open <= pb_blockHigh and close >= pb_blockLow and close <= pb_blockHigh and low <= pb_blockHigh and high >= pb_blockLow
+    pb_retraceColour = pb_direction > 0 ? close < open : close > open
+    if pb_closedThrough
+        pb_state := "none"
+    else if pb_insideBlock and pb_retraceColour
+        pb_propMeanThreshold := suite_pbMeanBody ? (open + close) / 2.0 : (high + low) / 2.0
+        pb_state := "anticipated"
+        pb_setupBar := bar_index
+
+if dailyOnly and pb_state == "anticipated" and bar_index > pb_setupBar
+    pb_meanBreach = pb_direction > 0 ? close < pb_propMeanThreshold : close > pb_propMeanThreshold
+    pb_confirmBreak = pb_direction > 0 ? close > pb_blockHigh : close < pb_blockLow
+    if pb_meanBreach
+        pb_state := "invalidated"
+    else if pb_confirmBreak
+        pb_state := "confirmed"
+        pb_setupBar := bar_index
+
+if dailyOnly and pb_state == "confirmed" and bar_index > pb_setupBar
+    pb_meanBreach2 = pb_direction > 0 ? close < pb_propMeanThreshold : close > pb_propMeanThreshold
+    if pb_meanBreach2
+        pb_state := "invalidated"
+
+pb_justConfirmed = pb_state == "confirmed" and pb_state[1] != "confirmed"
+
+// update the running same-colour block with today's candle, for tomorrow's checks
+if dailyOnly
+    if pb_isUp
+        pb_runLow := pb_runDir == 1 ? math.min(pb_runLow, low) : low
+        pb_runHigh := pb_runDir == 1 ? math.max(pb_runHigh, high) : high
+        pb_runDir := 1
+    else if pb_isDn
+        pb_runLow := pb_runDir == -1 ? math.min(pb_runLow, low) : low
+        pb_runHigh := pb_runDir == -1 ? math.max(pb_runHigh, high) : high
+        pb_runDir := -1
+
+var box  pb_zoneBox = na
+var line pb_meanLine = na
+var label pb_meanTag = na
+if dailyOnly and suite_showPB
+    if pb_state == "pending_retrace" or pb_state == "anticipated" or pb_state == "confirmed"
+        box.delete(pb_zoneBox)
+        pb_zoneBox := box.new(f_clampLeft(pb_setupBar - 1), pb_blockHigh, bar_index + 2, pb_blockLow,
+             border_color = pb_direction > 0 ? color.green : color.red, bgcolor = color.new(pb_direction > 0 ? color.green : color.red, 90),
+             text = "Propulsion Block [D]: " + pb_state + " · " + (pb_direction > 0 ? "bull" : "bear"),
+             text_size = size.tiny, text_color = pb_direction > 0 ? color.green : color.red,
+             text_halign = text.align_left, text_valign = text.align_top)
+    if (pb_state == "anticipated" or pb_state == "confirmed") and not na(pb_propMeanThreshold)
+        line.delete(pb_meanLine)
+        label.delete(pb_meanTag)
+        pb_meanLine := line.new(f_clampLeft(pb_setupBar), pb_propMeanThreshold, bar_index + 5, pb_propMeanThreshold, color = color.orange, style = line.style_dashed)
+        pb_meanTag := f_lineTag(bar_index + 5, pb_propMeanThreshold, "PB mean [D]", color.orange)
+
+// ----------------------------------------------------------------------------
+// Weekly Profile — structural read only (see SIMPLIFICATIONS note above).
+// Classic-Expansion-shaped read: Monday+Tuesday set the weekly extreme, a
+// later close beyond it while still mid-week reads as expansion continuing.
+// ----------------------------------------------------------------------------
+var float wp_monTueHigh = na
+var float wp_monTueLow = na
+var int   wp_weekStartBar = na
+
+wp_newWeek = dailyOnly and (na(wp_weekStartBar) or weekofyear(time) != weekofyear(time[1]))
+if wp_newWeek
+    wp_monTueHigh := high
+    wp_monTueLow := low
+    wp_weekStartBar := bar_index
+else if dailyOnly and (bar_index - wp_weekStartBar) <= 1
+    wp_monTueHigh := math.max(wp_monTueHigh, high)
+    wp_monTueLow := math.min(wp_monTueLow, low)
+
+wp_daysIntoWeek = dailyOnly and not na(wp_weekStartBar) ? bar_index - wp_weekStartBar : na
+wp_expansionUp = dailyOnly and not na(wp_monTueHigh) and wp_daysIntoWeek >= 2 and close > wp_monTueHigh
+wp_expansionDn = dailyOnly and not na(wp_monTueLow) and wp_daysIntoWeek >= 2 and close < wp_monTueLow
+wp_note = wp_expansionUp ? "Classic Expansion (bull, forming)*" : wp_expansionDn ? "Classic Expansion (bear, forming)*" : "no clear profile read*"
+
+// ----------------------------------------------------------------------------
+// Consolidated status table (bottom-left) — one row per strategy
+// ----------------------------------------------------------------------------
+var table suiteTable = table.new(position.bottom_left, 3, 6, border_width = 1)
+
+f_suiteBg(state) =>
+    state == "confirmed" or state == "Bullish" ? color.green :
+     state == "invalidated" or state == "Bearish" ? color.red :
+     state == "anticipated" or state == "pending_retrace" ? color.orange : color.gray
+
+f_suiteRow(row, name, state, note) =>
+    table.cell(suiteTable, 0, row, name, bgcolor = color.black, text_color = color.white)
+    table.cell(suiteTable, 1, row, state, bgcolor = f_suiteBg(state), text_color = color.white)
+    table.cell(suiteTable, 2, row, note, bgcolor = color.black, text_color = color.white)
+
+if dailyOnly and barstate.islast
+    table.cell(suiteTable, 0, 0, "Strategy", bgcolor = color.black, text_color = color.white)
+    table.cell(suiteTable, 1, 0, "State", bgcolor = color.black, text_color = color.white)
+    table.cell(suiteTable, 2, 0, "Note", bgcolor = color.black, text_color = color.white)
+    if suite_showEMA5
+        f_suiteRow(1, "EMA5 Sweep", e5_bullish ? "Bullish" : e5_bearish ? "Bearish" : "-", "")
+    if suite_showMTF
+        f_suiteRow(2, "MTF Bias", mtf_direction == 1 ? "Bullish" : mtf_direction == -1 ? "Bearish" : "Neutral", "conf=" + str.tostring(mtf_confluence) + "/3")
+    if suite_showIB
+        f_suiteRow(3, "Inside Bar Sweep", ib_bullish ? "Bullish" : ib_bearish ? "Bearish" : "-", "")
+    if suite_showPS
+        f_suiteRow(4, "Protected Swing / POI", ps_state, ps_mode)
+    if suite_showPB
+        f_suiteRow(5, "Propulsion Block", pb_state, "")
+
+// Weekly profile gets its own small label (kept separate: *unverified* structural read, not a table row claiming parity)
+var label wp_noteLabel = na
+if dailyOnly and suite_showWP and barstate.islast
+    label.delete(wp_noteLabel)
+    wp_noteLabel := label.new(bar_index + 2, wp_expansionUp ? wp_monTueHigh : wp_expansionDn ? wp_monTueLow : close,
+         "WeeklyProfile* [W]: " + wp_note, style = label.style_label_left, color = color.new(color.gray, 30), textcolor = color.white, size = size.small)
+
+// ----------------------------------------------------------------------------
+// Alerts
+// ----------------------------------------------------------------------------
+alertcondition(e5_bullish, "EMA5 Sweep Bullish", "{{ticker}} ema5_sweep bullish")
+alertcondition(e5_bearish, "EMA5 Sweep Bearish", "{{ticker}} ema5_sweep bearish")
+alertcondition(ib_bullish, "Inside Bar Daily Sweep Bullish", "{{ticker}} inside_bar_pattern_daily_sweep bullish")
+alertcondition(ib_bearish, "Inside Bar Daily Sweep Bearish", "{{ticker}} inside_bar_pattern_daily_sweep bearish")
+alertcondition(ps_justConfirmed and ps_direction > 0, "Protected Swing Confirmed Bullish", "{{ticker}} protected_swings confirmed bullish")
+alertcondition(ps_justConfirmed and ps_direction < 0, "Protected Swing Confirmed Bearish", "{{ticker}} protected_swings confirmed bearish")
+alertcondition(pb_justConfirmed and pb_direction > 0, "Propulsion Block Confirmed Bullish", "{{ticker}} propulsion_blocks confirmed bullish")
+alertcondition(pb_justConfirmed and pb_direction < 0, "Propulsion Block Confirmed Bearish", "{{ticker}} propulsion_blocks confirmed bearish")

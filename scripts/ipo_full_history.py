@@ -1,4 +1,4 @@
-"""One-pass NSE IPO discovery + full-history backfill (last 3 years).
+"""One-pass NSE IPO discovery + full-history backfill (last IPO_MAX_AGE_DAYS, default 3 years).
 
 Efficient design: each trading day's bhavcopy is downloaded exactly ONCE and
 cached on disk (data/bhavcopy_cache/YYYY-MM-DD.pkl). In the same pass we:
@@ -33,6 +33,7 @@ CACHE_DIR = ROOT / "data" / "bhavcopy_cache"
 # the main-board EQ series and the non-equity instrument families (rights
 # entitlements, dated government securities, Sovereign Gold Bonds, ETFs/funds).
 from market_data import database, ipo as ipo_service  # noqa: E402
+from market_data.config import IPO_MAX_AGE_DAYS  # noqa: E402
 
 IPO_SERIES = set(ipo_service.MAIN_BOARD_SERIES)
 NON_IPO_SYMBOL_RE = ipo_service.NON_IPO_SYMBOL_RE
@@ -408,7 +409,7 @@ def scrub_non_ipo_instruments() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--months", nargs="*", default=None,
-                    help="YYYY-MM values, or 'all' (last 3 years)")
+                    help="YYYY-MM values, or 'all' (last IPO_MAX_AGE_DAYS, default 3 years)")
     ap.add_argument("--validate-only", action="store_true",
                     help="re-validate tracked IPOs from cache, drop failures")
     ap.add_argument("--rebuild", action="store_true",
@@ -442,7 +443,7 @@ def main() -> None:
 
     today = date.today()
     if args.months == ["all"]:
-        start = today - timedelta(days=3 * 366)
+        start = today - timedelta(days=IPO_MAX_AGE_DAYS)
         months = []
         y, m = start.year, start.month
         while (y, m) <= (today.year, today.month):
