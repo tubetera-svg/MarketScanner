@@ -105,6 +105,42 @@ def test_runner_confirms_on_frames_longer_than_lookback_and_enters_at_open():
     assert row["entry"] == 100.0  # propulsion candle open, not the confirmation close
 
 
+def test_range_mean_beyond_open_falls_back_to_body():
+    # Down candle with a long upper wick: range mid 101 >= open 100 -> body mid 99.5.
+    rows = ROWS[:3] + [(100, 105, 97, 99), (101, 108, 100, 107)]
+    analysis = evaluate_propulsion_blocks(_frame(rows))
+    assert analysis.active is not None
+    assert analysis.active.mean_threshold == 99.5
+    assert analysis.active.mean_threshold < analysis.active.propulsion_open
+
+
+def test_latest_opposite_candle_before_displacement_is_the_block():
+    rows = ROWS[:4] + [(100, 100.5, 99.5, 100.2), (100.5, 100.8, 99.6, 99.8), (101, 108, 100, 107)]
+    analysis = evaluate_propulsion_blocks(_frame(rows))
+    assert analysis.active is not None
+    assert analysis.active.retrace_idx == 5
+    assert analysis.active.propulsion_open == 100.5
+
+
+def test_propulsion_candle_may_open_above_block_and_wick_into_it():
+    # Block high 101; candle opens 103 and wicks to 100 before closing 102.
+    rows = ROWS[:3] + [(103, 103.5, 100, 102), (102, 108, 101, 107)]
+    analysis = evaluate_propulsion_blocks(_frame(rows))
+    assert analysis.active is not None
+    assert analysis.active.propulsion_open == 103.0
+
+
+def test_confirmation_requires_close_beyond_propulsion_candle_extreme():
+    # Propulsion candle high 104 > block high 101; a 102 close is not displacement.
+    rows = ROWS[:3] + [(100.5, 104, 97, 100), (100, 102.5, 100, 102)]
+    analysis = evaluate_propulsion_blocks(_frame(rows))
+    assert analysis.active is None
+    assert analysis.anticipated is not None
+    analysis = evaluate_propulsion_blocks(_frame(rows + [(102, 106, 101.5, 105)]))
+    assert analysis.active is not None
+    assert analysis.active.confirm_idx == 5
+
+
 def test_propulsion_blocks_registered():
     registry = all_strategy.strategy_registry()
     assert "propulsion_blocks" in registry

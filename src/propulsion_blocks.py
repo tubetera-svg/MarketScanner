@@ -4,15 +4,20 @@ The detector follows the convention used by the strategy runner:
 
 * a contiguous opposite-colour candle series is the originating order block;
 * displacement closes beyond that block;
-* price retraces into the block and prints an opposite-colour propulsion candle;
-* a later displacement close beyond the block confirms the propulsion block;
+* price trades into the block and prints an opposite-colour propulsion candle
+  (its wick must reach the block, its close must not go through it; the latest
+  such candle before displacement is the propulsion block);
+* a later displacement close beyond both the block and the propulsion candle's
+  extreme confirms the propulsion block;
 * a close through the propulsion candle's mean threshold invalidates it, whether
   that close lands before or after confirmation;
 * a block that price closed through before the retrace is not a valid block.
 
 The mean threshold is the midpoint of the propulsion candle's full range
 (``MEAN_MODE_RANGE``, default) or of its body (``MEAN_MODE_BODY``); the source
-material does not pin it down, so the runner takes it from app settings.
+material does not pin it down, so the runner takes it from app settings. A range
+midpoint beyond the candle's open falls back to the body midpoint so the stop
+never sits on the wrong side of the entry reference.
 
 The frame passed to :func:`evaluate_propulsion_blocks` must already be truncated
 to the evaluation date. No provider or strategy-runner dependency is used here.
@@ -91,42 +96,35 @@ def _run_start(o: np.ndarray, c: np.ndarray, end: int, bullish: bool) -> int:
     return start
 
 
-def _inside_block(o: float, h: float, l: float, c: float, low: float, high: float) -> bool:
-    return bool(
-        np.isfinite(o) and np.isfinite(h) and np.isfinite(l) and np.isfinite(c)
-        and low <= o <= high and low <= c <= high
-        and l <= high and h >= low
-    )
+def _trades_into_block(h: float, l: float, c: float, low: float, high: float, bullish: bool) -> bool:
+    """Propulsion candle wicks into the order block without closing through it.
 
-
-def _first_after_close(c: np.ndarray, level: float, start: int, bullish: bool) -> Optional[int]:
-    for index in range(start, len(c)):
-        if np.isfinite(c[index]) and (c[index] > level if bullish else c[index] < level):
-            return index
-    return None
-
-
-def _resolve_state(
-    c: np.ndarray, retrace_idx: int, confirm_idx: Optional[int], mean_threshold: float, direction: int
-) -> tuple[str, Optional[int], Optional[int]]:
-    """Return ``(state, invalidate_idx, confirm_idx)``.
-
-    The first close through the mean threshold after the propulsion candle
-    invalidates the block; if it lands before the confirming displacement the
-    block never confirms.
+    Its open may sit outside the block (it trades *into* the block from the
+    displacement side); only the close must stay on the block's far side.
     """
-    breach = None
-    for index in range(retrace_idx + 1, len(c)):
-        if np.isfinite(c[index]) and (c[index] < mean_threshold if direction > 0 else c[index] > mean_threshold):
-            breach = index
-            break
-    if confirm_idx is None or (breach is not None and breach < confirm_idx):
-        if breach is not None:
-            return STATE_INVALIDATED, breach, None
-        return STATE_ANTICIPATED, None, None
-    if breach is not None:
-        return STATE_INVALIDATED, breach, confirm_idx
-    return STATE_CONFIRMED, None, confirm_idx
+    if not (np.isfinite(h) and np.isfinite(l) and np.isfinite(c)):
+        return False
+    return bool(l <= high and c >= low) if bullish else bool(h >= low and c <= high)
+
+
+def _mean_threshold(o: float, h: float, l: float, c: float, bullish: bool, mean_mode: str) -> float:
+    """Mean threshold of the propulsion candle, always on the stop side of its open.
+
+    In range mode a long wick on the displacement side can push the midpoint
+    beyond the open (above it for a bullish block), which would put the stop on
+    the wrong side of the entry reference; fall back to the body midpoint then.
+    """
+    body = float((o + c) / 2.0)
+    if mean_mode == MEAN_MODE_BODY:
+        return body
+    mean = float((h + l) / 2.0)
+    if (mean >= o) if bullish else (mean <= o):
+        return body
+    return mean
+
+
+def _breaches(close: float, mean_threshold: float, bullish: bool) -> bool:
+    return bool(np.isfinite(close) and (close < mean_threshold if bullish else close > mean_threshold))
 
 
 def _candidate(
@@ -147,22 +145,51 @@ def _candidate(
         return None
     order_block_midpoint = float((block_low + block_high) / 2.0)
 
-    retrace = None
+    def qualifies(index: int) -> bool:
+        return _same_colour(o[index], c[index], not bullish) and _trades_into_block(
+            h[index], l[index], c[index], block_low, block_high, bullish
+        )
+
+    # The propulsion block is the last opposite-colour candle that trades into
+    # the order block before displacement. A later qualifying candle re-anchors
+    # it, unless the current one was already invalidated by a mean breach.
+    retrace: Optional[int] = None
+    mean_threshold = float("nan")
+    confirm: Optional[int] = None
+    invalidate: Optional[int] = None
     for index in range(impulse + 1, n):
-        if np.isfinite(c[index]) and (c[index] < block_low if bullish else c[index] > block_high):
-            return None  # block closed through before any retrace: no longer valid
-        if _inside_block(o[index], h[index], l[index], c[index], block_low, block_high) and _same_colour(o[index], c[index], not bullish):
+        if retrace is None:
+            if np.isfinite(c[index]) and (c[index] < block_low if bullish else c[index] > block_high):
+                return None  # block closed through before any retrace: no longer valid
+            if qualifies(index):
+                retrace = index
+                mean_threshold = _mean_threshold(o[index], h[index], l[index], c[index], bullish, mean_mode)
+            continue
+        if _breaches(c[index], mean_threshold, bullish):
+            invalidate = index
+            break
+        if qualifies(index):
             retrace = index
+            mean_threshold = _mean_threshold(o[index], h[index], l[index], c[index], bullish, mean_mode)
+            continue
+        # Displacement must clear both the order block and the propulsion candle.
+        level = max(block_high, h[retrace]) if bullish else min(block_low, l[retrace])
+        if np.isfinite(c[index]) and (c[index] > level if bullish else c[index] < level):
+            confirm = index
             break
     if retrace is None:
         return None
-
-    confirm = _first_after_close(c, block_high if bullish else block_low, retrace + 1, bullish)
-    if mean_mode == MEAN_MODE_BODY:
-        mean_threshold = float((o[retrace] + c[retrace]) / 2.0)
+    if confirm is not None:
+        for index in range(confirm + 1, n):
+            if _breaches(c[index], mean_threshold, bullish):
+                invalidate = index
+                break
+    if invalidate is not None:
+        state = STATE_INVALIDATED
+    elif confirm is not None:
+        state = STATE_CONFIRMED
     else:
-        mean_threshold = float((h[retrace] + l[retrace]) / 2.0)
-    state, invalidate, confirm = _resolve_state(c, retrace, confirm, mean_threshold, 1 if bullish else -1)
+        state = STATE_ANTICIPATED
     return PropulsionBlock(
         idx=retrace,
         date=daily.index[retrace],

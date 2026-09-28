@@ -168,6 +168,16 @@ def run_batch(year: int, month: int, baseline: set[str], state: dict) -> set[str
     return baseline
 
 
+def _drop_from_watchlist_files(symbols: list[str]) -> None:
+    """Remove exact symbols from watchlist.txt + categories under the shared lock."""
+    import ict_scanner  # type: ignore
+
+    with ict_scanner.watchlist_file_lock(str(ipo_service.WATCHLIST_PATH)):
+        for sym in symbols:
+            ipo_service.remove_from_watchlist(sym)
+            ipo_service.remove_from_categories(sym)
+
+
 def run_rebuild() -> None:
     """Full rebuild from cached bhavcopy: wipe, detect, register, backfill."""
     cached = sorted(CACHE_DIR.glob("*.pkl"))
@@ -181,16 +191,7 @@ def run_rebuild() -> None:
         n1 = sum(database.remove_ipo_metadata(s) for s in symbols)
         n2 = database.delete_ohlc(symbols=symbols, source="NSE")
         print(f"wiped {n1} metadata, {n2} ohlc rows")
-        base = {s.split(":", 1)[-1] for s in symbols}
-        wl = ROOT / "config" / "watchlist.txt"
-        lines = [ln for ln in wl.read_text().splitlines()
-                 if ln.strip() and ln.split(":", 1)[-1].strip().upper() not in base]
-        wl.write_text("\n".join(lines) + "\n")
-        import json
-        cat_path = ROOT / "config" / "watchlist_categories.json"
-        cats = json.loads(cat_path.read_text())
-        cats = {k: v for k, v in cats.items() if k not in symbols}
-        cat_path.write_text(json.dumps(cats, indent=2))
+        _drop_from_watchlist_files(symbols)
 
     baseline: set[str] = set()
     state: dict = {"ipos": {}, "ohlc": [], "days_done": 0, "new_registered": []}
@@ -289,16 +290,7 @@ def run_validation() -> None:
             sym = str(meta["symbol"])
             database.remove_ipo_metadata(sym)
             database.delete_ohlc(symbols=[sym], source="NSE")
-            base = sym.split(":", 1)[-1]
-            wl = ROOT / "config" / "watchlist.txt"
-            lines = [ln for ln in wl.read_text().splitlines()
-                     if ln.strip() and ln.split(":", 1)[-1].strip().upper() != base]
-            wl.write_text("\n".join(lines) + "\n")
-            import json
-            cat_path = ROOT / "config" / "watchlist_categories.json"
-            cats = json.loads(cat_path.read_text())
-            cats.pop(sym, None)
-            cat_path.write_text(json.dumps(cats, indent=2))
+            _drop_from_watchlist_files([sym])
             removed += 1
         elif verdict == "insufficient":
             insuff += 1
@@ -338,15 +330,7 @@ def scrub_renames_and_flickers() -> None:
             qualified = f"NSE:{sym}"
             database.remove_ipo_metadata(qualified)
             database.delete_ohlc(symbols=[qualified], source="NSE")
-            wl = ROOT / "config" / "watchlist.txt"
-            lines = [ln for ln in wl.read_text().splitlines()
-                     if ln.strip() and ln.split(":", 1)[-1].strip().upper() != sym]
-            wl.write_text("\n".join(lines) + "\n")
-            import json
-            cat_path = ROOT / "config" / "watchlist_categories.json"
-            cats = json.loads(cat_path.read_text())
-            cats.pop(qualified, None)
-            cat_path.write_text(json.dumps(cats, indent=2))
+            _drop_from_watchlist_files([qualified])
             removed += 1
     print(f"Scrub removed {removed} non-IPO entries")
 
@@ -355,20 +339,10 @@ def _drop_tracked(symbols: list[str]) -> None:
     """Remove symbols from ipo_metadata, ohlc, watchlist and categories.
     Deletion is unconditional — there is no protection gate on removal.
     """
-    import json
     drop: list[str] = list(symbols)
     candidates = [s for s in symbols if database.remove_ipo_metadata(s)]
     database.delete_ohlc(symbols=symbols, source="NSE")
-    base = {s.split(":", 1)[-1].strip().upper() for s in symbols}
-    wl = ROOT / "config" / "watchlist.txt"
-    lines = [ln for ln in wl.read_text().splitlines()
-             if ln.strip() and ln.split(":", 1)[-1].strip().upper() not in base]
-    wl.write_text("\n".join(lines) + "\n")
-    cat_path = ROOT / "config" / "watchlist_categories.json"
-    cats = json.loads(cat_path.read_text())
-    for s in symbols:
-        cats.pop(s, None)
-    cat_path.write_text(json.dumps(cats, indent=2))
+    _drop_from_watchlist_files(symbols)
     print(f"Dropped {len(candidates)} tracked non-IPO instruments")
 
 

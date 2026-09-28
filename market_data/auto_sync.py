@@ -10,6 +10,8 @@ market's own cut-off (see ``service.latest_final_session``):
   every day including weekends.
 - GIFT Nifty (NSEIX:*): at 03:00 IST the next day (session ends 02:45 IST).
 
+All cut-off times are configurable on the Settings page (``data_cutoffs``).
+
 A background thread wakes every ``interval_hours`` (default 0.25 h = 15 min); for each market it syncs only
 when a newer final session exists than the last one synced. Only missing dates
 are fetched (cache-aside via ``get_ohlc``), so re-runs are cheap. Data sync

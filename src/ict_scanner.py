@@ -93,6 +93,7 @@ import json
 import time
 import logging
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from enum import Enum
@@ -187,7 +188,10 @@ def categorize_symbol(raw: str) -> dict:
         crypto      -> "Crypto"
         commodity   -> "Commodities"
         forex       -> "Forex"
-        equity/etc  -> "F&O"
+        equity      -> "Equity" (F&O membership is not known here; callers
+                       that can verify it upgrade the scope to "F&O")
+        index       -> "Nifty indexes" (NSEIX / GIFT Nifty instruments)
+        unknown     -> "F&O"
     """
     symbol = raw.strip().upper()
     if not symbol or ":" not in symbol or any(char.isspace() for char in symbol):
@@ -207,6 +211,8 @@ def categorize_symbol(raw: str) -> dict:
         asset_class = "commodity" if COMMODITY_RE.search(base) else "forex"
     elif exchange == "NSE":
         asset_class = "equity"
+    elif exchange == "NSEIX":
+        asset_class = "index"
     else:
         asset_class = "unknown"
 
@@ -216,6 +222,10 @@ def categorize_symbol(raw: str) -> dict:
         scope = "Commodities"
     elif asset_class == "forex":
         scope = "Forex"
+    elif asset_class == "equity":
+        scope = "Equity"
+    elif asset_class == "index":
+        scope = "Nifty indexes"
     else:
         scope = "F&O"
 
@@ -229,10 +239,169 @@ def categorize_symbol(raw: str) -> dict:
     }
 
 
-def load_watchlist_categories(filename: str = "../config/watchlist_categories.json") -> dict[str, dict[str, str]]:
-    """Load persisted watchlist classifications, including legacy scope strings."""
+# Detected per-symbol values that must never be persisted as classifications
+# (a stale copy would override detection after a rename).
+WATCHLIST_DERIVED_KEYS = frozenset({"symbol", "base", "session"})
+WATCHLIST_CATEGORIES_DEFAULT = "../config/watchlist_categories.json"
+
+
+def _resolve_config_path(filename: str) -> str:
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.normpath(os.path.join(script_dir, filename))
+    return os.path.normpath(os.path.join(script_dir, filename))
+
+
+def _atomic_write_text(path: str, text: str) -> None:
+    """Write via temp file + os.replace so readers never see a partial file."""
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8", newline="") as file:
+        file.write(text)
+    for attempt in range(20):
+        try:
+            os.replace(tmp_path, path)
+            return
+        except PermissionError:
+            # Windows: a concurrent reader briefly holds the target open.
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
+
+
+@contextmanager
+def watchlist_file_lock(watchlist_path: str, timeout: float = 15.0, stale_after: float = 60.0):
+    """Cross-process lock guarding watchlist.txt + watchlist_categories.json.
+
+    The API, IPO auto-registration and CLI scripts all edit these files; hold
+    this around every read-modify-write so one writer cannot undo another.
+    Not re-entrant.
+    """
+    lock_path = f"{_resolve_config_path(watchlist_path)}.lock"
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock_path) > stale_after:
+                    os.remove(lock_path)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"Watchlist is locked by another writer ({lock_path})")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
+
+
+def save_watchlist_categories(
+    categories: dict[str, dict[str, str]], filename: str = WATCHLIST_CATEGORIES_DEFAULT
+) -> None:
+    """Persist classifications (sorted, empty/derived fields dropped). Hold watchlist_file_lock."""
+    cleaned = {
+        str(symbol).strip().upper(): {
+            str(field).strip(): str(value).strip()
+            for field, value in (fields.items() if isinstance(fields, dict) else {"scope": fields}.items())
+            if str(field).strip() and str(value).strip() and str(field).strip() not in WATCHLIST_DERIVED_KEYS
+        }
+        for symbol, fields in categories.items()
+        if str(symbol).strip()
+    }
+    path = _resolve_config_path(filename)
+    text = json.dumps(dict(sorted(cleaned.items())), indent=2) + "\n"
+    try:
+        with open(path, "rb") as file:
+            if b"\r\n" in file.read(4096):
+                text = text.replace("\n", "\r\n")  # keep the file's existing line endings
+    except OSError:
+        pass
+    _atomic_write_text(path, text)
+
+
+def remove_symbol_from_json_cache(path: str, symbol: str) -> bool:
+    """Drop one top-level symbol key from a JSON cache (ohlc_cache / tracker_state_cache).
+
+    Returns True when the key existed and the file was rewritten.
+    """
+    key = symbol.strip().upper()
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict) or key not in data:
+        return False
+    del data[key]
+    _atomic_write_text(path, json.dumps(data))
+    return True
+
+
+def _watchlist_line_symbol(line: str) -> Optional[str]:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    return stripped.split("|", 1)[0].strip().upper()
+
+
+def modify_watchlist_file(
+    filename: str,
+    *,
+    add: Optional[str] = None,
+    remove: Optional[str] = None,
+    rename: Optional[tuple[str, str]] = None,
+    keep_override: bool = True,
+) -> bool:
+    """Apply one add / remove / rename to the watchlist file in place.
+
+    Preserves comments, blank lines, order, line endings and ``|session``
+    overrides (dropped on rename when ``keep_override`` is false). Creates the
+    file if missing. Returns True when the file changed. Hold watchlist_file_lock.
+    """
+    path = _resolve_config_path(filename)
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as file:
+            lines = file.read().splitlines(keepends=True)
+    except FileNotFoundError:
+        lines = []
+    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    changed = False
+    if remove is not None:
+        target = remove.strip().upper()
+        kept = [line for line in lines if _watchlist_line_symbol(line) != target]
+        changed = len(kept) != len(lines)
+        lines = kept
+    if rename is not None:
+        old, new = rename[0].strip().upper(), rename[1].strip().upper()
+        for index, line in enumerate(lines):
+            if _watchlist_line_symbol(line) != old:
+                continue
+            body = line.rstrip("\r\n")
+            ending = line[len(body):] or newline
+            override = body.split("|", 1)[1].strip() if "|" in body else ""
+            lines[index] = (f"{new}|{override}" if override and keep_override else new) + ending
+            changed = changed or lines[index] != line
+    if add is not None:
+        symbol = add.strip().upper()
+        if symbol and all(_watchlist_line_symbol(line) != symbol for line in lines):
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                lines[-1] += newline
+            lines.append(symbol + newline)
+            changed = True
+    if changed:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        _atomic_write_text(path, "".join(lines))
+    return changed
+
+
+def load_watchlist_categories(filename: str = WATCHLIST_CATEGORIES_DEFAULT) -> dict[str, dict[str, str]]:
+    """Load persisted watchlist classifications, including legacy scope strings."""
+    path = _resolve_config_path(filename)
     try:
         with open(path, "r", encoding="utf-8") as file:
             data = json.load(file)
@@ -249,18 +418,28 @@ def load_watchlist_categories(filename: str = "../config/watchlist_categories.js
             result[key] = {
                 str(field).strip(): str(field_value).strip()
                 for field, field_value in value.items()
-                if str(field).strip() and str(field_value).strip()
+                if str(field).strip() and str(field_value).strip() and str(field).strip() not in WATCHLIST_DERIVED_KEYS
             }
         elif str(value).strip():
             result[key] = {"scope": str(value).strip()}
     return result
 
 
-def load_watchlist_details(filename: str = "watchlist.txt") -> list[dict[str, str]]:
-    """Return watchlist entries with detected values and saved classifications."""
-    categories = load_watchlist_categories()
+def load_watchlist_details(
+    filename: str = "watchlist.txt",
+    entries: Optional[list[tuple[str, "Session"]]] = None,
+    allow_empty: bool = False,
+    categories_filename: str = WATCHLIST_CATEGORIES_DEFAULT,
+) -> list[dict[str, str]]:
+    """Return watchlist entries with detected values and saved classifications.
+
+    Pass ``entries`` (from load_watchlist) to avoid re-reading the file.
+    """
+    categories = load_watchlist_categories(categories_filename)
     details: list[dict[str, str]] = []
-    for symbol, session in load_watchlist(filename):
+    if entries is None:
+        entries = load_watchlist(filename, allow_empty=allow_empty)
+    for symbol, session in entries:
         category = categorize_symbol(symbol)
         category.update(categories.get(symbol.upper(), {}))
         category["session"] = session.value
@@ -412,12 +591,73 @@ def is_fresh_trading_day(
     return is_fresh_nse_day(last_analysis_date, now)
 
 
+# ==================================================
+# DAILY-BAR CUT-OFFS (configurable)
+# ==================================================
+# Time at which a market's daily bar is treated as *final* (data sync,
+# provisional-bar cleanup, NSE is_daily_bar_ready). Editable on the Settings
+# page -> config/app_settings.json "data_cutoffs" (owned by api/app_settings.py;
+# keep defaults in step). Timezone and day are fixed per market:
+#   nse         IST, same trading day   (bhavcopy published)
+#   commodities New York, same day      (daily rollover; also forex)
+#   crypto      UTC, next day           (UTC day close)
+#   gift_nifty  IST, next day           (NSEIX evening session ends 02:45)
+# Session open/close and the forex day rollover are NOT affected.
+DAILY_BAR_CUTOFF_DEFAULTS: dict[str, dtime] = {
+    "nse": NSE_BHAVCOPY_READY,
+    "commodities": FOREX_DAILY_ROLLOVER,
+    "crypto": dtime(0, 0),
+    "gift_nifty": dtime(3, 0),
+}
+_CUTOFF_CACHE: dict = {"key": None, "values": {}}
+
+
+def parse_cutoff_time(value: object) -> Optional[dtime]:
+    """Parse 'HH:MM' (24h); None when invalid."""
+    try:
+        hours, minutes = str(value).strip().split(":")
+        return dtime(int(hours), int(minutes))
+    except (TypeError, ValueError):
+        return None
+
+
+def _app_settings_path() -> str:
+    # Env override lets tests isolate from the user's saved settings.
+    return os.environ.get("MARKET_SCANNER_SETTINGS_PATH") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "app_settings.json"
+    )
+
+
+def daily_bar_cutoff(market: str) -> dtime:
+    """Configured final-bar cut-off for ``market`` (see DAILY_BAR_CUTOFF_DEFAULTS).
+
+    Re-read when app_settings.json changes, so a Settings edit applies without
+    a restart. Missing/invalid values fall back to the default.
+    """
+    path = _app_settings_path()
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        key = (path, None)
+    if key != _CUTOFF_CACHE["key"]:
+        values: dict = {}
+        if key[1] is not None:
+            try:
+                with open(path, "r", encoding="utf-8") as file:
+                    raw = json.load(file).get("data_cutoffs", {})
+                values = raw if isinstance(raw, dict) else {}
+            except (OSError, ValueError, AttributeError):
+                values = {}
+        _CUTOFF_CACHE.update(key=key, values=values)
+    return parse_cutoff_time(_CUTOFF_CACHE["values"].get(market)) or DAILY_BAR_CUTOFF_DEFAULTS[market]
+
+
 def is_daily_bar_ready(session: Session, now: Optional[datetime] = None) -> bool:
     """Whether the current day's *final* daily bar is available to sync/analyze.
 
     - NSE: the bhavcopy for the day is published only after market close
-      (treated as ready from ``NSE_BHAVCOPY_READY`` / 17:00 IST onward, on a
-      trading day). Before that the day's bar is still in-progress/unavailable,
+      (treated as ready from the configured ``daily_bar_cutoff("nse")``,
+      default 17:00 IST, on a trading day). Before that the day's bar is still in-progress/unavailable,
       so a sync should defer it to the last completed session.
     - FOREX_24_5 (commodities/forex): the in-progress day's bar is never treated
       as final — it only becomes available the next day — so a sync always defers
@@ -429,7 +669,7 @@ def is_daily_bar_ready(session: Session, now: Optional[datetime] = None) -> bool
         now = now or datetime.now(IST)
         if now.weekday() >= 5 or now.date() in NSE_HOLIDAYS:
             return False
-        return now.time() >= NSE_BHAVCOPY_READY
+        return now.time() >= daily_bar_cutoff("nse")
     return False  # FOREX_24_5 / CRYPTO_24_7: today's bar finalizes next session/day
 
 
@@ -1703,7 +1943,7 @@ class StockTracker:
 # ==================================================
 
 
-def load_watchlist(filename: str = "watchlist.txt") -> list[tuple[str, Session]]:
+def load_watchlist(filename: str = "watchlist.txt", allow_empty: bool = False) -> list[tuple[str, Session]]:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(script_dir, filename)
     if not os.path.exists(path):
@@ -1733,7 +1973,7 @@ def load_watchlist(filename: str = "watchlist.txt") -> list[tuple[str, Session]]
                 sym_part = line.upper()
                 session = detect_session(sym_part)
             entries.append((sym_part, session))
-    if not entries:
+    if not entries and not allow_empty:
         raise ValueError(f"Watchlist '{path}' is empty.")
     log.info(
         f"Loaded {len(entries)} symbols: "

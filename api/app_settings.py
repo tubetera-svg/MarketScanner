@@ -36,6 +36,15 @@ DEFAULTS: dict[str, Any] = {
         "ltf_confirmation": {"enabled": False},
     },
     "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
+    # Daily-bar "final" cut-off per market, 'HH:MM' in the market's fixed
+    # timezone (read by src/ict_scanner.daily_bar_cutoff; keep defaults in step
+    # with DAILY_BAR_CUTOFF_DEFAULTS there).
+    "data_cutoffs": {
+        "nse": "17:00",          # IST, same trading day (bhavcopy published)
+        "commodities": "17:00",  # New York, same day (daily rollover; forex too)
+        "crypto": "00:00",       # UTC, next day
+        "gift_nifty": "03:00",   # IST, next day (NSEIX)
+    },
     "ui": {
         "hidden_strategies": [],
         "hidden_pages": [],
@@ -97,7 +106,20 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
     for key, choices in STRATEGY_CHOICES.items():
         if settings["strategy"][key] not in choices:
             settings["strategy"][key] = choices[0]
+    for market, default in DEFAULTS["data_cutoffs"].items():
+        settings["data_cutoffs"][market] = _normalize_hhmm(settings["data_cutoffs"][market]) or default
     return settings
+
+
+def _normalize_hhmm(value: Any) -> str | None:
+    """'H:MM' / 'HH:MM' (24h) -> 'HH:MM'; None when invalid."""
+    try:
+        hours, minutes = (int(part) for part in str(value).strip().split(":"))
+    except (TypeError, ValueError):
+        return None
+    if 0 <= hours <= 23 and 0 <= minutes <= 59:
+        return f"{hours:02d}:{minutes:02d}"
+    return None
 
 
 def load_settings() -> dict[str, Any]:

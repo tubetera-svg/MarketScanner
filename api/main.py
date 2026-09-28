@@ -24,6 +24,7 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
         sys.path.insert(0, _extra_path)
 
 import app_settings  # noqa: E402  (persisted automation / show-hide settings)
+import fno_membership  # noqa: E402  (NSE F&O list cache + watchlist F&O re-check)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data  # noqa: E402
@@ -84,8 +85,13 @@ class WatchlistAddRequest(BaseModel):
     classification: dict[str, str] | None = None
 
 
+class FnoApplyRequest(BaseModel):
+    preview_id: str = Field(min_length=1, max_length=64)
+
+
 class WatchlistRemoveRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=80)
+    delete_data: bool = False
 
 
 class WatchlistRenameRequest(BaseModel):
@@ -93,16 +99,32 @@ class WatchlistRenameRequest(BaseModel):
     new_symbol: str = Field(min_length=1, max_length=80)
     category: str | None = Field(default=None, max_length=80)
     classification: dict[str, str] | None = None
+    delete_old_data: bool = False
 
 
+WATCHLIST_PATH = ROOT / "config" / "watchlist.txt"
 WATCHLIST_CATEGORIES_PATH = ROOT / "config" / "watchlist_categories.json"
+OHLC_CACHE_PATH = ROOT / "config" / "ohlc_cache.json"
+TRACKER_STATE_CACHE_PATH = ROOT / "config" / "tracker_state_cache.json"
+def nse_fno_members() -> set[str] | None:
+    """NSE F&O base tickers from the local list (config/nse_fno_cache.json).
+
+    Never downloads; refresh it from the watchlist manager. None if never saved.
+    """
+    return fno_membership.cached_members()
 
 
-def save_watchlist_categories(categories: dict[str, dict[str, str]]) -> None:
-    WATCHLIST_CATEGORIES_PATH.write_text(
-        json.dumps(dict(sorted(categories.items())), indent=2) + "\n",
-        encoding="utf-8",
-    )
+def apply_classification(target: dict[str, str], updates: dict[str, str] | None) -> None:
+    """Merge form values into a classification; an empty value clears the field."""
+    for key, value in (updates or {}).items():
+        key = key.strip()
+        if not key:
+            continue
+        value = (value or "").strip()
+        if value:
+            target[key] = value
+        else:
+            target.pop(key, None)
 
 
 class ScannerService:
@@ -121,7 +143,7 @@ class ScannerService:
         self.last_date_note: dict[str, str | None] = {"requested_date": None, "resolved_date": None, "resolution_reason": None}
 
     def watchlist(self) -> list[dict[str, str]]:
-        return self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))
+        return self.module.load_watchlist_details(str(WATCHLIST_PATH), allow_empty=True, categories_filename=str(WATCHLIST_CATEGORIES_PATH))
 
     def add_to_watchlist(self, value: str, category_label: str | None = None, classification: dict[str, str] | None = None) -> list[dict[str, str]]:
         try:
@@ -130,50 +152,44 @@ class ScannerService:
             raise ValueError(str(exc)) from exc
         symbol = category_info["symbol"]
 
-        path = ROOT / "config" / "watchlist.txt"
-        entries = self.module.load_watchlist(str(path))
-        if any(existing_symbol.upper() == symbol for existing_symbol, _ in entries):
-            raise ValueError(f"{symbol} is already in the watchlist")
-
-        with path.open("a", encoding="utf-8") as file:
-            file.write(f"{symbol}\n")
-        categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
         defaults = {
             "asset_class": category_info["asset_class"],
             "exchange": category_info["exchange"],
             "scope": category_info["scope"],
-            "f_and_o": "",
-            "sector": "",
-            "industry": "",
-            "index": "",
-            "market_cap": "",
-            "liquidity": "",
-            "price_range": "",
-            "theme": "",
         }
+        if category_info["asset_class"] == "equity" and category_info["exchange"] == "NSE":
+            # Only tag F&O when the local NSE F&O list confirms it; without a
+            # saved list the symbol stays "Equity" until "Refresh F&O from NSE".
+            members = nse_fno_members()
+            if members is not None:
+                is_fno = category_info["base"] in members
+                defaults["f_and_o"] = "F&O" if is_fno else "Non-F&O"
+                if is_fno:
+                    defaults["scope"] = "F&O"
         if category_label and category_label.strip():
             defaults["scope"] = category_label.strip()
-        if classification:
-            defaults.update({key.strip(): value.strip() for key, value in classification.items() if key.strip() and value.strip()})
-        categories[symbol] = defaults
-        save_watchlist_categories(categories)
+        apply_classification(defaults, classification)
+
+        with self.module.watchlist_file_lock(str(WATCHLIST_PATH)):
+            entries = self.module.load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
+            if any(existing_symbol.upper() == symbol for existing_symbol, _ in entries):
+                raise ValueError(f"{symbol} is already in the watchlist")
+            self.module.modify_watchlist_file(str(WATCHLIST_PATH), add=symbol)
+            categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+            categories[symbol] = defaults
+            self.module.save_watchlist_categories(categories, str(WATCHLIST_CATEGORIES_PATH))
         return self.watchlist()
 
     def remove_from_watchlist(self, value: str) -> list[dict[str, str]]:
         symbol = value.strip().upper()
         if not symbol:
             raise ValueError("A symbol is required")
-        path = ROOT / "config" / "watchlist.txt"
-        entries = self.module.load_watchlist(str(path))
-        kept = [(existing_symbol, session) for existing_symbol, session in entries if existing_symbol.upper() != symbol]
-        if len(kept) == len(entries):
-            raise ValueError(f"{symbol} is not in the watchlist")
-        with path.open("w", encoding="utf-8") as file:
-            for existing_symbol, _ in kept:
-                file.write(f"{existing_symbol}\n")
-        categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
-        if categories.pop(symbol, None) is not None:
-            save_watchlist_categories(categories)
+        with self.module.watchlist_file_lock(str(WATCHLIST_PATH)):
+            if not self.module.modify_watchlist_file(str(WATCHLIST_PATH), remove=symbol):
+                raise ValueError(f"{symbol} is not in the watchlist")
+            categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+            if categories.pop(symbol, None) is not None:
+                self.module.save_watchlist_categories(categories, str(WATCHLIST_CATEGORIES_PATH))
         # Drop any alias mapping for the removed symbol.
         try:
             from market_data.config import load_symbol_aliases, save_symbol_aliases
@@ -185,31 +201,63 @@ class ScannerService:
             pass
         return self.watchlist()
 
+    def purge_symbol_data(self, value: str) -> dict[str, int]:
+        """Delete everything stored for one symbol: SQLite (OHLC rows + no-data
+        markers for every source, ipo_metadata, tv_symbol_cache) and its entries
+        in ohlc_cache.json / tracker_state_cache.json. Watchlist files untouched."""
+        from market_data import database
+
+        symbol = value.strip().upper()
+        return {
+            "ohlc_rows": database.delete_ohlc(symbols=[symbol]),
+            "ipo_metadata": database.remove_ipo_metadata(symbol),
+            "tv_symbol_cache": database.remove_tv_symbol(symbol),
+            "ohlc_cache": int(self.module.remove_symbol_from_json_cache(str(OHLC_CACHE_PATH), symbol)),
+            "tracker_state": int(self.module.remove_symbol_from_json_cache(str(TRACKER_STATE_CACHE_PATH), symbol)),
+        }
+
     def rename_in_watchlist(self, old_value: str, new_value: str, category: str | None = None, classification: dict[str, str] | None = None) -> list[dict[str, str]]:
         old_symbol = old_value.strip().upper()
         try:
             new_category = self.module.categorize_symbol(new_value)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
-        new_symbol = new_category["symbol"]
-        path = ROOT / "config" / "watchlist.txt"
-        entries = self.module.load_watchlist(str(path))
-        if not any(existing_symbol.upper() == old_symbol for existing_symbol, _ in entries):
-            raise ValueError(f"{old_symbol} is not in the watchlist")
-        if new_symbol != old_symbol and any(existing_symbol.upper() == new_symbol for existing_symbol, _ in entries):
-            raise ValueError(f"{new_symbol} is already in the watchlist")
-        with path.open("w", encoding="utf-8") as file:
-            for existing_symbol, _ in entries:
-                file.write(f"{(new_symbol if existing_symbol.upper() == old_symbol else existing_symbol)}\n")
-        categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
-        old_category = categories.pop(old_symbol, {})
-        new_category = dict(old_category)
+        new_detected = new_category
+        new_symbol = new_detected["symbol"]
+        try:
+            old_detected = self.module.categorize_symbol(old_symbol)
+        except ValueError:
+            old_detected = {}
+        # Moving to a different exchange/asset class: detected fields the user
+        # left untouched in the form follow the new symbol instead of the old.
+        instrument_changed = any(old_detected.get(key) != new_detected[key] for key in ("exchange", "asset_class"))
+        requested = dict(classification or {})
         if category and category.strip():
-            new_category["scope"] = category.strip()
-        if classification:
-            new_category.update({key.strip(): value.strip() for key, value in classification.items() if key.strip() and value.strip()})
-        categories[new_symbol] = new_category
-        save_watchlist_categories(categories)
+            requested["scope"] = category.strip()
+
+        with self.module.watchlist_file_lock(str(WATCHLIST_PATH)):
+            entries = self.module.load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
+            if not any(existing_symbol.upper() == old_symbol for existing_symbol, _ in entries):
+                raise ValueError(f"{old_symbol} is not in the watchlist")
+            if new_symbol != old_symbol and any(existing_symbol.upper() == new_symbol for existing_symbol, _ in entries):
+                raise ValueError(f"{new_symbol} is already in the watchlist")
+            self.module.modify_watchlist_file(
+                str(WATCHLIST_PATH),
+                rename=(old_symbol, new_symbol),
+                keep_override=not instrument_changed,
+            )
+            categories = self.module.load_watchlist_categories(str(WATCHLIST_CATEGORIES_PATH))
+            old_category = categories.pop(old_symbol, {})
+            updated = dict(old_category)
+            if instrument_changed:
+                for key in ("asset_class", "exchange", "scope"):
+                    incoming = (requested.get(key) or "").strip()
+                    if not incoming or incoming == old_category.get(key, ""):
+                        requested.pop(key, None)
+                        updated[key] = new_detected[key]
+            apply_classification(updated, requested)
+            categories[new_symbol] = updated
+            self.module.save_watchlist_categories(categories, str(WATCHLIST_CATEGORIES_PATH))
         # Carry the alias mapping over to the new symbol name.
         try:
             from market_data.config import load_symbol_aliases, save_symbol_aliases
@@ -231,8 +279,8 @@ class ScannerService:
             return self.module.DataFetcher()
 
     def scan(self, requested_symbols: list[str] | None) -> list[dict[str, Any]]:
-        entries = self.module.load_watchlist(str(ROOT / "config" / "watchlist.txt"))
-        details = {item["symbol"]: item for item in self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))}
+        entries = self.module.load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
+        details = {item["symbol"]: item for item in self.module.load_watchlist_details(entries=entries, categories_filename=str(WATCHLIST_CATEGORIES_PATH))}
         selected = {value.strip().upper() for value in requested_symbols or [] if value.strip()}
         if selected:
             entries = [(symbol, session) for symbol, session in entries if symbol.upper() in selected]
@@ -253,7 +301,7 @@ class ScannerService:
             daily_bars=20,
             weekly_bars=5,
         )
-        cache = self.module.OHLCCache(path=str(ROOT / "config" / "ohlc_cache.json"))
+        cache = self.module.OHLCCache(path=str(OHLC_CACHE_PATH))
         scanner = self.module.AdaptiveScanner(
             watchlist=entries,
             data_fetcher=self.create_fetcher(config, cache),
@@ -262,7 +310,7 @@ class ScannerService:
             operating_end=self.module.dtime(23, 59),
             operating_tz=self.module.IST,
             output_tiers=set(self.module.Tier),
-            state_cache=self.module.TrackerStateCache(path=str(ROOT / "config" / "tracker_state_cache.json")),
+            state_cache=self.module.TrackerStateCache(path=str(TRACKER_STATE_CACHE_PATH)),
         )
         scanner.run_once()
         results = []
@@ -278,8 +326,8 @@ class ScannerService:
 
     def historical_test(self, requested_symbols: list[str] | None, anchor_date: date) -> dict[str, Any]:
         requested_date, resolved_date, reason = self.module.resolve_previous_working_date(anchor_date)
-        entries = self.module.load_watchlist(str(ROOT / "config" / "watchlist.txt"))
-        details = {item["symbol"]: item for item in self.module.load_watchlist_details(str(ROOT / "config" / "watchlist.txt"))}
+        entries = self.module.load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
+        details = {item["symbol"]: item for item in self.module.load_watchlist_details(entries=entries, categories_filename=str(WATCHLIST_CATEGORIES_PATH))}
         selected = {value.strip().upper() for value in requested_symbols or [] if value.strip()}
         entries = [(symbol, session) for symbol, session in entries if not selected or symbol.upper() in selected]
         if not entries:
@@ -300,7 +348,7 @@ class ScannerService:
             daily_bars=20,
             weekly_bars=5,
         )
-        cache = self.module.OHLCCache(path=str(ROOT / "config" / "ohlc_cache.json"))
+        cache = self.module.OHLCCache(path=str(OHLC_CACHE_PATH))
         scanner = self.module.AdaptiveScanner(
             watchlist=entries,
             data_fetcher=self.create_fetcher(config, cache),
@@ -309,7 +357,7 @@ class ScannerService:
             operating_end=self.module.dtime(23, 59),
             operating_tz=self.module.IST,
             output_tiers=set(self.module.Tier),
-            state_cache=self.module.TrackerStateCache(path=str(ROOT / "config" / "tracker_state_cache.json")),
+            state_cache=self.module.TrackerStateCache(path=str(TRACKER_STATE_CACHE_PATH)),
         )
         scanner.run_once(anchor_date=resolved_date)
         results = []
@@ -979,22 +1027,61 @@ def add_watchlist_item(request: WatchlistAddRequest) -> dict[str, Any]:
         return {"symbols": service.add_to_watchlist(request.symbol, request.category, request.classification)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/watchlist/fno")
+def get_fno_list_info() -> dict[str, Any]:
+    """Saved NSE F&O list: when it was last refreshed and how many symbols."""
+    return fno_membership.cache_info()
+
+
+@app.post("/api/watchlist/fno/preview")
+def preview_fno_refresh() -> dict[str, Any]:
+    """Download NSE's F&O list and show the watchlist changes; writes nothing."""
+    try:
+        return fno_membership.preview(service.module)
+    except Exception as exc:  # network / NSE format / incomplete list
+        raise HTTPException(status_code=502, detail=f"Could not load the NSE F&O list: {exc}") from exc
+
+
+@app.post("/api/watchlist/fno/apply")
+def apply_fno_refresh(request: FnoApplyRequest) -> dict[str, Any]:
+    """Save the previewed F&O list locally and re-tag the watchlist."""
+    try:
+        result = fno_membership.apply(service.module, request.preview_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**result, "symbols": service.watchlist()}
 
 
 @app.delete("/api/watchlist")
 def remove_watchlist_item(request: WatchlistRemoveRequest) -> dict[str, Any]:
     try:
-        return {"symbols": service.remove_from_watchlist(request.symbol)}
+        symbols = service.remove_from_watchlist(request.symbol)
+        purged = service.purge_symbol_data(request.symbol) if request.delete_data else None
+        return {"symbols": symbols, "purged": purged}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.put("/api/watchlist")
 def rename_watchlist_item(request: WatchlistRenameRequest) -> dict[str, Any]:
     try:
-        return {"symbols": service.rename_in_watchlist(request.old_symbol, request.new_symbol, request.category, request.classification)}
+        symbols = service.rename_in_watchlist(request.old_symbol, request.new_symbol, request.category, request.classification)
+        old_symbol = request.old_symbol.strip().upper()
+        renamed_away = all(item["symbol"] != old_symbol for item in symbols)
+        purged = service.purge_symbol_data(old_symbol) if request.delete_old_data and renamed_away else None
+        return {"symbols": symbols, "purged": purged}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/results")

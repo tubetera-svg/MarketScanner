@@ -67,6 +67,15 @@ type WatchlistClassification = {
   theme?: string;
 };
 type ApiWatchlistItem = WatchlistClassification & { symbol: string };
+type FnoInfo = { saved_at: string | null; count: number };
+type FnoChanges = { to_fno: string[]; to_equity: string[]; flag_updated: string[] };
+type FnoPreview = FnoChanges & { preview_id: string; members: number; list_added: string[]; list_removed: string[] };
+const fnoChangeGroups: { key: keyof FnoChanges; label: string }[] = [
+  { key: "to_equity", label: "F&O → Equity (dropped from F&O)" },
+  { key: "to_fno", label: "Equity → F&O (added to F&O)" },
+  { key: "flag_updated", label: "F&O flag updated (scope unchanged)" },
+];
+type PurgeSummary ={ ohlc_rows: number; ipo_metadata: number; tv_symbol_cache: number; ohlc_cache: number; tracker_state: number };
 const classificationFields: { key: keyof WatchlistClassification; label: string; placeholder: string }[] = [
   { key: "asset_class", label: "Asset class", placeholder: "equity, crypto, commodity" },
   { key: "exchange", label: "Exchange", placeholder: "NSE, BSE, CRYPTO, OANDA" },
@@ -124,11 +133,16 @@ export default function WatchlistPage() {
   const [editClassification, setEditClassification] = useState<WatchlistClassification>({});
   const [savingEdit, setSavingEdit] = useState(false);
   const [classifications, setClassifications] = useState<Record<string, WatchlistClassification>>({});
+  const [fnoInfo, setFnoInfo] = useState<FnoInfo | null>(null);
+  const [fnoPreview, setFnoPreview] = useState<FnoPreview | null>(null);
+  const [fnoBusy, setFnoBusy] = useState(false);
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
   const pickerRef = useRef<HTMLDetailsElement>(null);
+  // Symbol list from the previous refresh (null until the first load).
+  const allSymbolsRef = useRef<string[] | null>(null);
 
   // Native <details> doesn't close on outside click; do that here so the
   // symbol picker doesn't feel "sticky" / stuck open.
@@ -147,32 +161,39 @@ export default function WatchlistPage() {
   // plus the symbol-alias fallback map used by the manager below.
   useEffect(() => {
     void refreshWatchlist();
+    void loadFnoInfo();
   }, []);
 
   const refreshWatchlist = async () => {
     try {
-      const [watchData, aliasData, categoryData] = await Promise.all([
-        fetch(`${API}/api/market-data/watchlist`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
+      const [aliasData, categoryData] = await Promise.all([
         fetch(`${API}/api/market-data/aliases`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
         fetch(`${API}/api/watchlist`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
       ]);
-      const categoryItems = (categoryData?.symbols as ApiWatchlistItem[] | undefined) ?? [];
-      const symbols = Array.isArray(categoryItems) && categoryItems.length > 0
-        ? categoryItems.map((item) => item.symbol)
-        : ((watchData?.symbols as string[] | undefined) ?? []);
-      if (Array.isArray(symbols)) {
+      const rawItems = categoryData?.symbols as ApiWatchlistItem[] | undefined;
+      const categoryItems = Array.isArray(rawItems) ? rawItems : [];
+      if (categoryData) {
+        const symbols = categoryItems.map((item) => item.symbol);
+        const previousAll = allSymbolsRef.current;
         setAllSymbols(symbols);
+        allSymbolsRef.current = symbols;
         setSelectedSymbols((current) => {
-          // Keep current selections valid; drop any that no longer exist.
+          // First load selects everything; afterwards keep the user's selection
+          // (including an empty one), dropping symbols that no longer exist and
+          // adding new ones only when everything was selected before.
+          if (previousAll === null) return new Set(symbols);
           const valid = new Set(symbols);
           const next = new Set([...current].filter((symbol) => valid.has(symbol)));
-          return next.size === current.size && next.size > 0 ? current : (next.size ? next : new Set(symbols));
+          if (previousAll.length > 0 && current.size === previousAll.length) {
+            symbols.forEach((symbol) => next.add(symbol));
+          }
+          return next;
         });
       }
       if (aliasData && typeof aliasData.aliases === "object") {
         setAliases(aliasData.aliases as Record<string, string[]>);
       }
-      if (Array.isArray(categoryItems)) {
+      if (categoryData) {
         setClassifications(Object.fromEntries(categoryItems.map((item) => [item.symbol, item])));
       }
     } catch {
@@ -351,15 +372,78 @@ export default function WatchlistPage() {
     setMessage(`Exported ${rows.length} rows from this page to CSV`);
   };
 
+  // ---- NSE F&O list: local file, refreshed only on demand (preview → apply) ----
+  const loadFnoInfo = async () => {
+    try {
+      const response = await fetch(`${API}/api/watchlist/fno`, { cache: "no-store" });
+      if (response.ok) setFnoInfo(await response.json());
+    } catch {
+      // best-effort
+    }
+  };
+
+  const previewFnoRefresh = async () => {
+    setFnoBusy(true);
+    setMessage("Downloading the NSE F&O list…");
+    try {
+      const response = await fetch(`${API}/api/watchlist/fno/preview`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "F&O preview failed");
+      setFnoPreview(data as FnoPreview);
+      const moves = data.to_fno.length + data.to_equity.length;
+      setMessage(moves || data.flag_updated.length ? `F&O preview: ${moves} scope change(s) — review and Apply` : "F&O preview: no watchlist changes");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "F&O preview failed");
+    } finally {
+      setFnoBusy(false);
+    }
+  };
+
+  const applyFnoRefresh = async () => {
+    if (!fnoPreview) return;
+    setFnoBusy(true);
+    try {
+      const response = await fetch(`${API}/api/watchlist/fno/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preview_id: fnoPreview.preview_id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "F&O apply failed");
+      setFnoPreview(null);
+      setFnoInfo(data.saved);
+      await refreshWatchlist();
+      setMessage(`F&O list saved (${data.members} symbols) · ${data.to_fno.length} → F&O · ${data.to_equity.length} → Equity · ${data.flag_updated.length} flag update(s)`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "F&O apply failed");
+    } finally {
+      setFnoBusy(false);
+    }
+  };
+
   // ---- Watchlist manager: edit (rename + alias) / delete symbols ----------
+  const confirmDeleteStoredData = (symbol: string) => window.confirm(
+    `Also delete ALL stored data for ${symbol}?\n\n` +
+    `• Database: OHLC rows + no-data markers (every source), IPO metadata, TradingView symbol cache\n` +
+    `• Cache files: ohlc_cache.json and tracker_state_cache.json entries\n\n` +
+    `OK = delete data (cannot be undone) · Cancel = keep data`,
+  );
+
+  const describePurge = (purged: PurgeSummary | null | undefined) => {
+    if (!purged) return " (stored data kept)";
+    const cacheEntries = purged.ohlc_cache + purged.tracker_state;
+    return ` · deleted ${purged.ohlc_rows} DB row(s), ${purged.ipo_metadata + purged.tv_symbol_cache} metadata row(s), ${cacheEntries} cache entr${cacheEntries === 1 ? "y" : "ies"}`;
+  };
+
   const deleteSymbol = async (symbol: string) => {
     if (!window.confirm(`Remove ${symbol} from the watchlist? Its alias mapping will also be cleared.`)) return;
+    const purgeData = confirmDeleteStoredData(symbol);
     setMessage(`Removing ${symbol}…`);
     try {
       const response = await fetch(`${API}/api/watchlist`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
+        body: JSON.stringify({ symbol, delete_data: purgeData }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Remove failed");
@@ -369,7 +453,7 @@ export default function WatchlistPage() {
         return next;
       });
       await refreshWatchlist();
-      setMessage(`Removed ${symbol} from the watchlist.`);
+      setMessage(`Removed ${symbol} from the watchlist${describePurge(data.purged)}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Remove failed");
     }
@@ -396,26 +480,32 @@ export default function WatchlistPage() {
       .split(",")
       .map((value) => value.trim().toUpperCase())
       .filter((value) => value.length > 0);
-    const classification = Object.fromEntries(
-      Object.entries(editClassification)
-        .map(([key, value]) => [key, value?.trim() ?? ""])
-        .filter(([, value]) => value),
+    // Send every editable field, including emptied ones, so the server can clear
+    // them; detected-only keys (symbol/base/session) are never sent back.
+    const classification: Record<string, string> = Object.fromEntries(
+      classificationFields.map(({ key }) => [key, editClassification[key]?.trim() ?? ""]),
     );
     const category = classification.scope ?? "";
     if (!newSymbol || !newSymbol.includes(":")) {
       setMessage("Symbol must be exchange-qualified, e.g. NSE:INFY");
       return;
     }
+    // Only a real rename leaves data behind under the old symbol.
+    const deleteOldData = newSymbol !== editingSymbol.toUpperCase() && confirmDeleteStoredData(editingSymbol);
+    let renameNote = "";
     setSavingEdit(true);
     try {
       {
         const renameResponse = await fetch(`${API}/api/watchlist`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol, category: category || null, classification }),
+          body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol, category: category || null, classification, delete_old_data: deleteOldData }),
         });
         const renameData = await renameResponse.json();
         if (!renameResponse.ok) throw new Error(typeof renameData.detail === "string" ? renameData.detail : "Rename failed");
+        if (newSymbol !== editingSymbol.toUpperCase()) {
+          renameNote = renameData.purged ? `${describePurge(renameData.purged)} for ${editingSymbol}` : ` · ${editingSymbol} data kept`;
+        }
         setSelectedSymbols((current) => {
           const next = new Set(current);
           if (next.has(editingSymbol)) {
@@ -424,6 +514,10 @@ export default function WatchlistPage() {
           }
           return next;
         });
+        // The rename is saved; if the alias save below fails, the form stays
+        // open on the new row and a retry targets the new symbol.
+        setEditingSymbol(newSymbol);
+        await refreshWatchlist();
       }
       const aliasResponse = await fetch(`${API}/api/market-data/aliases`, {
         method: "PUT",
@@ -434,7 +528,7 @@ export default function WatchlistPage() {
       if (!aliasResponse.ok) throw new Error(typeof aliasData.detail === "string" ? aliasData.detail : "Alias save failed");
       cancelEdit();
       await refreshWatchlist();
-      setMessage(`Saved ${newSymbol} · ${category || "automatic category"}${aliasList.length ? ` · ${aliasList.length} alias(es)` : " · aliases cleared"}`);
+      setMessage(`Saved ${newSymbol} · ${category || "automatic category"}${aliasList.length ? ` · ${aliasList.length} alias(es)` : " · aliases cleared"}${renameNote}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Save failed");
     } finally {
@@ -504,6 +598,35 @@ export default function WatchlistPage() {
         </button>
         {managing && (
           <div className="watchlist-editor">
+            <div className="fno-refresh">
+              <span className="symbol-row muted">
+                F&amp;O list: {fnoInfo?.count ? `${fnoInfo.count} symbols · saved ${fnoInfo.saved_at?.replace("T", " ") ?? "?"}` : "not saved yet — new NSE stocks are tagged Equity"}
+              </span>
+              {!fnoPreview && (
+                <button className="test-button" type="button" onClick={() => void previewFnoRefresh()} disabled={fnoBusy}>
+                  <RefreshCw size={13} className={fnoBusy ? "spin" : undefined} /> {fnoBusy ? "Loading NSE list…" : "Refresh F&O from NSE"}
+                </button>
+              )}
+              {fnoPreview && (
+                <div className="fno-preview">
+                  <strong>
+                    NSE F&amp;O list: {fnoPreview.members} symbols
+                    {fnoPreview.list_added.length + fnoPreview.list_removed.length > 0
+                      ? ` (${fnoPreview.list_added.length} added, ${fnoPreview.list_removed.length} removed since saved list)`
+                      : fnoInfo?.count ? " (same as saved list)" : ""}
+                  </strong>
+                  {fnoChangeGroups.map(({ key, label }) => (
+                    <small key={key}>
+                      {label}: {fnoPreview[key].length ? `${fnoPreview[key].length} — ${fnoPreview[key].join(", ")}` : "none"}
+                    </small>
+                  ))}
+                  <span className="wl-actions">
+                    <button className="test-button" type="button" onClick={() => void applyFnoRefresh()} disabled={fnoBusy}><Save size={13} /> {fnoBusy ? "Applying…" : "Apply"}</button>
+                    <button className="test-button button-secondary" type="button" onClick={() => setFnoPreview(null)} disabled={fnoBusy}><X size={13} /> Cancel</button>
+                  </span>
+                </div>
+              )}
+            </div>
             <input
               aria-label="Search watchlist symbols"
               className="manage-search"

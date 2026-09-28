@@ -6,7 +6,7 @@ import { useStatusFlash } from "../components/useStatusFlash";
 import Navigation from "../components/Navigation";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
-type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string };
+type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string; index?: string; f_and_o?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
 type Setup = {
   symbol: string;
@@ -238,16 +238,23 @@ const WEEKLY_PROFILE_DAYS: Record<string, string> = {
 
 const baseSymbol = (symbol: string) => symbol.split(":").pop() ?? symbol;
 const isCommodity = (symbol: string) => /(?:COMEX|NYMEX|CBOT|MCX|NATURALGAS|NATGAS|UKOIL|USOIL|XAUUSD|XAGUSD|COPPER|SILVER|GOLD|CRUDE|PLATINUM|PALLADIUM|WHEAT|CORN|SOYBEAN|COCOA|COFFEE|SUGAR|COTTON)/i.test(symbol);
-const matchesScope_check = (item: { symbol: string; session: string; scope?: string }, scope: WatchScope) => {
+// Saved "index" classification (comma-separated, e.g. "NIFTY 50, NIFTY BANK") also
+// places a symbol in the matching Nifty pill, so the hard-coded lists can't drift.
+const inSavedIndex = (item: { index?: string }, scope: WatchScope) =>
+  (item.index ?? "").split(",").some((value) => value.trim().toUpperCase() === scope.toUpperCase());
+const matchesScope_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scope: WatchScope) => {
   const symbol = item.symbol.toUpperCase();
   const base = baseSymbol(symbol);
   if (scope === "All") return true;
-  if (scope === "Forex" || scope === "Commodities" || scope === "Crypto" || scope === "F&O" || scope === "IPO" || item.scope === scope) return item.scope === scope;
-  if (scope === "Nifty indexes") return niftyIndexes.includes(symbol);
+  // F&O pill also covers F&O stocks kept under another scope (e.g. IPO).
+  if (scope === "F&O" && item.f_and_o === "F&O") return true;
+  if (scope === "Forex" || scope === "Commodities" || scope === "Crypto" || scope === "F&O" || scope === "Equity" || scope === "IPO" || item.scope === scope) return item.scope === scope;
+  if (scope === "Nifty indexes") return niftyIndexes.includes(symbol) || symbol.startsWith("NSEIX:");
+  if (inSavedIndex(item, scope)) return true;
   if (scope === "Nifty 50") return symbol.startsWith("NSE:") && nifty50.includes(base);
   return symbol.startsWith("NSE:") && (sectorSymbols[scope as keyof typeof sectorSymbols] ?? []).includes(base);
 };
-const matchesScopes_check = (item: { symbol: string; session: string; scope?: string }, scopes: WatchScope[]) =>
+const matchesScopes_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scopes: WatchScope[]) =>
   scopes.length === 0 || scopes.includes("All") || scopes.some((scope) => matchesScope_check(item, scope));
 
 type Sentiment = "bull" | "bear" | "neutral";
@@ -1175,7 +1182,10 @@ export default function Home() {
       const symbols = (data.symbols ?? []) as WatchSymbol[];
       setWatchlist(symbols);
       const added = symbols.find((entry) => entry.symbol === newSymbol.trim().toUpperCase());
-      setSelected((current) => [...current, newSymbol.trim().toUpperCase()]);
+      // Only auto-select when the new symbol is visible under the active scope filter.
+      if (added && matchesScopes_check(added, watchScopes)) {
+        setSelected((current) => (current.includes(added.symbol) ? current : [...current, added.symbol]));
+      }
       setNewSymbol("");
       setWatchlistMessage(added?.scope ? `Added — ${added.scope}` : "Added");
     } catch (error) {
@@ -1184,6 +1194,8 @@ export default function Home() {
   };
 
   const filteredWatchlist = watchlist.filter((item) => matchesScopes_check(item, watchScopes) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase()));
+  const visibleWatchSymbols = new Set(filteredWatchlist.map((item) => item.symbol));
+  const hiddenSelectedCount = selected.filter((symbol) => !visibleWatchSymbols.has(symbol)).length;
 
 
   const groupKeyOf = (setup: TrackedSetup): string => {
@@ -1415,7 +1427,7 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small>{selected.length}/{watchlist.length}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage === "Added" ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => { setWatchScopes(["All"]); setSelected(watchlist.map((item) => item.symbol)); }}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => { const newScopes = watchScopes.includes(opt) ? watchScopes.filter((s) => s !== opt) : [...watchScopes.filter((s) => s !== "All"), opt]; setWatchScopes(newScopes); const newFiltered = watchlist.filter((item) => matchesScopes_check(item, newScopes) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase())); setSelected(newFiltered.map((item) => item.symbol)); }}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small title={hiddenSelectedCount ? `${hiddenSelectedCount} selected symbol(s) are hidden by the current search` : undefined}>{selected.length}/{watchlist.length}{hiddenSelectedCount ? ` (${hiddenSelectedCount} hidden)` : ""}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage.startsWith("Added") ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => { setWatchScopes(["All"]); setSelected(watchlist.map((item) => item.symbol)); }}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Equity","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => { const newScopes = watchScopes.includes(opt) ? watchScopes.filter((s) => s !== opt) : [...watchScopes.filter((s) => s !== "All"), opt]; setWatchScopes(newScopes); const newFiltered = watchlist.filter((item) => matchesScopes_check(item, newScopes) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase())); setSelected(newFiltered.map((item) => item.symbol)); }}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : item.symbol.toUpperCase().startsWith("NSEIX:") ? "NSEIX" : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }} id="scan" ref={(el) => { sectionRefs.current.scan = el; }}>
         <section className="auto-scan">

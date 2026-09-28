@@ -86,6 +86,11 @@ button, input { font: inherit; }
 .wl-field-wide { grid-column: 1 / -1; }
 .watchlist-edit input { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; height: 28px; padding: 5px 8px; border-radius: 4px; width: 100%; box-sizing: border-box; text-transform: none; }
 .wl-edit-actions { grid-column: 1 / -1; display: flex; gap: 6px; }
+.fno-refresh { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-sm); flex-wrap: wrap; }
+.fno-refresh > .test-button, .fno-preview .test-button { align-items: center; display: inline-flex; gap: 5px; min-height: 28px; padding: 4px 10px; }
+.fno-preview { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--ink); border-radius: 4px; background: white; padding: 8px 10px; font-size: 12px; }
+.fno-preview small { color: var(--muted); font: 11px 'DM Mono', monospace; overflow-wrap: anywhere; }
+.fno-preview .wl-actions { display: inline-flex; gap: 6px; margin-top: 4px; }
 .manage-search { background: white; border: 1px solid var(--line); color: var(--ink); font-size: 11px; min-height: 30px; padding: 5px 8px; border-radius: 4px; width: 100%; box-sizing: border-box; }
 
 /* Date test */

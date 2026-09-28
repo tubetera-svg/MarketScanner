@@ -30,3 +30,9 @@ def clean_flags(monkeypatch):
     monkeypatch.setenv("FETCH_NSE_DATA", "true")
     monkeypatch.setenv("AUTO_FETCH_MISSING_DATA", "true")
     return monkeypatch
+
+
+@pytest.fixture(autouse=True)
+def default_data_cutoffs(tmp_path, monkeypatch):
+    """Isolate ict_scanner.daily_bar_cutoff from the user's saved app_settings.json."""
+    monkeypatch.setenv("MARKET_SCANNER_SETTINGS_PATH", str(tmp_path / "app_settings.json"))

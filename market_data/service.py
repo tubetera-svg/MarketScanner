@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from . import database
@@ -117,8 +117,9 @@ def is_crypto_symbol(symbol: object) -> bool:
 
 # NSE IX (GIFT Nifty, NSEIX:*): the day's candle opens ~06:15 IST and its
 # evening session runs to 02:45 IST the next day. The bar dated D is treated as
-# final at 03:00 IST on D+1 (fixed IST, no DST; 15-min buffer over the close).
-NSEIX_DAILY_FINAL = time(3, 0)
+# final at the "gift_nifty" cut-off on D+1 (IST, no DST; default 03:00 = 15-min
+# buffer over the close). All per-market cut-offs are Settings-configurable via
+# ict_scanner.daily_bar_cutoff.
 
 
 def is_nseix_symbol(symbol: object) -> bool:
@@ -355,7 +356,8 @@ def latest_final_session(
 ) -> date | None:
     """Most recent trading date whose *final* daily bar is available.
 
-    Each market has its own cut-off, evaluated in its own timezone:
+    Each market has its own cut-off (``ict_scanner.daily_bar_cutoff``, editable
+    on the Settings page), evaluated in its own timezone. Defaults:
     - NSE: the day's bar is final once the bhavcopy is published
       (``is_daily_bar_ready`` — 17:00 IST on a trading day).
     - TradingView (forex/commodities): the daily bar for date D closes at the
@@ -377,14 +379,15 @@ def latest_final_session(
         if not ict_scanner.is_daily_bar_ready(session, local_now):
             cutoff -= timedelta(days=1)
     elif is_crypto_symbol(symbol):
-        cutoff = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date() - timedelta(days=1)
+        utc_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff = utc_now.date() - timedelta(days=1 if utc_now.time() >= ict_scanner.daily_bar_cutoff("crypto") else 2)
     elif is_nseix_symbol(symbol):
         local_now = (now or datetime.now(ict_scanner.IST)).astimezone(ict_scanner.IST)
-        cutoff = local_now.date() - timedelta(days=1 if local_now.time() >= NSEIX_DAILY_FINAL else 2)
+        cutoff = local_now.date() - timedelta(days=1 if local_now.time() >= ict_scanner.daily_bar_cutoff("gift_nifty") else 2)
     else:
         local_now = (now or datetime.now(ict_scanner.NY)).astimezone(ict_scanner.NY)
         cutoff = local_now.date()
-        if local_now.time() < ict_scanner.FOREX_DAILY_ROLLOVER:
+        if local_now.time() < ict_scanner.daily_bar_cutoff("commodities"):
             cutoff -= timedelta(days=1)
     # Scan the last ~2 weeks of expected sessions (skips weekends/holidays).
     candidates = expected_trading_dates(name, cutoff - timedelta(days=12), cutoff, symbol)
@@ -397,12 +400,12 @@ def bar_final_at(source: str, symbol: str, day: date) -> datetime:
     import ict_scanner  # type: ignore
 
     if normalize_source(source) == SOURCE_NSE:
-        return datetime.combine(day, ict_scanner.NSE_BHAVCOPY_READY, ict_scanner.IST)
+        return datetime.combine(day, ict_scanner.daily_bar_cutoff("nse"), ict_scanner.IST)
     if is_crypto_symbol(symbol):
-        return datetime.combine(day + timedelta(days=1), time(0, 0), timezone.utc)
+        return datetime.combine(day + timedelta(days=1), ict_scanner.daily_bar_cutoff("crypto"), timezone.utc)
     if is_nseix_symbol(symbol):
-        return datetime.combine(day + timedelta(days=1), NSEIX_DAILY_FINAL, ict_scanner.IST)
-    return datetime.combine(day, ict_scanner.FOREX_DAILY_ROLLOVER, ict_scanner.NY)
+        return datetime.combine(day + timedelta(days=1), ict_scanner.daily_bar_cutoff("gift_nifty"), ict_scanner.IST)
+    return datetime.combine(day, ict_scanner.daily_bar_cutoff("commodities"), ict_scanner.NY)
 
 
 def _drop_provisional_bars(

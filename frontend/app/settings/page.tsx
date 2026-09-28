@@ -20,7 +20,16 @@ type Automation = {
   ltf_confirmation: { enabled: boolean };
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
-type Settings = { automation: Automation; strategy: StrategyParams; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
+type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
+type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
+
+// Timezone and day are fixed per market; only the time is configurable.
+const CUTOFF_ROWS: { key: keyof DataCutoffs; title: string; hint: string }[] = [
+  { key: "nse", title: "NSE", hint: "IST, same trading day — bhavcopy published (default 17:00). Also gates when NSE daily analysis runs." },
+  { key: "gift_nifty", title: "GIFT Nifty (NSEIX)", hint: "IST, next day — evening session ends 02:45 (default 03:00)" },
+  { key: "commodities", title: "Commodities / Forex", hint: "New York time, same day — daily rollover (default 17:00)" },
+  { key: "crypto", title: "Crypto", hint: "UTC, next day — UTC day close (default 00:00 = 05:30 IST)" },
+];
 type Payload = {
   settings: Settings;
   strategies: Strategy[];
@@ -87,6 +96,20 @@ function NumberField({ value, min, max, unit, step = 1, onCommit }: { value: num
         style={{ width: 64, height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace" }} />
       {unit}
     </label>
+  );
+}
+
+function TimeField({ value, label, onCommit }: { value: string; label: string; onCommit: (next: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    if (/^\d{2}:\d{2}$/.test(draft) && draft !== value) onCommit(draft);
+    else setDraft(value);
+  };
+  return (
+    <input type="time" aria-label={label} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && commit()}
+      style={{ height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace" }} />
   );
 }
 
@@ -209,6 +232,15 @@ export default function SettingsPage() {
               <Choice label="Propulsion block mean threshold" value={data.settings.strategy.propulsion_mean_threshold} options={data.strategy_choices.propulsion_mean_threshold}
                 onChange={(v) => save({ strategy: { propulsion_mean_threshold: v } })} />
             </Row>
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Daily bar cut-offs</span><small>when a day&apos;s bar is final · data sync uses it</small></div>
+            {CUTOFF_ROWS.map(({ key, title, hint }) => (
+              <Row key={key} title={title} hint={hint}>
+                <TimeField label={`${title} cut-off`} value={data.settings.data_cutoffs[key]} onCommit={(v) => save({ data_cutoffs: { [key]: v } })} />
+              </Row>
+            ))}
           </section>
 
           <section className="panel" style={{ padding: 16 }}>

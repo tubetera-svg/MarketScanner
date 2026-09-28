@@ -58,7 +58,6 @@ the full EQ universe as of a recent date (recommended for automation). For a
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import sys
@@ -491,26 +490,24 @@ def _watchlist_base_symbols() -> set[str]:
 
 
 def _load_watchlist_categories() -> dict[str, dict[str, str]]:
-    try:
-        data = json.loads(CATEGORIES_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return data
+    return _scanner().load_watchlist_categories(str(CATEGORIES_PATH))
 
 
 def _save_watchlist_categories(categories: dict[str, dict[str, str]]) -> None:
-    CATEGORIES_PATH.write_text(
-        json.dumps(dict(sorted(categories.items())), indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _scanner().save_watchlist_categories(categories, str(CATEGORIES_PATH))
+
+
+def _scanner():
+    src_path = str(ROOT_DIR / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    import ict_scanner  # type: ignore
+
+    return ict_scanner
 
 
 def load_entries() -> list[tuple[str, object]]:
-    import ict_scanner  # type: ignore
-
-    return ict_scanner.load_watchlist(str(WATCHLIST_PATH))
+    return _scanner().load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
 
 
 def register_ipo(
@@ -541,35 +538,25 @@ def register_ipo(
     if reason:
         raise ValueError(f"{symbol} is not an eligible NSE main-board IPO: {reason}")
 
-    existing = {sym.upper() for sym, _ in load_entries()}
-    if symbol not in existing:
-        WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with WATCHLIST_PATH.open("a", encoding="utf-8") as file:
-            file.write(f"{symbol}\n")
+    with _scanner().watchlist_file_lock(str(WATCHLIST_PATH)):
+        # Idempotent: modify_watchlist_file skips symbols already present.
+        _scanner().modify_watchlist_file(str(WATCHLIST_PATH), add=symbol)
 
-    categories = _load_watchlist_categories()
-    existing_cat = categories.get(symbol, {})
-    defaults = {
-        "asset_class": "equity",
-        "exchange": "NSE",
-        "scope": IPO_SCOPE,
-        "f_and_o": "",
-        "sector": "",
-        "industry": "",
-        "index": "",
-        "market_cap": "",
-        "liquidity": "",
-        "price_range": "",
-        "theme": "",
-        "listing_date": listing_date,
-    }
-    defaults.update({k: v for k, v in existing_cat.items() if v})
-    if listing_price is not None:
-        defaults["listing_price"] = str(listing_price)
-    if issue_price is not None:
-        defaults["issue_price"] = str(issue_price)
-    categories[symbol] = defaults
-    _save_watchlist_categories(categories)
+        categories = _load_watchlist_categories()
+        existing_cat = categories.get(symbol, {})
+        defaults = {
+            "asset_class": "equity",
+            "exchange": "NSE",
+            "scope": IPO_SCOPE,
+            "listing_date": listing_date,
+        }
+        defaults.update({k: v for k, v in existing_cat.items() if v})
+        if listing_price is not None:
+            defaults["listing_price"] = str(listing_price)
+        if issue_price is not None:
+            defaults["issue_price"] = str(issue_price)
+        categories[symbol] = defaults
+        _save_watchlist_categories(categories)
 
     database.upsert_ipo_metadata(
         {
@@ -919,43 +906,13 @@ def sync_new_ipos(
     }
 
 
-def _load_watchlist_symbols() -> set[str]:
-    """Return all symbols currently in watchlist.txt (upper-case)."""
-    if not WATCHLIST_PATH.exists():
-        return set()
-    with WATCHLIST_PATH.open("r", encoding="utf-8") as f:
-        return {line.strip().upper() for line in f if line.strip() and not line.startswith("#")}
-
-
-def _save_watchlist_symbols(symbols: set[str]) -> None:
-    """Overwrite watchlist.txt with the given symbol set (sorted)."""
-    WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with WATCHLIST_PATH.open("w", encoding="utf-8") as f:
-        for sym in sorted(symbols):
-            f.write(f"{sym}\n")
-
-
-def _load_watchlist_categories() -> dict[str, dict[str, str]]:
-    try:
-        return json.loads(CATEGORIES_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_watchlist_categories(categories: dict[str, dict[str, str]]) -> None:
-    CATEGORIES_PATH.write_text(
-        json.dumps(dict(sorted(categories.items())), indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
 def remove_from_watchlist(symbol: str) -> bool:
-    """Remove a symbol from watchlist.txt. Returns True if was present and removed."""
+    """Remove a symbol from watchlist.txt (order, comments and overrides kept).
+
+    Returns True if it was present and removed. Hold the watchlist lock.
+    """
     sym = str(symbol).strip().upper()
-    symbols = _load_watchlist_symbols()
-    if sym in symbols:
-        symbols.discard(sym)
-        _save_watchlist_symbols(symbols)
+    if _scanner().modify_watchlist_file(str(WATCHLIST_PATH), remove=sym):
         log.info("Removed %s from watchlist.txt", sym)
         return True
     return False
@@ -993,8 +950,9 @@ def remove_ipo_completely(
         "tv_symbol_cache": 0,
     }
 
-    removed["watchlist"] = remove_from_watchlist(sym)
-    removed["categories"] = remove_from_categories(sym)
+    with _scanner().watchlist_file_lock(str(WATCHLIST_PATH)):
+        removed["watchlist"] = remove_from_watchlist(sym)
+        removed["categories"] = remove_from_categories(sym)
 
     db_removed = database.remove_symbol_data(sym, source=SOURCE_NSE, db_path=db_path)
     removed.update(db_removed)
