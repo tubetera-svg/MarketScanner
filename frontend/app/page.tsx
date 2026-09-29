@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import Navigation from "../components/Navigation";
-import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string; index?: string; f_and_o?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -68,6 +68,7 @@ type LtfSetup = {
   invalidation: number;
   signal_date: string;
   valid_until: string;
+  market: string;
   state: "armed" | "triggered" | "invalidated" | "expired";
   entry: number | null;
   sl: number | null;
@@ -1029,13 +1030,20 @@ export default function Home() {
   // Live triggers stay visible; armed setups and triggers whose window has
   // ended are collapsed so a large watchlist doesn't flood the panel.
   const ltfGroups = useMemo(() => {
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    // valid_until is a market session date (ltf_confirmation.session_date):
+    // NSE = IST calendar day; forex/commodities = NY day rolling at 17:00.
+    const now = Date.now();
+    const isoDay = (ms: number, timeZone: string) => new Intl.DateTimeFormat("en-CA", { timeZone }).format(ms);
+    const sessionToday: Record<string, string> = {
+      NSE: isoDay(now, "Asia/Kolkata"),
+      FOREX: isoDay(now + 7 * 3600_000, "America/New_York"),
+    };
+    const windowOpen = (setup: LtfSetup) => setup.valid_until >= (sessionToday[setup.market] ?? sessionToday.FOREX);
     const byTrigger = (a: LtfSetup, b: LtfSetup) => (b.triggered_at ?? "").localeCompare(a.triggered_at ?? "");
     const triggered = (ltf?.setups ?? []).filter((setup) => setup.state === "triggered").sort(byTrigger);
     return {
-      live: triggered.filter((setup) => setup.valid_until >= today),
-      earlier: triggered.filter((setup) => setup.valid_until < today),
+      live: triggered.filter(windowOpen),
+      earlier: triggered.filter((setup) => !windowOpen(setup)),
       armed: (ltf?.setups ?? []).filter((setup) => setup.state === "armed").sort((a, b) => a.symbol.localeCompare(b.symbol)),
     };
   }, [ltf]);

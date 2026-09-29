@@ -1033,6 +1033,19 @@ def _cisd_levels(daily: pd.DataFrame, direction: int, after_idx: int) -> List[fl
 POI_MIN_FVG_ATR = 0.1
 
 
+def _protected_extreme(active) -> float:
+    """The protected low/high itself: sweep extreme, else swing level, else CISD level."""
+    return next(
+        float(value)
+        for value in (
+            getattr(active, "sweep_extreme", None),
+            getattr(active, "swing_level", None),
+            active.protected_level,
+        )
+        if value is not None
+    )
+
+
 def _select_point_of_interest(
     frame: pd.DataFrame,
     active,
@@ -1045,15 +1058,7 @@ def _select_point_of_interest(
         return None
     sweep_idx = getattr(active, "sweep_idx", None)
     anchor_idx = sweep_idx if sweep_idx is not None else active.confirm_idx
-    anchor = next(
-        float(value)
-        for value in (
-            getattr(active, "sweep_extreme", None),
-            getattr(active, "swing_level", None),
-            active.protected_level,
-        )
-        if value is not None
-    )
+    anchor = _protected_extreme(active)
     current = float(frame.iloc[-1]["Close"])
     direction = int(active.direction)
     if direction == 0 or (direction > 0 and current <= anchor) or (direction < 0 and current >= anchor):
@@ -1174,7 +1179,7 @@ def run_points_of_interest(
             results.at[idx, "type"] = poi_type
             results.at[idx, "bullish_match"] = candidate.direction > 0
             results.at[idx, "bearish_match"] = candidate.direction < 0
-            extreme = candidate.sweep_extreme if candidate.sweep_extreme is not None else candidate.swing_level
+            extreme = _protected_extreme(candidate)
             window = frame["Low" if candidate.direction > 0 else "High"].iloc[
                 candidate.series_start: candidate.confirm_idx + 1
             ]

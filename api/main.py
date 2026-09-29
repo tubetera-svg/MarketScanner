@@ -828,7 +828,7 @@ class LtfConfirmationWatcher:
 
     def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
-        self.interval_minutes = 2
+        self.interval_minutes = app_settings.DEFAULTS["automation"]["ltf_confirmation"]["interval_minutes"]
         self.last_check_at: str | None = None
         self.last_error: str | None = None
         self.last_arm: dict[str, str] = {}

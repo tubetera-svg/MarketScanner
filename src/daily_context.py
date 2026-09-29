@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 from typing import Dict, Optional
 
+import numpy as np
 import pandas as pd
 
 ADR_PERIOD = 20
@@ -109,6 +110,9 @@ def continuation_streak(daily: pd.DataFrame) -> int:
 
 def _prior_period_extremes(daily: pd.DataFrame, freq: str) -> tuple[Optional[float], Optional[float]]:
     """High/low of the last *completed* week ("W") or month ("M") before the latest bar."""
+    # Current + prior period hold at most 14 (W) / 62 (M) daily bars; one more
+    # bar shows whether history reaches back before the prior period.
+    daily = daily.tail(15 if freq == "W" else 63)
     idx = pd.to_datetime(daily.index)
     periods = idx.to_period(freq)
     current = periods[-1]
@@ -155,8 +159,7 @@ def compute_daily_context(daily: pd.DataFrame) -> Dict[str, object]:
     if len(daily) < 2:
         return out
     prev, cur = daily.iloc[-2], daily.iloc[-1]
-    _, ph, pl, _ = _ohlc(prev)
-    po, _, _, pc = _ohlc(prev)
+    po, ph, pl, pc = _ohlc(prev)
     _, h, l, c = _ohlc(cur)
 
     prior = daily.iloc[:-1].tail(ADR_PERIOD)
@@ -212,20 +215,24 @@ def annotate_frame(frame: pd.DataFrame, contexts: Dict[str, Dict[str, object]], 
         if col not in frame.columns:
             frame[col] = None
         frame[col] = frame[col].astype(object)
-    for idx, row in frame.iterrows():
-        ctx = contexts.get(str(row["symbol"]).upper())
-        if not ctx:
-            continue
-        for col in CONTEXT_COLUMNS:
-            frame.at[idx, col] = ctx.get(col)
-        direction = side
-        if direction is None:
-            try:
-                direction = int(row.get("direction") or 0)
-            except (TypeError, ValueError):
-                direction = 0
+    row_ctx = [contexts.get(key) for key in frame["symbol"].astype(str).str.upper()]
+    mask = np.array([bool(ctx) for ctx in row_ctx])
+    if not mask.any():
+        return frame
+    present = [ctx for ctx in row_ctx if ctx]
+    if side is not None:
+        directions = [side] * len(present)
+    elif "direction" in frame.columns:
+        raw = pd.to_numeric(frame["direction"], errors="coerce").fillna(0).to_numpy()[mask]
+        directions = [int(value) for value in raw]
+    else:
+        directions = [0] * len(present)
+    columns: Dict[str, list] = {col: [ctx.get(col) for ctx in present] for col in CONTEXT_COLUMNS}
+    for i, (ctx, direction) in enumerate(zip(present, directions)):
         if direction:
             pct = ctx.get("_lower_wick_pct") if direction > 0 else ctx.get("_upper_wick_pct")
-            frame.at[idx, "ctx_opposing_wick_pct"] = _r(pct) if pct is not None else None
-            frame.at[idx, "ctx_wick_class"] = wick_class(pct)
+            columns["ctx_opposing_wick_pct"][i] = _r(pct) if pct is not None else None
+            columns["ctx_wick_class"][i] = wick_class(pct)
+    for col, values in columns.items():
+        frame.loc[mask, col] = np.array(values, dtype=object)
     return frame
