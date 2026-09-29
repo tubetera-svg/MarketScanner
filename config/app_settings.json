@@ -21,6 +21,12 @@
       "enabled": true
     }
   },
+  "data_cutoffs": {
+    "commodities": "17:00",
+    "crypto": "00:00",
+    "gift_nifty": "03:00",
+    "nse": "17:00"
+  },
   "strategy": {
     "ltf_timeframe": "1h",
     "propulsion_mean_threshold": "range"
