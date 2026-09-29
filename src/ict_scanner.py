@@ -82,8 +82,7 @@ QUICK CONFIG GUIDE — where to change common settings
 
   Cache file locations (daily/weekly OHLC + tracker scheduling state)
       -> OHLCCache(path=...) / TrackerStateCache(path=...) in __main__.
-         Default: ohlc_cache.json / tracker_state_cache.json next to
-         this script.
+         Default: data/state/ohlc_cache.json / tracker_state_cache.json.
 """
 
 from __future__ import annotations
@@ -1187,7 +1186,7 @@ class OHLCCache:
 
     def __init__(self, path: Optional[str] = None):
         self.path = path or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "ohlc_cache.json"
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "state", "ohlc_cache.json"
         )
         self._data: dict = {}
         self._load()
@@ -1203,6 +1202,7 @@ class OHLCCache:
 
     def _save(self):
         try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             tmp_path = f"{self.path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self._data, f)
@@ -2017,7 +2017,7 @@ def _fmt_rr(value) -> str:
 class TrackerStateCache:
     def __init__(self, path: Optional[str] = None):
         self.path = path or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "tracker_state_cache.json"
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "state", "tracker_state_cache.json"
         )
 
     def load(self) -> dict:
@@ -2040,6 +2040,7 @@ class TrackerStateCache:
                 "last_daily_analysis": t.last_daily_analysis.isoformat() if t.last_daily_analysis else None,
             }
         try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             tmp_path = f"{self.path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f)

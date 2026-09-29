@@ -11,7 +11,8 @@
       "lookback_days": 7
     },
     "ltf_confirmation": {
-      "enabled": false
+      "enabled": false,
+      "interval_minutes": 45
     },
     "scan_scheduler": {
       "enabled": false,

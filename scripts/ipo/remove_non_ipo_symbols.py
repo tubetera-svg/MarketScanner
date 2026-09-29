@@ -17,11 +17,11 @@ cleaned up in an earlier pass; they are kept so re-running the script stays
 idempotent.
 
 Usage:
-    python scripts/remove_non_ipo_symbols.py --audit       # list what is tracked
-    python scripts/remove_non_ipo_symbols.py --dry-run     # preview removals
-    python scripts/remove_non_ipo_symbols.py               # apply
-    python scripts/remove_non_ipo_symbols.py --etf-only    # ETFs / funds only
-    python scripts/remove_non_ipo_symbols.py --master-absent [--dry-run]
+    python scripts/ipo/remove_non_ipo_symbols.py --audit       # list what is tracked
+    python scripts/ipo/remove_non_ipo_symbols.py --dry-run     # preview removals
+    python scripts/ipo/remove_non_ipo_symbols.py               # apply
+    python scripts/ipo/remove_non_ipo_symbols.py --etf-only    # ETFs / funds only
+    python scripts/ipo/remove_non_ipo_symbols.py --master-absent [--dry-run]
         # tracked IPOs absent from the NSE main-board equity master (SME / delisted)
 """
 
@@ -33,7 +33,7 @@ import logging
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 

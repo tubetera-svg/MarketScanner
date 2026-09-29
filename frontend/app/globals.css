@@ -286,10 +286,6 @@ details > summary::-webkit-details-marker { display: none; }
   .metrics { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
 }
 
-@media (max-width: 700px) {
-  .tracker-head-actions { flex-direction: column; align-items: flex-start; }
-}
-
 /* Strategy profiles panel */
 .strategy-panel { display: flex; flex-direction: column; gap: var(--gap-md); margin: 0 0 var(--gap-md); padding: var(--gap-md); border-left: 3px solid var(--coral); }
 .strategy-panel .test-button { align-items: center; display: inline-flex; gap: 6px; }
@@ -396,7 +392,7 @@ details > summary::-webkit-details-marker { display: none; }
 .note-tooltip-content::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
 .small-empty { font-size: 11px; padding: 10px; }
 
-/* Setup lifecycle states (shared by strategy chips + tracker rows) */
+/* Setup lifecycle states (strategy chips) */
 .signal-state { display: inline-block; font: 10px 'DM Mono', monospace; padding: 2px 5px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.03em; }
 .signal-state.armed { background: #f6efe2; color: var(--amber); }
 .signal-state.triggered { background: var(--teal-soft); color: var(--teal-ink); }
@@ -409,43 +405,10 @@ details > summary::-webkit-details-marker { display: none; }
 /* Strategy-level live data indicator */
 .live-data-badge { align-items: center; background: #e3f1ea; border: 1px solid #bfe3d2; border-radius: 3px; color: #1f7a55; display: inline-flex; font: 600 10px 'DM Mono', monospace; gap: 3px; padding: 2px 6px; text-transform: uppercase; letter-spacing: .5px; }
 
-/* Cross-scan setup tracker panel */
-.tracker-panel { display: flex; flex-direction: column; gap: var(--gap-sm); margin: 0 0 var(--gap-md); padding: var(--gap-md); border-left: 3px solid var(--blue); }
-.tracker-panel .kicker { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.08em; margin: 0; }
-.tracker-panel h3 { font-size: 15px; letter-spacing: -0.3px; margin: 0; display: flex; align-items: center; gap: 6px; }
-.tracker-head-actions { align-items: center; display: flex; gap: var(--gap-sm); justify-content: space-between; flex-wrap: wrap; }
-.tracker-toggle { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 5px; white-space: nowrap; }
-.tracker-toggle input { min-height: 0; padding: 0; }
-.tracker-info { position: relative; display: inline-flex; align-items: center; color: var(--muted); cursor: pointer; }
-.tracker-info:hover { color: var(--ink); }
-.tracker-alerts .alert { font: 10px 'DM Mono', monospace; padding: 3px 7px; border-radius: 3px; }
-.tracker-alerts .alert.triggered { background: var(--teal-soft); color: var(--teal-ink); }
-.tracker-alerts .alert.closed_sl { background: #f3e2e0; color: var(--coral-ink); }
-.tracker-alerts .alert.closed_target { background: #e7eef4; color: var(--blue-ink); }
 .tracker-list { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-.tracker-row { align-items: center; background: #fdfdfc; border: 1px solid var(--line); border-radius: 4px; display: inline-flex; flex-wrap: wrap; gap: 6px; padding: 6px 9px; }
-.tracker-row strong { font-family: 'DM Mono', monospace; font-weight: 500; }
-.tracker-row .profile { color: var(--muted); font: 10px 'Space Grotesk', sans-serif; }
-.tracker-row small { color: var(--muted); font: 10px 'DM Mono', monospace; }
-.week-of { color: var(--muted); font: 10px 'DM Mono', monospace; }
-.tracker-row .week { margin-left: auto; color: var(--muted); font: 10px 'DM Mono', monospace; }
-.tracker-row.triggered { border-left: 3px solid var(--teal); }
-.tracker-row.armed { border-left: 3px solid var(--amber); }
-.tracker-row.invalidated { border-left: 3px solid var(--coral); }
-.tracker-row.expired { border-left: 3px solid var(--amber); }
-.tracker-row.closed_sl, .tracker-row.closed_target { border-left: 3px solid var(--muted); opacity: 0.8; }
 
-/* Tracker sentiment color coding (Bull / Bear) — tints the row by direction */
-.tracker-row.sentiment-bull { background: #f3faf7; }
-.tracker-row.sentiment-bear { background: #fdf4f1; }
-
-/* Tracker client-side grouping */
+/* Client-side grouping toggle */
 .tracker-groupby { align-items: center; display: inline-flex; gap: 6px; }
-.tracker-group { background: #fbfbfa; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.tracker-group-head { align-items: center; background: #f5f6f7; border-bottom: 1px solid var(--line); display: flex; gap: 8px; padding: 6px 10px; }
-.tracker-group-label { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 12px; }
-.tracker-group-count { background: var(--slate-soft); border-radius: 10px; color: var(--muted); font: 10px 'DM Mono', monospace; padding: 1px 8px; }
-.tracker-group-items { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); padding: var(--gap-sm); }
 
 /* Watchlist DB browser */
 .top-link {
@@ -680,14 +643,6 @@ a.chart-link.symbol-link:hover {
 
 /* Strategy chip count badge */
 .strategy-chip-badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; background: var(--ink); color: white; border-radius: 9px; font: 500 10px 'DM Mono', monospace; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border: 2px solid var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-
-/* Tracker chart link */
-.tracker-row .chart-link.symbol-link { margin-left: auto; margin-right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); opacity: 0.7; transition: opacity .15s ease, border-color .15s ease, color .15s ease; }
-.tracker-row .chart-link.symbol-link:hover { opacity: 1; border-color: var(--ink); color: var(--ink); }
-.tracker-row .chart-link.symbol-link svg { width: 12px; height: 12px; }
-
-/* Compressed tracker row */
-.tracker-row .meta-line { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* Scan progress */
 .scan-progress { color: var(--muted); font: 10px 'DM Mono', monospace; margin-left: 8px; white-space: nowrap; }

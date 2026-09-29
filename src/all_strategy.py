@@ -18,10 +18,14 @@ from protected_swings import (
     STATE_INVALIDATED,
     STATE_NONE,
     ProtectedSwingAnalysis,
+    _collect_prior_run,
+    _first_after,
+    _ohlc_arrays,
     detect_swing_points,
     evaluate_protected_swings,
     find_fvgs,
 )
+from daily_context import annotate_frame, compute_daily_context
 from propulsion_blocks import (
     PROPULSION_BLOCKS_LOOKBACK_DAYS as _PB_LOOKBACK,
     PropulsionBlockAnalysis,
@@ -1006,27 +1010,50 @@ def run_protected_swings(
     )
 
 
-def _latest_cisd(daily: pd.DataFrame, direction: int, after_idx: int) -> Optional[float]:
-    if len(daily) < 2 or after_idx >= len(daily) - 1:
-        return None
-    previous = daily.iloc[-2]
-    current = daily.iloc[-1]
-    if direction > 0 and previous["Close"] < previous["Open"] and current["Close"] > previous["High"]:
-        return float(previous["Open"])
-    if direction < 0 and previous["Close"] > previous["Open"] and current["Close"] < previous["Low"]:
-        return float(previous["Open"])
-    return None
+def _cisd_levels(daily: pd.DataFrame, direction: int, after_idx: int) -> List[float]:
+    """CISD levels formed after ``after_idx``, defined as for the protected swing
+    itself: the open of the first candle of an opposing series (down-close for
+    bullish, up-close for bearish) that a later candle closed through."""
+    o, _h, _l, c = _ohlc_arrays(daily)
+    down = direction > 0
+    levels: List[float] = []
+    for end in range(after_idx + 1, len(c) - 1):
+        if (c[end + 1] < o[end + 1]) if down else (c[end + 1] > o[end + 1]):
+            continue  # series continues; evaluate it at its last candle
+        run = _collect_prior_run(o, c, end, down)
+        if not run or run[0] <= after_idx:
+            continue
+        level = float(o[run[0]])
+        if _first_after(c, level, end, above=down) is not None:
+            levels.append(level)
+    return levels
+
+
+# A POI gap narrower than this fraction of ATR(14) is noise and is skipped.
+POI_MIN_FVG_ATR = 0.1
 
 
 def _select_point_of_interest(
     frame: pd.DataFrame,
     active,
 ) -> Optional[tuple[float, str]]:
-    """Select the nearest POI from the protected swing toward current price."""
+    """Select the nearest POI from the protected swing toward current price.
+
+    The search starts at the protected low/high itself (the sweep extreme and
+    the bar that swept), not at the CISD confirmation."""
     if active is None or active.confirm_idx is None:
         return None
-    anchor_idx = active.confirm_idx
-    anchor = float(active.protected_level)
+    sweep_idx = getattr(active, "sweep_idx", None)
+    anchor_idx = sweep_idx if sweep_idx is not None else active.confirm_idx
+    anchor = next(
+        float(value)
+        for value in (
+            getattr(active, "sweep_extreme", None),
+            getattr(active, "swing_level", None),
+            active.protected_level,
+        )
+        if value is not None
+    )
     current = float(frame.iloc[-1]["Close"])
     direction = int(active.direction)
     if direction == 0 or (direction > 0 and current <= anchor) or (direction < 0 and current >= anchor):
@@ -1051,16 +1078,21 @@ def _select_point_of_interest(
             return not (highs[swing.idx + 1:] > swing.high).any()
         return not (lows[swing.idx + 1:] < swing.low).any()
 
+    atr = _daily_atr(frame)
+    min_gap = POI_MIN_FVG_ATR * atr if atr else 0.0
     gaps = [
         gap for gap in find_fvgs(frame)
-        if gap.idx > anchor_idx
+        if gap.series_start >= anchor_idx
+        and gap.gap_high - gap.gap_low >= min_gap
         and gap.fvg_type == ("bullish" if direction > 0 else "bearish")
         and in_path(gap.gap_low if direction > 0 else gap.gap_high)
         and gap_intact(gap)
     ]
     if gaps:
+        # First gap met walking from the protected swing; price reaches it at
+        # the edge nearest current price (bullish: top, bearish: bottom).
         gap = min(gaps, key=lambda item: abs((item.gap_low if direction > 0 else item.gap_high) - anchor))
-        level = gap.gap_low if direction > 0 else gap.gap_high
+        level = gap.gap_high if direction > 0 else gap.gap_low
         return float(level), "fvg"
 
     swings = [
@@ -1072,8 +1104,10 @@ def _select_point_of_interest(
         swing = min(swings, key=lambda item: abs((item.high if item.is_high else item.low) - anchor))
         return float(swing.high if swing.is_high else swing.low), "sweep"
 
-    cisd_level = _latest_cisd(frame, direction, anchor_idx)
-    return (cisd_level, "CISD") if cisd_level is not None and in_path(cisd_level) else None
+    cisds = [level for level in _cisd_levels(frame, direction, anchor_idx) if in_path(level)]
+    if cisds:
+        return min(cisds, key=lambda level: abs(level - anchor)), "CISD"
+    return None
 
 
 def run_points_of_interest(
@@ -1140,8 +1174,14 @@ def run_points_of_interest(
             results.at[idx, "type"] = poi_type
             results.at[idx, "bullish_match"] = candidate.direction > 0
             results.at[idx, "bearish_match"] = candidate.direction < 0
+            extreme = candidate.sweep_extreme if candidate.sweep_extreme is not None else candidate.swing_level
+            window = frame["Low" if candidate.direction > 0 else "High"].iloc[
+                candidate.series_start: candidate.confirm_idx + 1
+            ]
+            made_on = window.idxmin() if candidate.direction > 0 else window.idxmax()
             results.at[idx, "note"] = (
-                f"{poi_type} POI at {level:.4f} | protected swing level {candidate.protected_level:.4f}"
+                f"{poi_type} POI at {level:.4f} | protected {'low' if candidate.direction > 0 else 'high'} "
+                f"{extreme:.4f} ({pd.Timestamp(made_on):%Y-%m-%d}) | CISD {candidate.protected_level:.4f}"
             )
             continue
 
@@ -3055,7 +3095,7 @@ def run_strategies(
                 name = future_to_name[future]
                 results_by_name[name] = future.result()
 
-        return [results_by_name[name] for name in strategy_names]
+        return _with_daily_context([results_by_name[name] for name in strategy_names], daily_map, symbols, as_of_date)
 
     executions: List[StrategyExecution] = []
     for name in strategy_names:
@@ -3071,4 +3111,38 @@ def run_strategies(
         execution = registry[name].runner(**runner_kwargs)
         executions.append(execution)
 
-    return executions
+    return _with_daily_context(executions, daily_map, symbols, as_of_date)
+
+
+def _with_daily_context(
+    executions: List[StrategyExecution],
+    daily_map: Dict[str, pd.DataFrame],
+    symbols: Sequence[str],
+    as_of_date: date,
+) -> List[StrategyExecution]:
+    """Append display-only ``ctx_*`` columns (see daily_context.py); never gates a signal."""
+    contexts: Dict[str, Dict[str, object]] = {}
+    for symbol in symbols:
+        symbol_upper = str(symbol).strip().upper()
+        try:
+            daily = daily_map.get(symbol_upper)
+            if daily is None or daily.empty:
+                continue
+            if _track_mode_for(symbol_upper) == "eod_confirm":
+                daily = _trim_in_progress_daily(daily)
+            if _daily_frame_stale(symbol_upper, daily, as_of_date, "daily"):
+                continue
+            contexts[symbol_upper] = compute_daily_context(daily)
+        except Exception as exc:
+            log.warning("Daily context failed for %s: %s", symbol_upper, exc)
+    if not contexts:
+        return executions
+    return [
+        StrategyExecution(
+            name=execution.name,
+            results=annotate_frame(execution.results, contexts, None),
+            bullish=annotate_frame(execution.bullish, contexts, 1),
+            bearish=annotate_frame(execution.bearish, contexts, -1),
+        )
+        for execution in executions
+    ]

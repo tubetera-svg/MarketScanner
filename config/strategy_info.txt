@@ -19,7 +19,8 @@ This file contains the exact conditions used by strategy runners in `all_strateg
 ### `points_of_interest`
 - Uses the latest protected-swing analysis without creating a trade plan.
 - Reports the triggered protected level and type: `fvg`, `sweep`, or `CISD`.
-- Selection is point-in-time from the active protected swing toward current price: FVG first, then a confirmed swing/liquidity level, then current CISD.
+- Selection is point-in-time from the active protected low/high (sweep extreme) toward current price: FVG first (reported at its near edge; gaps narrower than 0.1 x ATR(14) are skipped), then an untaken swing/liquidity level, then a CISD (open of the first candle of an opposing series, later closed through).
+- Note shows the POI, the protected low/high with the date it was made, and the CISD confirmation level.
 - Output contains direction, triggered level, type, state, and note; entry, stop-loss, target, and R:R are intentionally omitted.
 - POI rows are informational and do not create backtest positions.
 
@@ -165,8 +166,16 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 
 ## Intraday confirmation (LTF)
 - The TTrades frameworks enter only after an intraday change in the state of delivery (CISD). Daily bars can only show that after the move, so fired signals from the weekly profiles, `daily_bias_invalidation`, `candle_3_closure`, `protected_swings` and `propulsion_blocks` also write `ltf_zone_low/high`, `ltf_invalidation`, `ltf_signal_date` and `ltf_valid_until` (next session; rest of the week for weekly profiles).
-- The watcher (Settings -> Intraday confirmation watcher; `GET /api/ltf-confirmation`, `POST /api/ltf-confirmation/check`) arms these once each market's daily bar is final, then replays completed TradingView bars (1h or 15m — Settings -> Strategy parameters) for armed symbols only through `src/ltf_confirmation.evaluate_ltf`: price must trade into the zone, then close beyond the open of the first candle of the latest opposite-colour series. A close through the invalidation first invalidates; the window running out expires it. Stop = the intraday extreme made in the zone. State persists in `config/ltf_setups.json`.
+- The watcher (Settings -> Intraday confirmation watcher; `GET /api/ltf-confirmation`, `POST /api/ltf-confirmation/check`) arms these once each market's daily bar is final, then replays completed TradingView bars (1h or 15m — Settings -> Strategy parameters) for armed symbols only through `src/ltf_confirmation.evaluate_ltf`: price must trade into the zone, then close beyond the open of the first candle of the latest opposite-colour series. A close through the invalidation first invalidates; the window running out expires it. Stop = the intraday extreme made in the zone. State persists in `data/state/ltf_setups.json`.
 - Backtests still run on daily bars only (daily proxy); no intraday history is stored yet.
+
+## Daily context columns (display only)
+- `run_strategies` appends `ctx_*` columns (src/daily_context.py) to every strategy's rows; they never gate or change a signal. Computed from the same completed daily bars the strategies use (NSE in-progress bar trimmed; stale symbols skipped).
+- `ctx_adr` / `ctx_adr_used_pct`: mean High-Low of the 20 bars before the signal bar, and the signal bar's range as % of it (ADR exhaustion).
+- `ctx_opposing_wick_pct` / `ctx_wick_class`: lower wick (bullish rows) or upper wick (bearish rows) as % of range; small <= 25%, large >= 50%.
+- `ctx_candle_type` / `ctx_next_day_bias`: signal bar vs previous bar - inside, outside, close_above_pdh / close_below_pdl (continuation), swept_pdh_rejected / swept_pdl_rejected (reversal). `ctx_cont_streak` counts consecutive continuation closures (+up/-down); `ctx_phase_change` is True at 3+.
+- `ctx_prev_wick_mid` / `ctx_prev_wick_status`: if the previous bar swept and rejected, the midpoint of its wick and whether the signal bar respected or closed through it. `ctx_prev_eq` / `ctx_prev_eq_status`: previous bar's midpoint and whether the signal bar held its upper/lower half.
+- `ctx_pdh/pdl`, `ctx_pwh/pwl`, `ctx_pmh/pml`: previous day / completed week / completed month extremes (week/month left empty if history starts inside that period). `ctx_draw_above/below`: nearest unswept 3-bar swing high above / low below the close (60-bar window).
 
 ## Data guard
 - Every runner marks a symbol `status=stale` (no signal) when its latest daily bar is older than the session expected for `as_of_date` in that market (NSE calendar strictly; TradingView tolerates one missing session), so a suspended or unsynced symbol is not reported as current.

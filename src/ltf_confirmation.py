@@ -19,7 +19,7 @@ work is split in two:
 :func:`evaluate_ltf` is pure and point-in-time (bars whose close time is after
 ``now`` are ignored), so the live watcher and any future intraday backtest
 share one code path. :class:`LtfSetupStore` persists setups across restarts
-(atomic JSON, same pattern as ``weekly_profile_tracker``).
+(atomic JSON).
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_PATH = os.path.join(ROOT, "config", "ltf_setups.json")
+DEFAULT_PATH = os.path.join(ROOT, "data", "state", "ltf_setups.json")
 
 IST = ZoneInfo("Asia/Kolkata")
 NEW_YORK = ZoneInfo("America/New_York")

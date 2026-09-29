@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import Navigation from "../components/Navigation";
-import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, ExternalLink, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, Database, History, Info, Play, Plus, Radio, RefreshCw, Rocket, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string; index?: string; f_and_o?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -116,35 +116,26 @@ type StrategyRow = {
   daily_bias?: string | null;
   weekly_bias?: string | null;
   monthly_bias?: string | null;
-};
-type TrackedEvent = { ts: string; date: string; state: string; note: string | null };
-type TrackedSetup = {
-  symbol: string;
-  profile: string;
-  week: string;
-  state: string;
-  direction: number | null;
-  entry: number | null;
-  sl: number | null;
-  target: number | null;
-  rr: number | null;
-  track_mode: string | null;
-  first_seen: string;
-  triggered_date: string | null;
-  last_seen: string;
-  events: TrackedEvent[];
-};
-type TrackerAlert = {
-  symbol: string;
-  profile: string;
-  week: string | null;
-  kind: string;
-  state: string;
-  direction: number | null;
-  entry: number | null;
-  sl: number | null;
-  target: number | null;
-  rr: number | null;
+  ctx_adr?: number | null;
+  ctx_adr_used_pct?: number | null;
+  ctx_opposing_wick_pct?: number | null;
+  ctx_wick_class?: string | null;
+  ctx_candle_type?: string | null;
+  ctx_next_day_bias?: string | null;
+  ctx_cont_streak?: number | null;
+  ctx_phase_change?: boolean | null;
+  ctx_prev_wick_mid?: number | null;
+  ctx_prev_wick_status?: string | null;
+  ctx_prev_eq?: number | null;
+  ctx_prev_eq_status?: string | null;
+  ctx_pdh?: number | null;
+  ctx_pdl?: number | null;
+  ctx_pwh?: number | null;
+  ctx_pwl?: number | null;
+  ctx_pmh?: number | null;
+  ctx_pml?: number | null;
+  ctx_draw_above?: number | null;
+  ctx_draw_below?: number | null;
 };
 type StrategyGroup = { strategy: string; label: string; total: number; bull_count: number; bear_count: number; bullish: StrategyRow[]; bearish: StrategyRow[]; has_live_data: boolean };
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
@@ -256,17 +247,6 @@ const matchesScope_check = (item: { symbol: string; session: string; scope?: str
 };
 const matchesScopes_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scopes: WatchScope[]) =>
   scopes.length === 0 || scopes.includes("All") || scopes.some((scope) => matchesScope_check(item, scope));
-
-type Sentiment = "bull" | "bear" | "neutral";
-const sentimentOf = (direction: number | null): Sentiment =>
-  direction == null ? "neutral" : direction > 0 ? "bull" : "bear";
-const SENTIMENT_LABEL: Record<Sentiment, string> = { bull: "BULL", bear: "BEAR", neutral: "—" };
-
-const monthLabel = (ym: string) => {
-  const [year, month] = ym.split("-").map(Number);
-  if (!year || !month) return ym;
-  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: "short", year: "numeric" });
-};
 
 const biasBadge = (bias: string | null | undefined, label: string) => {
   if (!bias || bias === "Neutral") return <span className="bias-badge bias-neutral">{label}</span>;
@@ -459,19 +439,13 @@ export default function Home() {
   const statusFlash = useStatusFlash(message);
   const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
   const [includeSilverBulletTests, setIncludeSilverBulletTests] = useState(false);
-  const [trackerSetups, setTrackerSetups] = useState<TrackedSetup[]>([]);
-  const [trackerAlerts, setTrackerAlerts] = useState<TrackerAlert[]>([]);
-  const [crossScanTrackerEnabled, setCrossScanTrackerEnabled] = useState(false);
-  const [trackerWatchlistOnly, setTrackerWatchlistOnly] = useState(true);
-  const [trackerGroupBy, setTrackerGroupBy] = useState<"none" | "symbol" | "week" | "month">("none");
   const [strategyResultsGroupBy, setStrategyResultsGroupBy] = useState<"strategy" | "symbol">("strategy");
-  const [activeSection, setActiveSection] = useState<"scan" | "alerts" | "strategies" | "tracker">("scan");
+  const [activeSection, setActiveSection] = useState<"scan" | "alerts" | "strategies">("scan");
   const [scanProgress, setScanProgress] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({
     scan: null,
     alerts: null,
     strategies: null,
-    tracker: null,
   });
 
   // Keep the sticky section nav docked under the topbar even when the header wraps.
@@ -485,7 +459,7 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
-  const scrollToSection = (section: "scan" | "alerts" | "strategies" | "tracker") => {
+  const scrollToSection = (section: "scan" | "alerts" | "strategies") => {
     setActiveSection(section);
     sectionRefs.current[section]?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -497,7 +471,7 @@ export default function Home() {
           if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
             const id = entry.target.id;
             if (id in sectionRefs.current) {
-              setActiveSection(id as "scan" | "alerts" | "strategies" | "tracker");
+              setActiveSection(id as "scan" | "alerts" | "strategies");
             }
           }
         }
@@ -562,23 +536,6 @@ export default function Home() {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
     event.preventDefault();
     setChart({ symbol: row.symbol, sourceLink: row.tradingview_link });
-  };
-
-  const loadTracker = async (symbols?: string[]) => {
-    try {
-      const params = symbols && symbols.length ? `?symbols=${encodeURIComponent(symbols.join(","))}` : "";
-      const response = await fetch(`${API}/api/weekly-profile-tracker${params}`, { cache: "no-store" });
-      if (!response.ok) return;
-      const data = await response.json();
-      setTrackerSetups(data.setups ?? []);
-      if (data.source === "recent" && typeof data.pruned === "number" && data.pruned > 0 && data.setups.length === 0) {
-        // Pruned away everything the frontend would otherwise display; reload once
-        // more so the panel reflects the current retention window without spamming.
-        loadTracker(symbols).catch(() => {});
-      }
-    } catch {
-      /* best-effort */
-    }
   };
 
   const loadResults = async () => {
@@ -776,26 +733,6 @@ export default function Home() {
     if (typeof data.weekly_profiles_master_enabled === "boolean") setWeeklyMasterOn(data.weekly_profiles_master_enabled);
   };
 
-  const toggleCrossScanTracker = async () => {
-    const next = !crossScanTrackerEnabled;
-    setCrossScanTrackerEnabled(next);
-    try {
-      const response = await fetch(`${API}/api/cross-scan-tracker`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: next }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Could not update tracker setting");
-      setCrossScanTrackerEnabled(data.cross_scan_tracker_enabled ?? next);
-      setMessage(`Cross-scan setup tracker ${next ? "ON" : "OFF"}`);
-      if (next) loadTracker(selected).catch(() => {});
-    } catch (error) {
-      setCrossScanTrackerEnabled(!next);
-      setMessage(error instanceof Error ? error.message : "Could not update tracker setting");
-    }
-  };
-
   const toggleStrategy = async (flag: StrategyFlag) => {
     const nextEnabled = !flag.enabled;
     setStrategies((current) => current.map((item) => (item.name === flag.name ? { ...item, enabled: nextEnabled } : item)));
@@ -854,14 +791,9 @@ export default function Home() {
       if (resolvedDate) setStrategyAnchorDate(resolvedDate);
       const bulls = groups.reduce((sum, group) => sum + group.bull_count, 0);
       const bears = groups.reduce((sum, group) => sum + group.bear_count, 0);
-      const alerts: TrackerAlert[] = data.tracker_alerts ?? [];
-      setTrackerAlerts(alerts);
-      const trig = alerts.filter((a) => a.kind === "triggered").length;
-      const exits = alerts.filter((a) => a.kind === "closed_sl" || a.kind === "closed_target").length;
       setStrategyDateNote(`Testing date ${data.resolved_date ?? dateOverride}${data.resolution_reason ? ` (${data.resolution_reason})` : ""} — ${groups.length} strategies — ${bulls} bull / ${bears} bear matches`);
-      setMessage(`Strategy scan complete - ${bulls} bullish, ${bears} bearish${trig ? ` - ${trig} new trigger(s)` : ""}${exits ? ` - ${exits} exit(s)` : ""}`);
+      setMessage(`Strategy scan complete - ${bulls} bullish, ${bears} bearish`);
       setScanProgress(null);
-      if (crossScanTrackerEnabled) await loadTracker(selected);
     } catch (error) {
       setScanProgress(null);
       setMessage(error instanceof Error ? error.message : "Strategy scan failed");
@@ -938,19 +870,6 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    fetch(`${API}/api/cross-scan-tracker`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data: { cross_scan_tracker_enabled?: boolean }) => {
-        if (typeof data.cross_scan_tracker_enabled === "boolean") setCrossScanTrackerEnabled(data.cross_scan_tracker_enabled);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!trackerWatchlistOnly && crossScanTrackerEnabled) loadTracker().catch(() => {});
-  }, [crossScanTrackerEnabled]);
-
   // Tick every second so the commodity inventory-report countdown stays live.
   useEffect(() => {
     const id = window.setInterval(() => setInventoryNow(Date.now()), 1000);
@@ -1012,7 +931,6 @@ export default function Home() {
       const initialScopes: WatchScope[] = ["Commodities"];
       const initialSymbols = symbols.filter((item: WatchSymbol) => matchesScopes_check(item, initialScopes)).map((item: WatchSymbol) => item.symbol);
       setSelected(initialSymbols);
-      if (crossScanTrackerEnabled) loadTracker(initialSymbols).catch(() => {});
       if (scheduleData) setSchedule(scheduleData);
       setMessage("Ready to scan");
     }).catch(() => setMessage("API unavailable. Start FastAPI on port 8000."));
@@ -1108,6 +1026,45 @@ export default function Home() {
     }
   }, [ltf]);
 
+  // Live triggers stay visible; armed setups and triggers whose window has
+  // ended are collapsed so a large watchlist doesn't flood the panel.
+  const ltfGroups = useMemo(() => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const byTrigger = (a: LtfSetup, b: LtfSetup) => (b.triggered_at ?? "").localeCompare(a.triggered_at ?? "");
+    const triggered = (ltf?.setups ?? []).filter((setup) => setup.state === "triggered").sort(byTrigger);
+    return {
+      live: triggered.filter((setup) => setup.valid_until >= today),
+      earlier: triggered.filter((setup) => setup.valid_until < today),
+      armed: (ltf?.setups ?? []).filter((setup) => setup.state === "armed").sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    };
+  }, [ltf]);
+
+  // Whole chip opens the in-app chart popup (like the strategy profile chips);
+  // modified/middle click still opens TradingView in a tab.
+  const ltfChip = (setup: LtfSetup) => (
+    <a
+      key={setup.key}
+      href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(setup.symbol)}`}
+      rel="noreferrer"
+      className={`signal-chip ${setup.direction > 0 ? "bull" : "bear"}`}
+      title={setup.note}
+      onClick={(event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        setChart({ symbol: setup.symbol, sourceLink: null });
+      }}
+    >
+      {setup.direction > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      <strong>{setup.symbol}</strong>
+      <small>
+        {setup.strategy.replace(/_/g, " ")} · {setup.state === "triggered"
+          ? `TRIGGERED ${setup.entry ?? ""} · SL ${setup.sl ?? ""}${setup.target != null ? ` · T ${setup.target}` : ""}`
+          : `zone ${setup.zone_low}–${setup.zone_high} · until ${setup.valid_until}`}
+      </small>
+    </a>
+  );
+
   const checkLtfNow = async () => {
     setLtfChecking(true);
     try {
@@ -1198,34 +1155,6 @@ export default function Home() {
   const hiddenSelectedCount = selected.filter((symbol) => !visibleWatchSymbols.has(symbol)).length;
 
 
-  const groupKeyOf = (setup: TrackedSetup): string => {
-    if (trackerGroupBy === "symbol") return setup.symbol;
-    if (trackerGroupBy === "week") return setup.week;
-    if (trackerGroupBy === "month") return setup.week.slice(0, 7);
-    return "";
-  };
-  const trackerGroups = useMemo(() => {
-    if (trackerGroupBy === "none" || trackerSetups.length === 0) return null;
-    const map = new Map<string, { key: string; items: TrackedSetup[] }>();
-    for (const setup of trackerSetups) {
-      const key = groupKeyOf(setup);
-      const bucket = map.get(key);
-      if (bucket) bucket.items.push(setup);
-      else map.set(key, { key, items: [setup] });
-    }
-    return Array.from(map.values())
-      .map((group) => ({
-        ...group,
-        label: trackerGroupBy === "month" ? monthLabel(group.key) : group.key,
-        bull: group.items.filter((item) => sentimentOf(item.direction) === "bull").length,
-        bear: group.items.filter((item) => sentimentOf(item.direction) === "bear").length,
-      }))
-      .sort((a, b) =>
-        trackerGroupBy === "week"
-          ? b.key.localeCompare(a.key)
-          : a.key.localeCompare(b.key),
-      );
-  }, [trackerSetups, trackerGroupBy]);
   const strategySymbolGroups = useMemo(() => {
     const map = new Map<string, { symbol: string; bull: number; bear: number; items: { strategy: string; label: string; side: "bull" | "bear"; row: StrategyRow }[] }>();
     for (const group of strategyGroups) {
@@ -1283,6 +1212,25 @@ export default function Home() {
           {row.signal_date ? `${row.flip_level != null ? " — " : ""}${row.signal_date}` : ""}
         </small>
       )}
+      {row.ctx_candle_type && (() => {
+        const lvl = (label: string, value?: number | null) => (value != null ? `${label} ${value}` : null);
+        const parts = [
+          row.ctx_adr_used_pct != null ? `ADR ${Math.round(row.ctx_adr_used_pct)}%` : null,
+          row.ctx_opposing_wick_pct != null ? `wick ${Math.round(row.ctx_opposing_wick_pct)}% ${row.ctx_wick_class}` : null,
+          row.ctx_candle_type.replace(/_/g, " "),
+          row.ctx_cont_streak ? `streak ${row.ctx_cont_streak > 0 ? "+" : ""}${row.ctx_cont_streak}${row.ctx_phase_change ? " (phase change?)" : ""}` : null,
+          row.ctx_prev_wick_status ? `wick50 ${row.ctx_prev_wick_status.replace(/_/g, " ")}` : null,
+          row.ctx_prev_eq_status ? `EQ ${row.ctx_prev_eq_status.replace(/_/g, " ")}` : null,
+        ].filter(Boolean);
+        const detail = [
+          lvl("ADR", row.ctx_adr), `next-day bias ${row.ctx_next_day_bias}`,
+          lvl("wick 50%", row.ctx_prev_wick_mid), lvl("prev EQ", row.ctx_prev_eq),
+          lvl("PDH", row.ctx_pdh), lvl("PDL", row.ctx_pdl), lvl("PWH", row.ctx_pwh), lvl("PWL", row.ctx_pwl),
+          lvl("PMH", row.ctx_pmh), lvl("PML", row.ctx_pml),
+          lvl("draw above", row.ctx_draw_above), lvl("draw below", row.ctx_draw_below),
+        ].filter(Boolean).join(" — ");
+        return <small title={detail}>{parts.join(" · ")}</small>;
+      })()}
       {row.track_mode && <span className="signal-track">{row.track_mode === "live" ? "LIVE" : "EOD"}</span>}
     </a>
   );
@@ -1346,36 +1294,6 @@ export default function Home() {
     setCommandPaletteQuery("");
   };
 
-  const renderTrackerRow = (setup: TrackedSetup) => {
-    const sentiment = sentimentOf(setup.direction);
-    const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(setup.symbol)}`;
-    return (
-      <div key={`${setup.symbol}|${setup.profile}|${setup.week}`} className={`tracker-row ${setup.state} sentiment-${sentiment}`}>
-        <strong>{setup.symbol}</strong>
-        <span className="profile">{setup.profile}</span>
-        <span className={`badge ${sentiment === "bull" ? "bullish" : sentiment === "bear" ? "bearish" : "neutral"}`}>{SENTIMENT_LABEL[sentiment]}</span>
-        <span className={`signal-state ${setup.state}`}>{setup.state}</span>
-        <span className="meta-line">
-          {setup.entry != null && (
-            <small>
-              E {setup.entry}{setup.sl != null ? ` — SL ${setup.sl}` : ""}{setup.target != null ? ` — T ${setup.target}` : ""}{setup.rr != null ? ` — R:R ${setup.rr}` : ""}
-            </small>
-          )}
-          {setup.track_mode && <span className={`signal-track ${setup.track_mode === "live" ? "live" : ""}`}>{setup.track_mode === "live" ? "LIVE" : "EOD"}</span>}
-        </span>
-        <a className="chart-link symbol-link" href={tvUrl} target="_blank" rel="noopener noreferrer" title="View chart on TradingView" aria-label={`View ${setup.symbol} chart on TradingView`}>
-          <ExternalLink size={12} />
-        </a>
-        <small className="week">
-          {setup.state === "triggered"
-            ? (setup.triggered_date ?? setup.events?.find((e) => e.state === "triggered")?.date ?? setup.last_seen)
-            : setup.last_seen}
-          <span className="week-of"> — wk {setup.week}</span>
-        </small>
-      </div>
-    );
-  };
-
   return (
     <main className="shell">
       <header className="topbar">
@@ -1401,7 +1319,6 @@ export default function Home() {
           <button type="button" className={`section-nav-item${activeSection === "scan" ? " active" : ""}`} onClick={() => scrollToSection("scan")}><Activity size={13} /> Scan</button>
           <button type="button" className={`section-nav-item${activeSection === "alerts" ? " active" : ""}`} onClick={() => scrollToSection("alerts")}><Zap size={13} /> Alerts</button>
           <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}><Settings2 size={13} /> Strategies</button>
-          <button type="button" className={`section-nav-item${activeSection === "tracker" ? " active" : ""}`} onClick={() => scrollToSection("tracker")}><Timer size={13} /> Tracker</button>
           <div className="section-nav-aside">
             <span className="section-nav-hint">Ctrl+K / ⌘K Command palette</span>
             <div className="inventory-horizontal" aria-label="Upcoming commodity events">
@@ -1518,21 +1435,22 @@ export default function Home() {
                   </button>
                 </div>
                 {ltf.last_error && <p className="date-note" title={ltf.last_error}>Last check had errors: {ltf.last_error.slice(0, 140)}</p>}
-                {ltf.setups.some((setup) => setup.state === "armed" || setup.state === "triggered") ? (
-                  <div className="tracker-list">
-                    {ltf.setups.filter((setup) => setup.state === "armed" || setup.state === "triggered").map((setup) => (
-                      <div key={setup.key} className={`signal-chip ${setup.direction > 0 ? "bull" : "bear"}`} title={setup.note}>
-                        {setup.direction > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                        <strong>{setup.symbol}</strong>
-                        <small>
-                          {setup.strategy.replace(/_/g, " ")} · {setup.state === "triggered"
-                            ? `TRIGGERED ${setup.entry ?? ""} · SL ${setup.sl ?? ""}${setup.target != null ? ` · T ${setup.target}` : ""}`
-                            : `armed zone ${setup.zone_low}–${setup.zone_high} · until ${setup.valid_until}`}
-                        </small>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
+                {ltfGroups.live.length > 0 && (
+                  <div className="tracker-list">{ltfGroups.live.map(ltfChip)}</div>
+                )}
+                {ltfGroups.armed.length > 0 && (
+                  <details className="sync-note">
+                    <summary><strong>{ltfGroups.armed.length}</strong> armed · awaiting {ltf.timeframe} CISD</summary>
+                    <div className="tracker-list">{ltfGroups.armed.map(ltfChip)}</div>
+                  </details>
+                )}
+                {ltfGroups.earlier.length > 0 && (
+                  <details className="sync-note">
+                    <summary><strong>{ltfGroups.earlier.length}</strong> earlier triggers (window ended)</summary>
+                    <div className="tracker-list">{ltfGroups.earlier.map(ltfChip)}</div>
+                  </details>
+                )}
+                {ltf.setups.length === 0 && (
                   <p className="date-note">No armed setups yet — they are added after each market's daily close.</p>
                 )}
               </section>
@@ -1739,88 +1657,6 @@ export default function Home() {
           )
         )}
 </details>
-      <section className="panel tracker-panel" id="tracker" ref={(el) => { sectionRefs.current.tracker = el; }}>
-        <p className="kicker">Cross-scan setup tracker</p>
-        <h3>
-          Weekly-profile setups
-          <span className="tracker-info" role="button" tabIndex={0} aria-label="How to read the tracker" onClick={() => setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTooltip(activeTooltip === 'tracker' ? null : 'tracker'); } }}>
-            <Info size={13} />
-            <span className={`info-tooltip${activeTooltip === 'tracker' ? " open" : ""}`}>
-              Each row is a weekly-profile setup followed across scans.{"\n"}
-              State: armed = forming (no trigger yet) — triggered = signal confirmed (in the trade) — closed_sl / closed_target = stop or target hit — invalidated = thesis failed — expired = week ended without triggering.{"\n"}
-              E = planned entry (— confirmation close) — SL = invalidation extreme + buffer — T = opposite liquidity pool — R:R = target — risk.{"\n"}
-              LIVE = trackable intraday — EOD = NSE, confirm only after close.
-            </span>
-          </span>
-        </h3>
-        <div className="tracker-head-actions">
-          <label className="tracker-toggle" title="Track weekly-profile setups across scans (persisted)">
-            <input
-              type="checkbox"
-              checked={crossScanTrackerEnabled}
-              onChange={toggleCrossScanTracker}
-            />
-            Cross-scan tracker
-          </label>
-          <small className="auto-meta">
-            {trackerSetups.filter((s) => s.state === "armed" || s.state === "triggered").length} active
-            {" — "}
-            {trackerSetups.length} tracked
-          </small>
-          <div className="tracker-groupby" role="group" aria-label="Group tracker results by">
-            <span className="filter-label">Group</span>
-            <div className="filters">
-              {(["none", "symbol", "week", "month"] as const).map((option) => (
-                <button key={option} type="button" className={`${trackerGroupBy === option ? "active" : ""} button-secondary`} onClick={() => setTrackerGroupBy(option)} disabled={!crossScanTrackerEnabled}>
-                  {option === "none" ? "Off" : option === "symbol" ? "Symbol" : option === "week" ? "Week" : "Month"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button type="button" className="test-button button-secondary" onClick={() => { const next = !trackerWatchlistOnly; setTrackerWatchlistOnly(next); loadTracker(next ? selected : []); }} disabled={!crossScanTrackerEnabled}>
-            {trackerWatchlistOnly ? "Watchlist only" : "All setups"}
-          </button>
-        </div>
-        {!crossScanTrackerEnabled && (
-          <div className="empty small-empty"><SearchX size={14} /> Cross-scan tracker is off — enable the toggle to follow weekly-profile setups across scans.</div>
-        )}
-        {crossScanTrackerEnabled && (
-          <>
-            {trackerAlerts.length > 0 && (
-              <div className="tracker-alerts">
-                {trackerAlerts.map((a, i) => (
-                  <span key={i} className={`alert ${a.kind}`}>
-                    {a.symbol} {a.kind.replaceAll("_", " ")}
-                    {a.direction ? ` (${a.direction > 0 ? "long" : "short"})` : ""}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="tracker-list">
-              {trackerSetups.length === 0 ? (
-                <div className="empty small-empty"><SearchX size={14} /> No tracked setups yet — run a weekly-profile scan.</div>
-              ) : trackerGroupBy === "none" ? (
-                trackerSetups.map(renderTrackerRow)
-              ) : (
-                trackerGroups!.map((group) => (
-                  <div key={group.key} className="tracker-group">
-                    <div className="tracker-group-head">
-                      <span className="tracker-group-label">{group.label}</span>
-                      <span className="tracker-group-count">{group.items.length}</span>
-                      {group.bull > 0 && <span className="badge bullish">{group.bull} BULL</span>}
-                      {group.bear > 0 && <span className="badge bearish">{group.bear} BEAR</span>}
-                    </div>
-                    <div className="tracker-group-items">
-                      {group.items.map(renderTrackerRow)}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-        </section>
-
         {chart && (
           <TradingViewChartModal
             key={chart.symbol}

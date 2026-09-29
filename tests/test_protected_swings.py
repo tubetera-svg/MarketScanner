@@ -509,7 +509,32 @@ def test_points_of_interest_prioritizes_fvg_from_protected_swing():
         (116, 122, 114, 120),
     ])
     active = SimpleNamespace(confirm_idx=3, protected_level=100.0, direction=1)
-    assert all_strategy._select_point_of_interest(frame, active) == (108.0, "fvg")
+    # First gap from the swing is 108-111; price reaches it at its top edge.
+    assert all_strategy._select_point_of_interest(frame, active) == (111.0, "fvg")
+
+
+def test_points_of_interest_skips_fvg_below_atr_threshold():
+    # 20 bars of ~4-point ranges (ATR ~4), then a 0.2-wide bullish gap.
+    rows = [(100 + i, 102 + i, 98 + i, 101 + i) for i in range(20)]
+    rows += [(120, 121.0, 118, 120.5), (120.5, 123, 120, 122.8), (122.8, 126, 121.2, 125)]
+    frame = _df(rows)
+    active = SimpleNamespace(confirm_idx=19, protected_level=110.0, direction=1)
+    poi = all_strategy._select_point_of_interest(frame, active)
+    assert poi is None or poi[1] != "fvg"
+
+
+def test_points_of_interest_falls_back_to_cisd():
+    frame = _df([
+        (100, 102, 99, 101),
+        (101, 103, 100, 102),
+        (102, 103, 100.5, 101),  # down series starts: CISD = 102
+        (101, 102, 99.5, 100),
+        (100, 103, 99.8, 102.5),  # closes over 102 -> CISD confirmed
+        (102.5, 104, 99.4, 103.5),
+        (103.5, 105, 102, 104.5),
+    ])
+    active = SimpleNamespace(confirm_idx=0, protected_level=90.0, direction=1)
+    assert all_strategy._select_point_of_interest(frame, active) == (102.0, "CISD")
 
 
 def test_points_of_interest_skips_fvg_closed_through():

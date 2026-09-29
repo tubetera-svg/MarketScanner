@@ -4,8 +4,8 @@ import Navigation from "../../components/Navigation";
 
 // Settings: one place to enable/disable strategies and automations, tune
 // intervals / look-back days, and show/hide strategies and pages in the UI.
-// Automation and UI settings are persisted by PUT /api/settings; strategy and
-// tracker toggles use their existing endpoints and apply immediately.
+// Automation and UI settings are persisted by PUT /api/settings; strategy
+// toggles use their existing endpoint and apply immediately.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -17,7 +17,7 @@ type Automation = {
   silver_bullet_auto: { enabled: boolean };
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
   data_auto_sync: { enabled: boolean; lookback_days: number; interval_hours: number };
-  ltf_confirmation: { enabled: boolean };
+  ltf_confirmation: { enabled: boolean; interval_minutes: number };
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
 type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
@@ -33,7 +33,6 @@ const CUTOFF_ROWS: { key: keyof DataCutoffs; title: string; hint: string }[] = [
 type Payload = {
   settings: Settings;
   strategies: Strategy[];
-  cross_scan_tracker_enabled: boolean;
   hideable_pages: string[];
   strategy_choices: Record<keyof StrategyParams, string[]>;
   status: {
@@ -157,17 +156,6 @@ export default function SettingsPage() {
     }
   };
 
-  const setTracker = async (enabled: boolean) => {
-    try {
-      const response = await fetch(`${API}/api/cross-scan-tracker`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await load();
-      setMessage("Saved & applied");
-    } catch (error) {
-      setMessage(`Tracker update failed: ${error instanceof Error ? error.message : error}`);
-    }
-  };
-
   const toggleHidden = (field: "hidden_strategies" | "hidden_pages", key: string, hide: boolean) => {
     if (!data) return;
     const current = data.settings.ui[field];
@@ -214,10 +202,8 @@ export default function SettingsPage() {
               <NumberField value={auto.data_auto_sync.lookback_days} min={1} max={120} unit="days" onCommit={(v) => patchAuto("data_auto_sync", { lookback_days: v })} />
               <Switch label="Market-data auto-sync" on={auto.data_auto_sync.enabled} onChange={(v) => patchAuto("data_auto_sync", { enabled: v })} />
             </Row>
-            <Row title="Cross-scan setup tracker" hint="Tracks setups that appear across strategies">
-              <Switch label="Cross-scan tracker" on={data.cross_scan_tracker_enabled} onChange={setTracker} />
-            </Row>
             <Row title="Intraday confirmation watcher" hint={`Arms daily setups after each market's close, then waits for an intraday CISD in the next session — ${stateNote(status.ltf_confirmation.running, status.ltf_confirmation.last_check_at, status.ltf_confirmation.last_error)}`}>
+              <NumberField value={auto.ltf_confirmation.interval_minutes} min={1} max={60} unit="min" onCommit={(v) => patchAuto("ltf_confirmation", { interval_minutes: v })} />
               <Switch label="Intraday confirmation watcher" on={auto.ltf_confirmation.enabled} onChange={(v) => patchAuto("ltf_confirmation", { enabled: v })} />
             </Row>
           </section>

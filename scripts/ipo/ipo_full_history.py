@@ -10,9 +10,9 @@ cached on disk (data/bhavcopy_cache/YYYY-MM-DD.pkl). In the same pass we:
 
 Run per batch (resumable; cached dates are never re-downloaded):
 
-  python scripts/ipo_full_history.py --months 2023-09            # one month
-  python scripts/ipo_full_history.py --months 2023-09 2023-10    # several
-  python scripts/ipo_full_history.py --months all                # whole window
+  python scripts/ipo/ipo_full_history.py --months 2023-09            # one month
+  python scripts/ipo/ipo_full_history.py --months 2023-09 2023-10    # several
+  python scripts/ipo/ipo_full_history.py --months all                # whole window
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 

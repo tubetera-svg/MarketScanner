@@ -43,6 +43,9 @@ data/nse_equity_master.csv
 data/nse_etf_list.csv
 data/*.log
 
+# Runtime state written by the scanner/API (caches, armed setups, trackers)
+data/state/
+
 # OS / editor
 .DS_Store
 Thumbs.db

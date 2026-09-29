@@ -42,7 +42,6 @@ paper-trading, parameter optimization / walk-forward.
 | Data ingestion | `market_data.service.ensure_backdate_data` (`:404`) + `get_ohlc` (`:139`) | Ensure range present before replay |
 | Trading calendar | `market_data.service.expected_trading_dates` (`service.py:105`) + `NSE_HOLIDAYS` | Build the replay date axis (no weekends/holidays) |
 | API bridge | `api/strategy_bridge.run_scan` (`:153`), `api/main.py` | New `POST /api/backtest` follows the same pattern |
-| Tracker close logic | `src/weekly_profile_tracker.py:50` `_evaluate_close` | Reuse for SL/target hit detection |
 | Frontend | Next.js + React 19 (`frontend/package.json`) | New `/backtest` page; chart lib to be added |
 
 ---
@@ -193,7 +192,6 @@ signal becomes a trade. Two tiers:
   (avoids using the signal bar's close that the evaluator also used → no look-ahead).
 - Each subsequent day: if long and `low <= sl` → exit at `sl` (reason `stop`);
   if `high >= target` → exit at `target` (reason `target`); mirror for short.
-  Reuse `weekly_profile_tracker._evaluate_close` (`src/weekly_profile_tracker.py:50`).
 - Position size = `risk_per_trade_pct% * capital / |entry - sl|`.
 
 **Tier B — Core strategies (no SL/target). OPEN — needs your call before coding.**
@@ -306,8 +304,7 @@ on a synthetic buy&hold, and reported alongside an optional benchmark curve.
 - In-memory load via `query_ohlc_multi`; per-date `daily_map` slicing.
 - Call `registry[name].runner(..., daily_map=daily_map)` per date (reuse signature at
   `all_strategy.py:1663`/runners). Assert no live fetch occurs.
-- `ExecutionModel` with D+1-open entry + SL/target hit (reuse
-  `weekly_profile_tracker._evaluate_close`).
+- `ExecutionModel` with D+1-open entry + SL/target hit.
 
 **Phase 3 — Metrics (`src/backtest/metrics.py`)**
 - Pure functions for Sharpe/Sortino/MaxDD/win rate/profit factor/CAGR; table test

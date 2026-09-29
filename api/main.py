@@ -104,8 +104,8 @@ class WatchlistRenameRequest(BaseModel):
 
 WATCHLIST_PATH = ROOT / "config" / "watchlist.txt"
 WATCHLIST_CATEGORIES_PATH = ROOT / "config" / "watchlist_categories.json"
-OHLC_CACHE_PATH = ROOT / "config" / "ohlc_cache.json"
-TRACKER_STATE_CACHE_PATH = ROOT / "config" / "tracker_state_cache.json"
+OHLC_CACHE_PATH = ROOT / "data" / "state" / "ohlc_cache.json"
+TRACKER_STATE_CACHE_PATH = ROOT / "data" / "state" / "tracker_state_cache.json"
 def nse_fno_members() -> set[str] | None:
     """NSE F&O base tickers from the local list (config/nse_fno_cache.json).
 
@@ -816,7 +816,7 @@ class LtfConfirmationWatcher:
     bhavcopy; forex/commodities after the NY 17:00 rollover) the enabled
     LTF-capable strategies run over that market's watchlist symbols for the
     session, and every row carrying an ``ltf_*`` zone is stored as an armed
-    setup (config/ltf_setups.json via ``ltf_confirmation.LtfSetupStore``).
+    setup (data/state/ltf_setups.json via ``ltf_confirmation.LtfSetupStore``).
 
     Confirmation: each poll fetches intraday bars from TradingView for armed
     symbols only and replays the completed bars through
@@ -826,10 +826,9 @@ class LtfConfirmationWatcher:
     invalidated, expired) are kept as alerts for the UI.
     """
 
-    POLL_SECONDS = 120
-
     def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
+        self.interval_minutes = 2
         self.last_check_at: str | None = None
         self.last_error: str | None = None
         self.last_arm: dict[str, str] = {}
@@ -842,8 +841,10 @@ class LtfConfirmationWatcher:
     def _timeframe() -> str:
         return app_settings.load_settings()["strategy"]["ltf_timeframe"]
 
-    def start(self) -> dict[str, Any]:
+    def start(self, interval_minutes: int | None = None) -> dict[str, Any]:
         self.stop()
+        if interval_minutes is not None:
+            self.interval_minutes = interval_minutes
         self.task = asyncio.create_task(self._loop())
         return self.status()
 
@@ -856,10 +857,15 @@ class LtfConfirmationWatcher:
     def status(self) -> dict[str, Any]:
         from ltf_confirmation import LtfSetupStore
 
-        setups = sorted(LtfSetupStore().load().values(), key=lambda s: s.updated_at or "", reverse=True)
+        # Only live states go to the UI; invalidated/expired stay in the store.
+        setups = sorted(
+            (s for s in LtfSetupStore().load().values() if s.state in ("armed", "triggered")),
+            key=lambda s: s.updated_at or "", reverse=True,
+        )
         return {
             "running": self.task is not None and not self.task.done(),
             "timeframe": self._timeframe(),
+            "interval_minutes": self.interval_minutes,
             "last_check_at": self.last_check_at,
             "last_error": self.last_error,
             "last_arm": dict(self.last_arm),
@@ -876,7 +882,7 @@ class LtfConfirmationWatcher:
             except Exception as exc:  # keep the watcher alive across one bad poll
                 logging.getLogger(__name__).exception("LTF confirmation poll failed")
                 self.last_error = str(exc)
-            await asyncio.sleep(self.POLL_SECONDS)
+            await asyncio.sleep(self.interval_minutes * 60)
 
     async def check(self, force_arm: bool = False) -> dict[str, Any]:
         """Arm any newly final sessions, then replay intraday bars for armed setups."""
@@ -1217,84 +1223,6 @@ def _run_backtest(request: BacktestRequest) -> dict[str, Any]:
     }
 
 
-@app.get("/api/weekly-profile-tracker")
-def weekly_profile_tracker(
-    symbols: Optional[str] = None,
-    all_: Optional[str] = None,
-) -> dict[str, Any]:
-    """Return tracked weekly-profile setups (cross-scan).
-
-    Defaults to the last ``DEFAULT_RETENTION_DAYS`` days of setups. Pass
-    ``?all=true`` to return the full unbounded store (mainly for debugging).
-
-    Pass ``symbols`` (comma-separated) to restrict to a watchlist subset —
-    used by the frontend to show only the symbols a strategy scan ran over.
-    """
-    try:
-        from weekly_profile_tracker import (
-            ACTIVE_STATES,
-            DEFAULT_RETENTION_DAYS,
-            ProfileTrackerStore,
-        )
-
-        store = ProfileTrackerStore()
-        if all_ and str(all_).strip().lower() in {"1", "true", "yes"}:
-            setups = store.all_setups()
-        else:
-            setups = store.recent_setups(DEFAULT_RETENTION_DAYS)
-            # Automatic maintenance: drop older records so the JSON store does not
-            # grow unboundedly.
-            removed = store.prune_before(days=DEFAULT_RETENTION_DAYS)
-
-        if symbols:
-            wanted = {token.strip().upper() for token in symbols.split(",") if token.strip()}
-            setups = [s for s in setups if str(s.get("symbol", "")).upper() in wanted]
-        active = [s for s in setups if s.get("state") in ACTIVE_STATES]
-        body: dict[str, Any] = {
-            "active": active,
-            "setups": setups,
-            "active_count": len(active),
-        }
-        if all_ and str(all_).strip().lower() in {"1", "true", "yes"}:
-            body["source"] = "all"
-        else:
-            body["source"] = "recent"
-            body["pruned"] = removed if not symbols else None
-        return body
-    except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/api/weekly-profile-tracker/repair")
-def repair_weekly_profile_tracker() -> dict[str, Any]:
-    """Recompute targets/R:R and revert false closed_target flags written by a
-    previous buggy build. Safe to call repeatedly (idempotent)."""
-    try:
-        from weekly_profile_tracker import ProfileTrackerStore
-
-        store = ProfileTrackerStore()
-        return {"fixed": store.repair_store()}
-    except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-class CrossScanTrackerUpdate(BaseModel):
-    enabled: bool
-
-
-@app.get("/api/cross-scan-tracker")
-def get_cross_scan_tracker() -> dict[str, Any]:
-    """Return whether the cross-scan setup tracker is enabled."""
-    return strategy_bridge.get_tracker_settings()
-
-
-@app.put("/api/cross-scan-tracker")
-def update_cross_scan_tracker(request: CrossScanTrackerUpdate) -> dict[str, Any]:
-    """Toggle the cross-scan setup tracker on/off (persisted)."""
-    settings = strategy_bridge.set_cross_scan_tracker(request.enabled)
-    return settings
-
-
 def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
     """Start/stop/retune each background automation to match ``settings``."""
     auto = settings["automation"]
@@ -1337,8 +1265,8 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
 
     ltf = auto["ltf_confirmation"]
     ltf_running = ltf_watcher.task is not None and not ltf_watcher.task.done()
-    if ltf["enabled"] and not ltf_running:
-        ltf_watcher.start()
+    if ltf["enabled"] and (not ltf_running or ltf_watcher.interval_minutes != ltf["interval_minutes"]):
+        ltf_watcher.start(ltf["interval_minutes"])
     elif not ltf["enabled"] and ltf_running:
         ltf_watcher.stop()
 
@@ -1349,7 +1277,6 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "settings": settings,
         "strategies": strategies,
         "weekly_profiles_master_enabled": master,
-        **strategy_bridge.get_tracker_settings(),
         "status": {
             "scan_scheduler": scheduler.status(),
             "silver_bullet": {"auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done()},

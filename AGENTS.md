@@ -7,18 +7,18 @@ Senior developer maintaining a multi-strategy ICT-style market scanner. This fil
 |---|---|---|
 | `src/all_strategy.py` | Strategy defs, `strategy_registry()`, NSE bhavcopy downloader | ~2.7k lines — **grep, never read whole** |
 | `src/ict_scanner.py` | Live scan loop, sessions, `is_daily_bar_ready` | ~2.4k lines — grep |
-| `src/{silver_bullet,propulsion_blocks,protected_swings,weekly_profile_tracker}.py` | Individual strategy modules | |
+| `src/{silver_bullet,propulsion_blocks,protected_swings}.py` | Individual strategy modules | |
 | `src/backtest/` | Backtest engine + metrics | Spec: `docs/BACKTEST_ENGINE_SPEC.md` |
 | `api/main.py` | FastAPI app (`uvicorn api.main:app`) | `api/strategy_bridge.py` = UI ↔ strategy flags |
 | `market_data/` | SQLite OHLC layer (`database.py`, `service.py`, `routes.py`, `sources/`), IPO (`ipo.py`, `equity_master.py`, `liquidity_screener.py`) | DB: `data/market_data.db` |
 | `frontend/app/` | Next.js pages: `page.tsx` (scanner, ~1.7k lines), `watchlist/`, `ipo/`, `backtest/` | Shared: `frontend/components/` |
-| `config/` | Watchlist, strategy flags/profiles, symbol aliases | Some files are runtime-written caches |
+| `config/` | Watchlist, strategy flags/profiles, symbol aliases, app settings | Edited by users/UI; runtime state lives in `data/state/` (git-ignored) |
 | `main.py` | CLI: run strategies → CSVs in `strategy_outputs/` | |
-| `scripts/` | Launchers (`start/stop_market_scanner.bat`), IPO CLIs | `scripts/debug/` = ad-hoc one-off checks, not production |
+| `scripts/` | Launchers (`start/stop_market_scanner.bat`), `ipo/` (IPO CLIs + batch) | `scripts/debug/` = ad-hoc one-off checks, not production |
 | `tests/` | pytest suite | |
 | `docs/` | Specs | `RUNBOOK.md` (root) = setup + dated changelog |
 
-**Do not read/scan** unless the task requires it: `data/` (116 MB DB, bhavcopy cache, logs), `backups/`, `strategy_outputs/`, `.venv/`, `frontend/node_modules/`, `frontend/.next/`, `frontend/package-lock.json`, `__pycache__/`, `config/*cache*.json`, `config/watchlist*.{txt,json}` (1k+ lines — grep for a symbol). In `RUNBOOK.md`, read only the relevant section; the "Current Context" changelog is long history — grep it by keyword/date.
+**Do not read/scan** unless the task requires it: `data/` (116 MB DB, bhavcopy cache, logs, `state/` caches), `backups/`, `strategy_outputs/`, `.venv/`, `frontend/node_modules/`, `frontend/.next/`, `frontend/package-lock.json`, `__pycache__/`, `config/watchlist*.{txt,json}` (1k+ lines — grep for a symbol). In `RUNBOOK.md`, read only the relevant section; the "Current Context" changelog is long history — grep it by keyword/date.
 
 **Commands** (Windows, PowerShell; use `.venv\Scripts\python.exe` if `python` is not the venv):
 - Targeted test: `python -m pytest tests/test_<area>.py -q`

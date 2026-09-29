@@ -4,8 +4,8 @@
 Read-only: nothing is removed. Delete IPOs from the IPO page ("Review list").
 
 Usage:
-    python scripts/screen_ipo_liquidity.py [--lookback-days N] [--symbol SYMBOL]
-    python scripts/screen_ipo_liquidity.py --help
+    python scripts/ipo/screen_ipo_liquidity.py [--lookback-days N] [--symbol SYMBOL]
+    python scripts/ipo/screen_ipo_liquidity.py --help
 
 Options:
     --lookback-days N   Lookback window in days (default: 60 from config)
@@ -21,7 +21,7 @@ import logging
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 

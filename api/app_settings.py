@@ -1,7 +1,7 @@
 """Persisted app-level settings (automation, intervals, look-back days, show/hide).
 
-Stored in config/app_settings.json. Strategy on/off flags and the cross-scan
-tracker keep their own files (see strategy_bridge); this file holds the rest,
+Stored in config/app_settings.json. Strategy on/off flags keep their own file
+(see strategy_bridge); this file holds the rest,
 including the ``strategy`` parameter block (LTF confirmation timeframe,
 propulsion mean-threshold definition) that src/all_strategy.py reads.
 Defaults preserve pre-existing behavior: only the Silver Bullet auto-schedule
@@ -33,7 +33,7 @@ DEFAULTS: dict[str, Any] = {
         "silver_bullet_auto": {"enabled": True},
         "ipo_scanner": {"enabled": False, "interval_minutes": 60, "lookback_days": 7},
         "data_auto_sync": {"enabled": False, "lookback_days": 14, "interval_hours": 0.25},
-        "ltf_confirmation": {"enabled": False},
+        "ltf_confirmation": {"enabled": False, "interval_minutes": 2},
     },
     "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
     # Daily-bar "final" cut-off per market, 'HH:MM' in the market's fixed
@@ -57,6 +57,7 @@ _INT_LIMITS = {
     ("ipo_scanner", "interval_minutes"): (1, 1440),
     ("ipo_scanner", "lookback_days"): (1, 90),
     ("data_auto_sync", "lookback_days"): (1, 120),
+    ("ltf_confirmation", "interval_minutes"): (1, 60),
 }
 
 # (section, key) -> (min, max) for float fields
