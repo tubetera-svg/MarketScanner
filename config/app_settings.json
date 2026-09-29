@@ -2,7 +2,7 @@
   "automation": {
     "data_auto_sync": {
       "enabled": true,
-      "interval_hours": 4.0,
+      "interval_hours": 2.0,
       "lookback_days": 1
     },
     "ipo_scanner": {
@@ -14,10 +14,6 @@
       "enabled": false,
       "interval_minutes": 45
     },
-    "scan_scheduler": {
-      "enabled": false,
-      "interval_minutes": 15
-    },
     "silver_bullet_auto": {
       "enabled": true
     }
@@ -27,6 +23,9 @@
     "crypto": "00:00",
     "gift_nifty": "03:00",
     "nse": "17:00"
+  },
+  "news": {
+    "currencies": []
   },
   "strategy": {
     "ltf_timeframe": "1h",

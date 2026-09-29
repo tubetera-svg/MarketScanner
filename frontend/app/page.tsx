@@ -4,36 +4,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import Navigation from "../components/Navigation";
-import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string; index?: string; f_and_o?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
-type Setup = {
-  symbol: string;
-  session: string;
-  state: string;
-  tier: string;
-  price: number;
-  poi_price: number | null;
-  poi_type: string | null;
-  entry: number | null;
-  stop_loss: number | null;
-  tp1: number | null;
-  tp2: number | null;
-  risk_reward: number | null;
-  liquidity_swept: string | null;
-  trade_confirmed: boolean;
-};
-type DateNote = { requested: string; resolved: string; reason: string | null };
-type ScheduleStatus = {
-  running: boolean;
-  scanning: boolean;
-  interval_minutes: number | null;
-  next_run_at: string | null;
-  last_run_at: string | null;
-  last_error: string | null;
-  run_count: number;
-};
 type AutoSyncMarket = { symbols: number; last_synced_session: string | null; latest_final_session: string | null; attempts: number; last_result: string | null };
 type AutoSyncStatus = {
   running: boolean;
@@ -256,27 +230,6 @@ const biasBadge = (bias: string | null | undefined, label: string) => {
   return <span className="bias-badge bias-neutral">{label}</span>;
 };
 
-const intervalOptions = [
-  { value: 1, label: "Every 1 minute" },
-  { value: 3, label: "Every 3 minutes" },
-  { value: 5, label: "Every 5 minutes" },
-  { value: 15, label: "Every 15 minutes" },
-  { value: 30, label: "Every 30 minutes" },
-  { value: 60, label: "Every 1 hour" },
-  { value: 120, label: "Every 2 hours" },
-  { value: 240, label: "Every 4 hours" },
-  { value: 720, label: "Every 12 hours" },
-  { value: 1440, label: "Daily (24h)" },
-];
-
-const formatCountdown = (totalSeconds: number) => {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
-};
-
 // Commodity inventory reports (EIA weekly releases) shown as a "news tile" with
 // the next release date/time converted to IST and a live countdown. Times are
 // the official ET release windows; DST is handled via the America/New_York
@@ -284,6 +237,7 @@ const formatCountdown = (totalSeconds: number) => {
 const INVENTORY_REPORTS: {
   key: string;
   label: string;
+  short: string; // compact chip label
   detail: string;
   weekdayET: number; // 0=Sun..6=Sat
   hourET: number;
@@ -293,6 +247,7 @@ const INVENTORY_REPORTS: {
   {
     key: "crude",
     label: "Crude Oil Inventories",
+    short: "Crude",
     detail: "EIA Petroleum Status Report",
     weekdayET: 3, // Wednesday
     hourET: 10,
@@ -302,6 +257,7 @@ const INVENTORY_REPORTS: {
   {
     key: "natgas",
     label: "Natural Gas Storage",
+    short: "NatGas",
     detail: "EIA Weekly Gas Storage Report",
     weekdayET: 4, // Thursday
     hourET: 10,
@@ -309,6 +265,11 @@ const INVENTORY_REPORTS: {
     url: "https://in.investing.com/economic-calendar/natural-gas-storage-386",
   },
 ];
+
+// ForexFactory high-impact news (GET /api/news/high-impact).
+type NewsEvent = { title: string; currency: string; time_utc: string; forecast: string; previous: string };
+type NewsFeed = { events: NewsEvent[]; currencies: string[]; fetched_at: string | null; stale: boolean; error: string | null };
+const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
 
 // Milliseconds that `timeZone` is ahead of UTC for a given instant (accounts for DST).
 const tzOffsetMs = (instant: Date, timeZone: string): number => {
@@ -341,6 +302,15 @@ const nextReleaseInstantET = (now: Date, weekdayET: number, hourET: number, minu
   }
   return new Date(now.getTime() + 7 * 86400000);
 };
+
+// Compact chip time: countdown within 24h ("in 3h 12m"), else IST "Wed 20:00".
+const formatChipTime = (instant: Date, now: number): string => {
+  const minutes = Math.max(0, Math.round((instant.getTime() - now) / 60000));
+  if (minutes < 24 * 60) return minutes >= 60 ? `in ${Math.floor(minutes / 60)}h ${minutes % 60}m` : `in ${minutes}m`;
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(instant);
+};
+const formatISTParts = (instant: Date, opts: Intl.DateTimeFormatOptions): string =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour12: false, ...opts }).format(instant);
 
 const formatIST = (instant: Date): string =>
   new Intl.DateTimeFormat("en-GB", {
@@ -392,8 +362,6 @@ const playAlertSound = (urgent: boolean) => {
 export default function Home() {
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [setups, setSetups] = useState<Setup[]>([]);
-  const [scannedAt, setScannedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading watchlist...");
   const [watchScopes, setWatchScopes] = useState<WatchScope[]>(["Commodities"]);
@@ -403,7 +371,6 @@ export default function Home() {
   const [showAddSymbol, setShowAddSymbol] = useState(false);
   const [syncStartDate, setSyncStartDate] = useState(() => localDate(-13));
   const [anchorDate, setAnchorDate] = useState(() => localDate());
-  const [dateNote, setDateNote] = useState<DateNote | null>(null);
   const [syncSummary, setSyncSummary] = useState<{
     anchor_date: string;
     start_date?: string | null;
@@ -417,7 +384,6 @@ export default function Home() {
     incomplete: number;
   } | null>(null);
   const [autoSync, setAutoSync] = useState<AutoSyncStatus | null>(null);
-  const [schedule, setSchedule] = useState<ScheduleStatus | null>(null);
     const [silverBullet, setSilverBullet] = useState<SilverBulletStatus | null>(null);
   const [silverBulletLoading, setSilverBulletLoading] = useState(false);
   const [ltf, setLtf] = useState<LtfStatus | null>(null);
@@ -425,9 +391,6 @@ export default function Home() {
   const announcedLtfRef = useRef<Set<string>>(new Set());
   const ltfSeededRef = useRef(false);
     const announcedSilverBulletRef = useRef<Set<string>>(new Set());
-  const [intervalMinutes, setIntervalMinutes] = useState("15");
-  const [countdown, setCountdown] = useState(0);
-  const announcedScanRef = useRef<string | null>(null);
   const [markets, setMarkets] = useState<{ nse: boolean; forex_commodities: boolean } | null>(null);
   const [strategies, setStrategies] = useState<StrategyFlag[]>([]);
   const [weeklyMasterOn, setWeeklyMasterOn] = useState(true);
@@ -484,6 +447,9 @@ export default function Home() {
   }, []);
 
   const [inventoryNow, setInventoryNow] = useState(() => Date.now());
+  const [newsFeed, setNewsFeed] = useState<NewsFeed | null>(null);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsOpen, setNewsOpen] = useState<{ top: number; right: number } | null>(null);
   const [chart, setChart] = useState<ChartTarget | null>(null);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -537,15 +503,6 @@ export default function Home() {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
     event.preventDefault();
     setChart({ symbol: row.symbol, sourceLink: row.tradingview_link });
-  };
-
-  const loadResults = async () => {
-    const response = await fetch(`${API}/api/results`, { cache: "no-store" });
-    if (!response.ok) throw new Error("Could not load scanner results");
-    const data = await response.json();
-    setSetups(data.results ?? []);
-    setScannedAt(data.scanned_at ?? null);
-    if (data.requested_date && data.resolved_date) setDateNote({ requested: data.requested_date, resolved: data.resolved_date, reason: data.resolution_reason });
   };
 
   const syncData = async () => {
@@ -631,40 +588,6 @@ export default function Home() {
     }
   };
 
-  const refreshSchedule = async () => {
-    const response = await fetch(`${API}/api/schedule`, { cache: "no-store" });
-    if (!response.ok) throw new Error("Could not load schedule");
-    setSchedule(await response.json());
-  };
-
-  const startSchedule = async (minutes: number) => {
-    try {
-      const response = await fetch(`${API}/api/schedule/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval_minutes: minutes, symbols: selected }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Could not start auto-scan");
-      setSchedule(data);
-      setMessage(`Auto-scan on — ${intervalOptions.find((option) => option.value === data.interval_minutes)?.label.toLowerCase() ?? `${data.interval_minutes} min`}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not start auto-scan");
-    }
-  };
-
-  const stopSchedule = async () => {
-    try {
-      const response = await fetch(`${API}/api/schedule/stop`, { method: "POST" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Could not stop auto-scan");
-      setSchedule(data);
-      setMessage("Auto-scan stopped");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not stop auto-scan");
-    }
-  };
-
   const startSilverBullet = async () => {
     if (silverBulletLoading) return;
     setSilverBulletLoading(true);
@@ -722,11 +645,6 @@ export default function Home() {
     } finally {
       setSilverBulletLoading(false);
     }
-  };
-
-  const changeInterval = (value: string) => {
-    setIntervalMinutes(value);
-    if (schedule?.running) startSchedule(Number(value));
   };
 
   const applyStrategies = (data: StrategiesPayload) => {
@@ -912,27 +830,69 @@ export default function Home() {
     return fresh;
   };
 
+  // ForexFactory high-impact ("red") news. The API caches the feed once per IST
+  // day; the refresh button forces a live fetch.
+  const loadHighImpactNews = (refresh = false) => {
+    setNewsLoading(true);
+    fetch(`${API}/api/news/high-impact${refresh ? "?refresh=true" : ""}`)
+      .then((response) => response.json())
+      .then((data: NewsFeed) => setNewsFeed(data))
+      .catch(() => setNewsFeed((current) => current ? { ...current, stale: true, error: "API unreachable" } : null))
+      .finally(() => setNewsLoading(false));
+  };
+  useEffect(() => { loadHighImpactNews(); }, []);
+
+  const upcomingNews = (newsFeed?.events ?? [])
+    .map((event) => ({ ...event, instant: new Date(event.time_utc) }))
+    .filter((event) => event.instant.getTime() > inventoryNow);
+  // Same currency + same release time = one chip ("AUD CPI m/m +2").
+  const nextNewsGroup = upcomingNews.length
+    ? upcomingNews.filter((e) => e.time_utc === upcomingNews[0].time_utc && e.currency === upcomingNews[0].currency)
+    : [];
+  const nextNews = nextNewsGroup.length ? {
+    label: `${nextNewsGroup[0].currency} ${nextNewsGroup[0].title}${nextNewsGroup.length > 1 ? ` +${nextNewsGroup.length - 1}` : ""}`,
+    time: formatChipTime(nextNewsGroup[0].instant, inventoryNow),
+    soon: nextNewsGroup[0].instant.getTime() - inventoryNow <= 24 * 3600 * 1000,
+    tooltip: nextNewsGroup.map((e) => `${formatIST(e.instant)}  ${e.currency}  ${e.title}`).join("\n"),
+  } : null;
+  const newsByDay = upcomingNews.reduce<{ day: string; events: typeof upcomingNews }[]>((days, event) => {
+    const day = formatISTParts(event.instant, { weekday: "short", day: "2-digit", month: "short" });
+    const last = days[days.length - 1];
+    if (last && last.day === day) last.events.push(event); else days.push({ day, events: [event] });
+    return days;
+  }, []);
+
+  // Close the news popover on outside click / Escape.
+  useEffect(() => {
+    if (!newsOpen) return;
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".news-popover") && !target.closest(".news-toggle")) setNewsOpen(null);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setNewsOpen(null); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [newsOpen]);
+
   const inventoryReports = INVENTORY_REPORTS.map((report) => {
     const instant = cachedReleaseInstant(report);
     const seconds = Math.max(0, Math.round((instant.getTime() - inventoryNow) / 1000));
     // Highlight when the release is within 24h so it grabs attention.
     const soon = seconds <= 24 * 3600;
     const sameDay = instant.toDateString() === new Date(inventoryNow).toDateString();
-    return { ...report, ist: formatIST(instant), soon, sameDay };
+    return { ...report, ist: formatIST(instant), time: formatChipTime(instant, inventoryNow), soon, sameDay };
   });
 
   useEffect(() => {
     Promise.all([
       fetch(`${API}/api/watchlist`).then((response) => response.json()),
-      loadResults(),
-      fetch(`${API}/api/schedule`, { cache: "no-store" }).then((response) => response.json()).catch(() => null),
-    ]).then(([watchData, , scheduleData]) => {
+    ]).then(([watchData]) => {
       const symbols = watchData.symbols ?? [];
       setWatchlist(symbols);
       const initialScopes: WatchScope[] = ["Commodities"];
       const initialSymbols = symbols.filter((item: WatchSymbol) => matchesScopes_check(item, initialScopes)).map((item: WatchSymbol) => item.symbol);
       setSelected(initialSymbols);
-      if (scheduleData) setSchedule(scheduleData);
       setMessage("Ready to scan");
     }).catch(() => setMessage("API unavailable. Start FastAPI on port 8000."));
   }, []);
@@ -953,38 +913,6 @@ export default function Home() {
     const id = window.setInterval(loadMarkets, 60000);
     return () => window.clearInterval(id);
   }, []);
-
-  useEffect(() => {
-    if (!schedule?.running) {
-      setCountdown(0);
-      return;
-    }
-    if (!schedule.next_run_at) {
-      // Scheduler started but its first slot isn't published yet (initial
-      // scan still running) — poll gently until next_run_at appears.
-      const id = window.setInterval(() => {
-        Promise.allSettled([refreshSchedule(), loadResults()]);
-      }, 2000);
-      return () => window.clearInterval(id);
-    }
-    const target = new Date(schedule.next_run_at).getTime();
-    let polling = false;
-    const tick = () => {
-      setCountdown(Math.max(0, Math.round((target - Date.now()) / 1000)));
-      if (polling) return;
-      polling = true;
-      // Countdown expired: poll until the backend reports the next slot.
-      // The fresh next_run_at restarts this countdown and loadResults() brings
-      // in the new timestamp + setups, so long-running scans stay in sync.
-      Promise.allSettled([refreshSchedule(), loadResults()]).finally(() => {
-        polling = false;
-      });
-    };
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schedule?.running, schedule?.next_run_at]);
 
   // Poll the AM Silver Bullet status while the page is open. The scan is armed
   // server-side inside 10:00-11:00 New York, so it can start or restart without
@@ -1092,46 +1020,6 @@ export default function Home() {
       playAlertSound(true);
     }
   }, [silverBullet?.signals]);
-
-  // Ring the UI alert when a fresh scan reports Tier A activity — mirrors the
-  // old terminal winsound alert (double-chirp for Tier A + liquidity event).
-  useEffect(() => {
-    if (!scannedAt) return;
-    if (announcedScanRef.current === null) {
-      announcedScanRef.current = scannedAt;
-      return;
-    }
-    if (scannedAt === announcedScanRef.current) return;
-    announcedScanRef.current = scannedAt;
-    const hasTierA = setups.some((setup) => setup.tier === "A");
-    if (!hasTierA) return;
-    const liquidityEvent = setups.some((setup) => setup.tier === "A" && setup.state.includes("liquidity"));
-    playAlertSound(liquidityEvent);
-  }, [scannedAt, setups]);
-
-  const runScan = async () => {
-    setLoading(true);
-    setScanProgress(`Scanning ${selected.length} symbol${selected.length !== 1 ? "s" : ""}...`);
-    setMessage("Scanning selected symbols...");
-    try {
-      const response = await fetch(`${API}/api/scan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: selected }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Scan failed");
-      setSetups(data.results ?? []);
-      setScannedAt(data.scanned_at ?? null);
-      setScanProgress(null);
-      setMessage("Scan complete");
-    } catch (error) {
-      setScanProgress(null);
-      setMessage(error instanceof Error ? error.message : "Scan failed");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const addToWatchlist = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1275,7 +1163,6 @@ export default function Home() {
     }
 
     items.push(
-      { id: "action:scan", label: "Run scan", category: "Action", action: () => { if (!loading && selected.length > 0) runScan(); }, keywords: ["run", "scan", "start"] },
       { id: "action:strategies", label: "Run strategies", category: "Action", action: () => { if (!strategyScanning && selected.length > 0) runStrategyScan(); }, keywords: ["run", "strategies", "profiles"] },
       { id: "action:live", label: "Start live scan", category: "Action", action: () => { if (!silverBulletLoading) startSilverBullet(); }, keywords: ["start", "live", "silver", "bullet"] },
       { id: "action:sync", label: "Sync market data", category: "Action", action: () => { if (!loading && selected.length > 0) syncData(); }, keywords: ["sync", "market", "data"] }
@@ -1329,7 +1216,7 @@ export default function Home() {
           <button type="button" className={`section-nav-item${activeSection === "strategies" ? " active" : ""}`} onClick={() => scrollToSection("strategies")}><Settings2 size={13} /> Strategies</button>
           <div className="section-nav-aside">
             <span className="section-nav-hint">Ctrl+K / ⌘K Command palette</span>
-            <div className="inventory-horizontal" aria-label="Upcoming commodity events">
+            <div className="inventory-horizontal" aria-label="Upcoming events">
               <span className="inventory-heading">Events</span>
               {inventoryReports.map((report) => (
                 <a
@@ -1338,14 +1225,59 @@ export default function Home() {
                   target="_blank"
                   rel="noreferrer"
                   className={`inventory-chip${report.soon ? " soon" : ""}`}
-                  title={`Next ${report.label} release — ${report.url}`}
+                  title={`${report.label} — ${report.ist} IST`}
                 >
-                  <span className="inventory-label">{report.label}</span>
-                  <span className="inventory-ist">{report.ist}</span>
-                  {report.soon && <span className={`inventory-flag${report.sameDay ? " today" : ""}`}>{report.sameDay ? "TODAY" : "SOON"}</span>}
+                  <span className="inventory-label">{report.short}</span>
+                  <span className="inventory-ist">{report.time}</span>
                 </a>
               ))}
+              {nextNews && (
+                <a href={FF_CALENDAR_URL} target="_blank" rel="noreferrer" className={`inventory-chip news${nextNews.soon ? " soon" : ""}`} title={nextNews.tooltip}>
+                  <span className="inventory-label news-label">{nextNews.label}</span>
+                  <span className="inventory-ist">{nextNews.time}</span>
+                </a>
+              )}
+              <button
+                type="button"
+                className={`news-toggle${newsFeed?.stale ? " stale" : ""}`}
+                aria-expanded={!!newsOpen}
+                aria-label="High-impact news this week"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setNewsOpen((current) => current ? null : { top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                }}
+              >
+                News <span className="news-count">{upcomingNews.length}</span> <ChevronDown size={10} />
+              </button>
             </div>
+            {newsOpen && (
+              <div className="news-popover" role="dialog" aria-label="High-impact news" style={{ top: newsOpen.top, right: newsOpen.right }}>
+                <div className="news-popover-head">
+                  <span>High-impact · {newsFeed?.currencies.length ? newsFeed.currencies.join(", ") : "all currencies"}</span>
+                  <button type="button" className="news-refresh" onClick={() => loadHighImpactNews(true)} disabled={newsLoading} aria-label="Fetch live high-impact news" title="Fetch live from ForexFactory">
+                    <RefreshCw size={11} className={newsLoading ? "spin" : undefined} />
+                  </button>
+                </div>
+                {newsByDay.length === 0 && <p className="news-empty">No upcoming high-impact events this week.</p>}
+                {newsByDay.map(({ day, events }) => (
+                  <div key={day} className="news-day">
+                    <div className="news-day-label">{day}</div>
+                    {events.map((event) => (
+                      <div key={`${event.currency}-${event.time_utc}-${event.title}`} className="news-row">
+                        <span className="news-time">{formatISTParts(event.instant, { hour: "2-digit", minute: "2-digit" })}</span>
+                        <span className="news-ccy">{event.currency}</span>
+                        <span className="news-title" title={event.title}>{event.title}</span>
+                        {(event.forecast || event.previous) && <span className="news-fp">{event.forecast || "–"} / {event.previous || "–"}</span>}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div className="news-popover-foot">
+                  <span>{newsFeed?.fetched_at ? `Fetched ${formatIST(new Date(newsFeed.fetched_at))} IST` : "Not fetched"}{newsFeed?.stale ? ` · stale (${newsFeed.error ?? "cached"})` : ""}</span>
+                  <a href={FF_CALENDAR_URL} target="_blank" rel="noreferrer">ForexFactory ↗</a>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </nav>
@@ -1356,24 +1288,6 @@ export default function Home() {
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }} id="scan" ref={(el) => { sectionRefs.current.scan = el; }}>
         <section className="auto-scan">
-        <span className="auto-title"><Timer size={14} /> Auto-scan</span>
-        <select id="auto-interval" aria-label="Auto-scan interval" value={intervalMinutes} onChange={(event) => changeInterval(event.target.value)}>
-          {intervalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-        {schedule?.running ? (
-          <>
-            <button className="test-button stop button-secondary" type="button" onClick={stopSchedule}>Stop auto-scan</button>
-            <span className="auto-live"><span className="pulse" />{schedule.scanning ? "SCAN IN PROGRESS—" : `RUNNING — NEXT IN ${formatCountdown(countdown)}`}</span>
-          </>
-        ) : (
-          <button className="test-button button-secondary" type="button" onClick={() => startSchedule(Number(intervalMinutes))}>Start auto-scan</button>
-        )}
-        <button className="scan-now" type="button" onClick={runScan} disabled={loading || selected.length === 0}>
-          <RefreshCw size={14} className={loading ? "spin" : undefined} />
-          {loading ? (scanProgress ? scanProgress : "Scanning—") : "Run scan"}
-        </button>
-        {loading && scanProgress && <span className="scan-progress">{scanProgress}</span>}
-        {schedule?.running && <small className="auto-meta">{schedule.run_count} auto-scans this session{schedule.last_run_at ? ` — last at ${new Date(schedule.last_run_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}{selected.length > 0 ? ` — ${selected.length} selected symbols` : " — full watchlist"}</small>}
         <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} max={anchorDate || localDate()} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} min={syncStartDate || undefined} max={localDate()} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0 || (!!syncStartDate && syncStartDate > anchorDate)}>Sync</button><button className={`test-button ${autoSync?.running ? "" : "button-secondary"}`} onClick={toggleAutoSync} aria-pressed={!!autoSync?.running} title={autoSyncTitle}>{autoSync?.syncing ? "Auto: syncing…" : autoSync?.running ? "Auto: on" : "Auto: off"}</button></section>
       </section>
               <section className="auto-scan" aria-label="AM Silver Bullet live scanner">
@@ -1464,7 +1378,6 @@ export default function Home() {
               </section>
             ) : null}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", marginTop: 8 }}>
-        {dateNote && <p className="date-note">Testing date: {dateNote.requested}{dateNote.reason ? ` was unavailable (${dateNote.reason}); using ${dateNote.resolved}.` : ` using ${dateNote.resolved}.`}</p>}
         {syncSummary && (
           <div className="history-results">
             <p className="kicker">Sync summary — {syncSummary.start_date ?? "lookback"} to {syncSummary.end_date ?? syncSummary.anchor_date}</p>

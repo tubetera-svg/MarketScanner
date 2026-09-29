@@ -13,7 +13,6 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 type Strategy = { name: string; label: string; group: string; enabled: boolean; runnable: boolean; description?: string | null };
 type Automation = {
-  scan_scheduler: { enabled: boolean; interval_minutes: number };
   silver_bullet_auto: { enabled: boolean };
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
   data_auto_sync: { enabled: boolean; lookback_days: number; interval_hours: number };
@@ -21,7 +20,7 @@ type Automation = {
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
 type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
-type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
+type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; news: { currencies: string[] }; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
 
 // Timezone and day are fixed per market; only the time is configurable.
 const CUTOFF_ROWS: { key: keyof DataCutoffs; title: string; hint: string }[] = [
@@ -35,8 +34,8 @@ type Payload = {
   strategies: Strategy[];
   hideable_pages: string[];
   strategy_choices: Record<keyof StrategyParams, string[]>;
+  news_currencies: string[];
   status: {
-    scan_scheduler: { running: boolean; last_run_at: string | null; last_error: string | null };
     silver_bullet: { auto_armed: boolean };
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
     data_auto_sync: { running: boolean; last_run_at: string | null; last_error: string | null };
@@ -185,10 +184,6 @@ export default function SettingsPage() {
         <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 480px), 1fr))", alignItems: "start" }}>
           <section className="panel" style={{ padding: 16 }}>
             <div className="panel-heading"><span>Automation</span><small>intervals · look-back days</small></div>
-            <Row title="Scheduled scan" hint={`Re-runs the scan on an interval — ${stateNote(status.scan_scheduler.running, status.scan_scheduler.last_run_at, status.scan_scheduler.last_error)}`}>
-              <NumberField value={auto.scan_scheduler.interval_minutes} min={1} max={1440} unit="min" onCommit={(v) => patchAuto("scan_scheduler", { interval_minutes: v })} />
-              <Switch label="Scheduled scan" on={auto.scan_scheduler.enabled} onChange={(v) => patchAuto("scan_scheduler", { enabled: v })} />
-            </Row>
             <Row title="Silver Bullet auto-schedule" hint={`Arms the AM window scan (10:00 New York) — ${status.silver_bullet.auto_armed ? "armed" : "off"}`}>
               <Switch label="Silver Bullet auto-schedule" on={auto.silver_bullet_auto.enabled} onChange={(v) => patchAuto("silver_bullet_auto", { enabled: v })} />
             </Row>
@@ -227,6 +222,23 @@ export default function SettingsPage() {
                 <TimeField label={`${title} cut-off`} value={data.settings.data_cutoffs[key]} onCommit={(v) => save({ data_cutoffs: { [key]: v } })} />
               </Row>
             ))}
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>High-impact news</span><small>ForexFactory red events · fetched once per day</small></div>
+            <Row title="Currencies" hint="Shown in the scanner's Events strip. None selected = all currencies.">
+              {data.news_currencies.map((code) => {
+                const current = data.settings.news.currencies;
+                const on = current.includes(code);
+                return (
+                  <label key={code} style={{ display: "inline-flex", alignItems: "center", gap: 4, font: "12px 'DM Mono', monospace" }}>
+                    <input type="checkbox" checked={on} onChange={() => save({ news: { currencies: on ? current.filter((c) => c !== code) : [...current, code] } })} />
+                    {code}
+                  </label>
+                );
+              })}
+              {data.settings.news.currencies.length > 0 && <button type="button" onClick={() => save({ news: { currencies: [] } })} style={{ font: "11px 'DM Mono', monospace" }}>All</button>}
+            </Row>
           </section>
 
           <section className="panel" style={{ padding: 16 }}>

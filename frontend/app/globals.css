@@ -35,6 +35,29 @@ button, input { font: inherit; }
 .inventory-flag.today { background: var(--amber); }
 .inventory-chip.soon { border-color: var(--coral); background: #fdeee8; }
 .inventory-chip.soon .inventory-ist { color: var(--coral); font-weight: 500; }
+/* ForexFactory high-impact (red folder) news: next-event chip, News toggle + popover */
+.inventory-chip.news { border-left: 3px solid #d0342c; }
+.news-label { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.news-toggle { align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); cursor: pointer; display: inline-flex; flex-shrink: 0; font: 500 10px 'DM Mono', monospace; gap: 4px; padding: 3px 7px; white-space: nowrap; }
+.news-toggle:hover, .news-toggle[aria-expanded="true"] { border-color: var(--ink); }
+.news-toggle.stale { border-style: dashed; }
+.news-count { background: #d0342c; border-radius: 8px; color: #fff; font-size: 9px; padding: 0 5px; }
+.news-popover { position: fixed; z-index: 60; width: 360px; max-width: calc(100vw - 32px); max-height: 60vh; overflow-y: auto; background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); font: 10.5px 'DM Mono', monospace; }
+.news-popover-head, .news-popover-foot { align-items: center; display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; color: var(--muted); position: sticky; background: #fff; }
+.news-popover-head { top: 0; border-bottom: 1px solid var(--line); text-transform: uppercase; letter-spacing: .5px; font-size: 10px; }
+.news-popover-foot { bottom: 0; border-top: 1px solid var(--line); font-size: 10px; }
+.news-popover-foot a { color: var(--teal); text-decoration: none; }
+.news-day { padding: 4px 10px; }
+.news-day-label { color: var(--muted); font-size: 10px; letter-spacing: .5px; text-transform: uppercase; padding: 2px 0; }
+.news-row { align-items: baseline; border-left: 2px solid #d0342c; display: grid; grid-template-columns: 40px 30px 1fr auto; gap: 6px; padding: 2px 0 2px 6px; }
+.news-time { color: var(--teal); }
+.news-ccy { font-weight: 500; }
+.news-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.news-fp { color: var(--muted); font-size: 9.5px; white-space: nowrap; }
+.news-empty { color: var(--muted); padding: 10px; margin: 0; }
+.news-refresh { align-items: center; background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); cursor: pointer; display: inline-flex; padding: 3px 5px; }
+.news-refresh:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.news-refresh:disabled { cursor: wait; opacity: .6; }
 .status { position: relative; overflow: hidden; display: inline-flex; align-items: center; border: 1px solid rgba(94,234,212,.45); background: linear-gradient(110deg, #0f2a33 0%, #17494a 55%, #7a3a2a 100%); border-radius: 999px; color: #eafff9; font: 500 11px 'DM Mono', monospace; letter-spacing: .4px; padding: 8px 16px 8px 14px; box-shadow: 0 6px 18px rgba(23,73,74,.28), inset 0 1px 0 rgba(255,255,255,.12); }
 .status::after { content: ''; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.18) 50%, transparent 65%); transform: translateX(-120%); animation: status-shine 4.5s ease-in-out infinite; pointer-events: none; }
 .pulse { display: inline-block; width: 8px; height: 8px; background: #4ff0c8; border-radius: 50%; margin-right: 8px; box-shadow: 0 0 0 0 rgba(79,240,200,.7); animation: pulse-ring 1.8s ease-out infinite; }
@@ -617,8 +640,8 @@ a.chart-link.symbol-link:hover {
 .section-nav-item:hover { border-color: var(--teal); color: var(--teal); }
 .section-nav-item.active { background: var(--ink); border-color: var(--ink); color: white; }
 .section-nav-hint { color: var(--muted); font: 10px 'DM Mono', monospace; white-space: nowrap; padding: 0 8px; }
-.section-nav-aside { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
-.section-nav-aside .inventory-horizontal { justify-content: flex-end; flex-wrap: nowrap; }
+.section-nav-aside { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 1; min-width: 0; }
+.section-nav-aside .inventory-horizontal { justify-content: flex-end; flex-wrap: nowrap; gap: 6px; max-width: 100%; overflow: hidden; }
 .inventory-heading { color: var(--muted); font: 10px 'DM Mono', monospace; letter-spacing: 1px; text-transform: uppercase; }
 
 /* Command palette */

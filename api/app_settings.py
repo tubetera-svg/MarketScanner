@@ -19,6 +19,9 @@ SETTINGS_PATH = ROOT / "config" / "app_settings.json"
 
 HIDEABLE_PAGES = ("watchlist", "ipo", "backtest")
 
+# Currencies offered for the high-impact news filter (api/news_calendar.py).
+NEWS_CURRENCIES = ("USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF", "CNY")
+
 # Strategy parameters read by src/all_strategy.py (strategy_setting) and the
 # LTF confirmation watcher. First choice = default; keep in step with
 # all_strategy.STRATEGY_SETTING_CHOICES.
@@ -29,7 +32,6 @@ STRATEGY_CHOICES: dict[str, tuple[str, ...]] = {
 
 DEFAULTS: dict[str, Any] = {
     "automation": {
-        "scan_scheduler": {"enabled": False, "interval_minutes": 15},
         "silver_bullet_auto": {"enabled": True},
         "ipo_scanner": {"enabled": False, "interval_minutes": 60, "lookback_days": 7},
         "data_auto_sync": {"enabled": False, "lookback_days": 14, "interval_hours": 0.25},
@@ -45,6 +47,8 @@ DEFAULTS: dict[str, Any] = {
         "crypto": "00:00",       # UTC, next day
         "gift_nifty": "03:00",   # IST, next day (NSEIX)
     },
+    # High-impact news filter; empty list = all currencies.
+    "news": {"currencies": []},
     "ui": {
         "hidden_strategies": [],
         "hidden_pages": [],
@@ -53,7 +57,6 @@ DEFAULTS: dict[str, Any] = {
 
 # (section, key) -> (min, max) for integer fields
 _INT_LIMITS = {
-    ("scan_scheduler", "interval_minutes"): (1, 1440),
     ("ipo_scanner", "interval_minutes"): (1, 1440),
     ("ipo_scanner", "lookback_days"): (1, 90),
     ("data_auto_sync", "lookback_days"): (1, 120),
@@ -104,6 +107,7 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
         block = settings["automation"][section]
         block[key] = max(low, min(high, float(block[key])))
     settings["ui"]["hidden_pages"] = [p for p in settings["ui"]["hidden_pages"] if p in HIDEABLE_PAGES]
+    settings["news"]["currencies"] = sorted({c.upper() for c in settings["news"]["currencies"]} & set(NEWS_CURRENCIES))
     for key, choices in STRATEGY_CHOICES.items():
         if settings["strategy"][key] not in choices:
             settings["strategy"][key] = choices[0]

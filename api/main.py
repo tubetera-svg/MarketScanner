@@ -4,8 +4,6 @@ import asyncio
 import importlib.util
 import json
 import logging
-import os
-import re
 import sys
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -25,19 +23,11 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
 
 import app_settings  # noqa: E402  (persisted automation / show-hide settings)
 import fno_membership  # noqa: E402  (NSE F&O list cache + watchlist F&O re-check)
+import news_calendar  # noqa: E402  (ForexFactory high-impact news, fetched once per IST day)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data  # noqa: E402
 from market_data.liquidity_screener import screen_all_ipos  # noqa: E402
-
-
-class ScanRequest(BaseModel):
-    symbols: list[str] | None = Field(default=None, max_length=500)
-
-
-class HistoricalTestRequest(BaseModel):
-    symbols: list[str] | None = Field(default=None, max_length=500)
-    anchor_date: date
 
 
 class StrategyScanRequest(BaseModel):
@@ -63,11 +53,6 @@ class BacktestRequest(BaseModel):
 
 class StrategyFlagUpdate(BaseModel):
     enabled: bool
-
-
-class ScheduleStartRequest(BaseModel):
-    interval_minutes: int = Field(ge=1, le=1440)
-    symbols: list[str] | None = Field(default=None, max_length=500)
 
 
 class SilverBulletStartRequest(BaseModel):
@@ -138,9 +123,6 @@ class ScannerService:
         # Alert sounds are played in the browser UI instead of on this machine.
         self.module.play_alert = lambda: None
         self.lock = asyncio.Lock()
-        self.last_results: list[dict[str, Any]] = []
-        self.last_scan_at: str | None = None
-        self.last_date_note: dict[str, str | None] = {"requested_date": None, "resolved_date": None, "resolution_reason": None}
 
     def watchlist(self) -> list[dict[str, str]]:
         return self.module.load_watchlist_details(str(WATCHLIST_PATH), allow_empty=True, categories_filename=str(WATCHLIST_CATEGORIES_PATH))
@@ -269,215 +251,6 @@ class ScannerService:
         except Exception:  # pragma: no cover - aliases are best-effort
             pass
         return self.watchlist()
-
-    def create_fetcher(self, config: Any, cache: Any) -> Any:
-        try:
-            return self.module.TvDatafeedFetcher(config=config, cache=cache)
-        except ImportError:
-            if os.environ.get("OANDA_API_KEY"):
-                return self.module.OandaDataFetcher(environment="practice", config=config, cache=cache)
-            return self.module.DataFetcher()
-
-    def scan(self, requested_symbols: list[str] | None) -> list[dict[str, Any]]:
-        entries = self.module.load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
-        details = {item["symbol"]: item for item in self.module.load_watchlist_details(entries=entries, categories_filename=str(WATCHLIST_CATEGORIES_PATH))}
-        selected = {value.strip().upper() for value in requested_symbols or [] if value.strip()}
-        if selected:
-            entries = [(symbol, session) for symbol, session in entries if symbol.upper() in selected]
-        if not entries:
-            raise ValueError("No watchlist symbols selected")
-
-        config = self.module.ICTConfig(
-            approaching_poi_pct=0.005,
-            tier_a_poi_pct=0.01,
-            displacement_lookback=10,
-            displacement_body_multiplier=1.5,
-            liquidity_tolerance=0.0005,
-            fvg_lookback=30,
-            minimum_rr=2.0,
-            swing_len=5,
-            intraday_timeframe="5m",
-            intraday_bars=100,
-            daily_bars=20,
-            weekly_bars=5,
-        )
-        cache = self.module.OHLCCache(path=str(OHLC_CACHE_PATH))
-        scanner = self.module.AdaptiveScanner(
-            watchlist=entries,
-            data_fetcher=self.create_fetcher(config, cache),
-            results_file_prefix=str(ROOT / "logs" / "scan_results"),
-            operating_start=self.module.dtime(0, 0),
-            operating_end=self.module.dtime(23, 59),
-            operating_tz=self.module.IST,
-            output_tiers=set(self.module.Tier),
-            state_cache=self.module.TrackerStateCache(path=str(TRACKER_STATE_CACHE_PATH)),
-        )
-        scanner.run_once()
-        results = []
-        for tracker in scanner.trackers.values():
-            if tracker.snapshot is None:
-                continue
-            row = asdict(tracker.snapshot)
-            row.update({"symbol": tracker.symbol, "session": tracker.session.value, "tier": tracker.tier.value, "state": tracker.state.value, "scope": details.get(tracker.symbol, {}).get("scope", "")})
-            results.append(row)
-        self.last_results = results
-        self.last_scan_at = datetime.now().astimezone().isoformat()
-        return results
-
-    def historical_test(self, requested_symbols: list[str] | None, anchor_date: date) -> dict[str, Any]:
-        requested_date, resolved_date, reason = self.module.resolve_previous_working_date(anchor_date)
-        entries = self.module.load_watchlist(str(WATCHLIST_PATH), allow_empty=True)
-        details = {item["symbol"]: item for item in self.module.load_watchlist_details(entries=entries, categories_filename=str(WATCHLIST_CATEGORIES_PATH))}
-        selected = {value.strip().upper() for value in requested_symbols or [] if value.strip()}
-        entries = [(symbol, session) for symbol, session in entries if not selected or symbol.upper() in selected]
-        if not entries:
-            raise ValueError("No watchlist symbols selected for historical testing")
-
-        # Backdate test: fetch+store OHLC into SQLite for any dates missing
-        # around the tested date (respects FETCH_* / AUTO_FETCH flags; never
-        # blocks the scan on failure).
-        try:
-            backdate_sync = ensure_backdate_data(entries, resolved_date)
-        except Exception as sync_exc:  # pragma: no cover - defensive
-            logging.getLogger(__name__).warning("Backdate data sync failed: %s", sync_exc)
-            backdate_sync = {"anchor_date": resolved_date.isoformat(), "synced": [], "failed": [{"error": str(sync_exc)}]}
-
-        config = self.module.ICTConfig(
-            anchor_date=resolved_date,
-            intraday_bars=100,
-            daily_bars=20,
-            weekly_bars=5,
-        )
-        cache = self.module.OHLCCache(path=str(OHLC_CACHE_PATH))
-        scanner = self.module.AdaptiveScanner(
-            watchlist=entries,
-            data_fetcher=self.create_fetcher(config, cache),
-            results_file_prefix=str(ROOT / "logs" / "scan_results"),
-            operating_start=self.module.dtime(0, 0),
-            operating_end=self.module.dtime(23, 59),
-            operating_tz=self.module.IST,
-            output_tiers=set(self.module.Tier),
-            state_cache=self.module.TrackerStateCache(path=str(TRACKER_STATE_CACHE_PATH)),
-        )
-        scanner.run_once(anchor_date=resolved_date)
-        results = []
-        for tracker in scanner.trackers.values():
-            if tracker.snapshot is None:
-                continue
-            row = asdict(tracker.snapshot)
-            row.update({"symbol": tracker.symbol, "session": tracker.session.value, "tier": tracker.tier.value, "state": tracker.state.value, "scope": details.get(tracker.symbol, {}).get("scope", "")})
-            results.append(row)
-
-        self.last_date_note = {
-            "requested_date": requested_date.isoformat(),
-            "resolved_date": resolved_date.isoformat(),
-            "resolution_reason": reason,
-        }
-        return {"results": results, **self.last_date_note, "backdate_data_sync": backdate_sync}
-
-    def latest_file_results(self) -> list[dict[str, Any]]:
-        files = sorted(ROOT.glob("logs/scan_results_*.txt"), key=lambda path: path.stat().st_mtime, reverse=True)
-        if not files:
-            return []
-        columns = [
-            "symbol", "daily_bias", "weekly_bias", "tier", "state", "price", "poi_price",
-            "entry", "stop_loss", "tp1", "tp2", "risk_reward", "liquidity_swept", "trade_confirmed",
-        ]
-        rows = []
-        seen_symbols: set[str] = set()
-        for line in files[0].read_text(encoding="utf-8", errors="replace").splitlines():
-            values = re.split(r"\s+", line.strip())
-            if len(values) < len(columns):
-                continue
-            row = dict(zip(columns, values[: len(columns)]))
-            if row["symbol"] in seen_symbols:
-                continue
-            seen_symbols.add(row["symbol"])
-            row["trade_confirmed"] = row["trade_confirmed"] == "YES"
-            for key in ("price", "poi_price", "entry", "stop_loss", "tp1", "tp2", "risk_reward"):
-                if row[key] == "N/A":
-                    row[key] = None
-                else:
-                    try:
-                        row[key] = float(row[key])
-                    except ValueError:
-                        row[key] = None
-            row["session"] = "forex_24_5" if ":" in row["symbol"] and not row["symbol"].startswith("NSE:") else "nse"
-            rows.append(row)
-        return rows
-
-
-class ScanScheduler:
-    """Continuously re-runs the scan on a fixed interval until stopped."""
-
-    def __init__(self, service: ScannerService) -> None:
-        self.service = service
-        self.task: asyncio.Task[None] | None = None
-        self.scanning: bool = False
-        self.interval_minutes: int | None = None
-        self.symbols: list[str] | None = None
-        self.next_run_at: str | None = None
-        self.last_run_at: str | None = None
-        self.last_error: str | None = None
-        self.run_count: int = 0
-
-    def status(self) -> dict[str, Any]:
-        return {
-            "running": self.task is not None and not self.task.done(),
-            "scanning": self.scanning,
-            "interval_minutes": self.interval_minutes,
-            "next_run_at": self.next_run_at,
-            "last_run_at": self.last_run_at,
-            "last_error": self.last_error,
-            "run_count": self.run_count,
-        }
-
-    def start(self, interval_minutes: int, symbols: list[str] | None) -> dict[str, Any]:
-        self.stop()
-        self.interval_minutes = interval_minutes
-        self.symbols = symbols
-        self.task = asyncio.create_task(self._loop())
-        return self.status()
-
-    def stop(self) -> dict[str, Any]:
-        if self.task is not None and not self.task.done():
-            self.task.cancel()
-        self.task = None
-        self.interval_minutes = None
-        self.symbols = None
-        self.next_run_at = None
-        return self.status()
-
-    async def _loop(self) -> None:
-        while True:
-            await self._run_scheduled_scan()
-            seconds = max(60, (self.interval_minutes or 1) * 60)
-            self.next_run_at = (datetime.now().astimezone() + timedelta(seconds=seconds)).isoformat()
-            await asyncio.sleep(seconds)
-
-    async def _run_scheduled_scan(self) -> None:
-        if self.service.lock.locked():
-            self.last_error = f"Skipped at {datetime.now().astimezone():%H:%M:%S}: a scan was already running"
-            return
-        module = self.service.module
-        if not (
-            module.is_market_open(module.Session.NSE)
-            or module.is_market_open(module.Session.FOREX_24_5)
-            or module.is_daily_bar_ready(module.Session.NSE)
-        ):
-            self.last_error = f"All markets closed at {datetime.now().astimezone():%H:%M:%S}: auto-scan idle"
-            return
-        async with self.service.lock:
-            self.scanning = True
-            try:
-                await asyncio.to_thread(self.service.scan, self.symbols)
-                self.last_run_at = self.service.last_scan_at
-                self.last_error = None
-                self.run_count += 1
-            except Exception as exc:
-                self.last_error = str(exc)
-            finally:
-                self.scanning = False
 
 
 class SilverBulletLiveScanner:
@@ -978,7 +751,6 @@ ltf_watcher = LtfConfirmationWatcher()
 
 
 service = ScannerService()
-scheduler = ScanScheduler(service)
 silver_bullet_scanner = SilverBulletLiveScanner()
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
 
@@ -1090,35 +862,6 @@ def rename_watchlist_item(request: WatchlistRenameRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.get("/api/results")
-def get_results() -> dict[str, Any]:
-    results = service.last_results or service.latest_file_results()
-    return {"results": results, "scanned_at": service.last_scan_at, **service.last_date_note}
-
-
-@app.post("/api/scan")
-async def run_scan(request: ScanRequest) -> dict[str, Any]:
-    if service.lock.locked():
-        raise HTTPException(status_code=409, detail="A scan is already running")
-    async with service.lock:
-        try:
-            results = await asyncio.to_thread(service.scan, request.symbols)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"results": results, "scanned_at": service.last_scan_at, **service.last_date_note}
-
-
-@app.post("/api/historical-test")
-async def run_historical_test(request: HistoricalTestRequest) -> dict[str, Any]:
-    if service.lock.locked():
-        raise HTTPException(status_code=409, detail="A scan is already running")
-    async with service.lock:
-        try:
-            return await asyncio.to_thread(service.historical_test, request.symbols, request.anchor_date)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 @app.get("/api/strategies")
 def get_strategies() -> dict[str, Any]:
     strategies, master = strategy_bridge.list_strategies()
@@ -1227,14 +970,6 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
     """Start/stop/retune each background automation to match ``settings``."""
     auto = settings["automation"]
 
-    sched = auto["scan_scheduler"]
-    running = scheduler.task is not None and not scheduler.task.done()
-    if sched["enabled"]:
-        if not running or scheduler.interval_minutes != sched["interval_minutes"]:
-            scheduler.start(sched["interval_minutes"], scheduler.symbols)
-    elif running:
-        scheduler.stop()
-
     sb = auto["silver_bullet_auto"]
     if sb["enabled"]:
         silver_bullet_scanner.start_auto_schedule()
@@ -1278,7 +1013,6 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "strategies": strategies,
         "weekly_profiles_master_enabled": master,
         "status": {
-            "scan_scheduler": scheduler.status(),
             "silver_bullet": {"auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done()},
             "ipo_scanner": ipo_scanner.status(),
             "data_auto_sync": _auto_sync().status(),
@@ -1290,6 +1024,7 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         },
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
         "strategy_choices": {key: list(values) for key, values in app_settings.STRATEGY_CHOICES.items()},
+        "news_currencies": list(app_settings.NEWS_CURRENCIES),
     }
 
 
@@ -1306,6 +1041,13 @@ async def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
     return _settings_payload(settings)
 
 
+@app.get("/api/news/high-impact")
+def get_high_impact_news(refresh: bool = False) -> dict[str, Any]:
+    """ForexFactory red-folder events this week (cached per IST day; refresh=true fetches live)."""
+    currencies = app_settings.load_settings()["news"]["currencies"]
+    return news_calendar.get_events(currencies, refresh=refresh)
+
+
 @app.get("/api/ltf-confirmation")
 def get_ltf_confirmation() -> dict[str, Any]:
     """Armed / triggered intraday-confirmation setups and watcher status."""
@@ -1316,21 +1058,6 @@ def get_ltf_confirmation() -> dict[str, Any]:
 async def check_ltf_confirmation() -> dict[str, Any]:
     """Re-arm from the latest final daily session and replay intraday bars now."""
     return await ltf_watcher.check(force_arm=True)
-
-
-@app.get("/api/schedule")
-def get_schedule() -> dict[str, Any]:
-    return scheduler.status()
-
-
-@app.post("/api/schedule/start")
-async def start_schedule(request: ScheduleStartRequest) -> dict[str, Any]:
-    return scheduler.start(request.interval_minutes, request.symbols)
-
-
-@app.post("/api/schedule/stop")
-async def stop_schedule() -> dict[str, Any]:
-    return scheduler.stop()
 
 
 @app.get("/api/silver-bullet")
