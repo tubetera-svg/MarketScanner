@@ -439,6 +439,7 @@ details > summary::-webkit-details-marker { display: none; }
 }
 .top-link:hover { color: var(--ink); background: rgba(255,255,255,.72); border-color: var(--line); transform: translateY(-1px); }
 .top-link.active { color: var(--teal); background: rgba(40,123,121,.09); border-color: rgba(40,123,121,.22); }
+.top-link-badge { min-width: 16px; padding: 0 4px; border-radius: 8px; background: #e07b00; color: #fff; font: 600 9.5px/16px 'DM Mono', monospace; text-align: center; }
 .top-link:focus-visible, .section-nav-item:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .scope-toggle { display: inline-flex; gap: 4px; }
 .seg { background: transparent; border: 1px solid var(--line); color: var(--muted); cursor: pointer; font-size: 11px; padding: 6px 12px; border-radius: 4px; }
@@ -580,6 +581,45 @@ th.sortable:hover {
 .chart-stat { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .chart-stat em { font-style: normal; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
 .chart-stat.warn { color: var(--amber); }
+.chart-tool-btn.active { border-color: var(--teal); color: var(--teal); }
+.chart-tool-btn.primary { border-color: var(--teal); background: var(--teal); color: #fff; }
+.chart-tool-btn.primary:hover:not(:disabled) { color: #fff; opacity: .9; }
+.chart-alerts { display: flex; flex-direction: column; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--line); background: #fffaf2; font: 11px 'DM Mono', monospace; color: var(--ink); }
+.chart-alerts-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.chart-alerts-form label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.chart-alerts-form select, .chart-alerts-form input { min-height: 26px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; background: white; color: var(--ink); font: 11px 'DM Mono', monospace; }
+.chart-alerts-title { color: #e07b00; font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .4px; }
+.chart-alerts-level { width: 110px; }
+.chart-alerts-num { width: 58px; }
+.chart-alerts-note { flex: 1; min-width: 120px; }
+.chart-alerts-meta { font-size: 10px; }
+.chart-alerts-meta .warn { color: var(--amber); }
+.chart-alerts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.chart-alert-item { display: flex; align-items: center; gap: 8px; }
+.chart-alert-item > span:first-child { flex: 1; min-width: 0; }
+.chart-alert-item:not(.active) > span:first-child { opacity: .6; }
+.chart-alert-state { font-size: 10px; text-transform: uppercase; color: var(--muted); }
+.chart-alert-item.triggered .chart-alert-state { color: #e07b00; }
+.price-alert-chip { cursor: pointer; font: inherit; border-left: 3px solid #e07b00; }
+.price-alert-chip:hover { border-color: #e07b00; }
+.price-alert-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 150; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }
+.price-alert-toast { display: flex; align-items: stretch; background: var(--panel, white); border: 1px solid #e07b00; border-left-width: 4px; border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .14); animation: price-alert-in .2s ease-out; }
+.price-alert-toast-body { flex: 1; display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 0; background: none; color: var(--ink); font: 12px 'DM Mono', monospace; text-align: left; cursor: pointer; }
+.price-alert-toast-body svg { color: #e07b00; flex-shrink: 0; margin-top: 1px; }
+.price-alert-toast-body small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+.price-alert-toast-close { border: 0; background: none; color: var(--muted); font-size: 18px; padding: 0 10px; cursor: pointer; }
+.price-alert-toast-close:hover { color: var(--ink); }
+@keyframes price-alert-in { from { transform: translateY(8px); opacity: 0; } }
+.price-alert-table-wrap { overflow-x: auto; }
+.price-alert-table { min-width: 720px; }
+.price-alert-table th, .price-alert-table td { padding: 7px 10px; font-family: 'DM Mono', monospace; }
+.price-alert-table td small { display: inline; margin: 0; }
+.price-alert-table tr:not(.active) td { color: var(--muted); }
+.price-alert-status { font-size: 10px; text-transform: uppercase; }
+.price-alert-table tr.active .price-alert-status { color: var(--teal); }
+.price-alert-table tr.triggered .price-alert-status { color: #e07b00; }
+.price-alert-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.price-alert-today { margin-left: 6px; padding: 1px 5px; border-radius: 3px; background: #e07b00; color: #fff; font-size: 9.5px; text-transform: uppercase; }
 .chart-stale { font-weight: 500; font-size: 10px; color: #fff; background: var(--amber); border-radius: 3px; padding: 1px 5px; }
 .chart-range-bar { position: relative; display: inline-block; width: 64px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--coral-soft), var(--teal-soft)); }
 .chart-range-bar span { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
@@ -761,3 +801,11 @@ a.chart-link.symbol-link:hover {
 .badge.bias-neutral { background: var(--slate-soft); color: var(--slate-ink); }
 td.number.bias-bull { color: var(--teal-ink); }
 td.number.bias-bear { color: var(--coral-ink); }
+
+/* Favorites star (components/Favorites.tsx), shared by scanner, Watchlist and IPO pages */
+.fav-star { align-items: center; background: none; border: 0; color: #b9c3c8; cursor: pointer; display: inline-flex; margin-left: 6px; padding: 0 2px; vertical-align: middle; }
+.fav-star:hover { color: var(--amber); }
+.fav-star.active { color: var(--amber); }
+.check-symbol { align-items: center; display: inline-flex; min-width: 0; }
+.ipo-symbol-cell { align-items: center; display: inline-flex; gap: 2px; }
+.ipo-symbol-cell .fav-star { margin-left: 0; }

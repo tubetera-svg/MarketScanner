@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import PriceAlertNotifier from "../components/PriceAlertNotifier";
 
 export const metadata: Metadata = {
   title: "QuantLens",
@@ -7,5 +8,6 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}</body></html>;
+  // PriceAlertNotifier: price-alert toasts/sound on every page.
+  return <html lang="en"><body>{children}<PriceAlertNotifier /></body></html>;
 }

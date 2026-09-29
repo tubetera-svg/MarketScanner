@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { Activity, ArrowLeft, Database, Download, Pencil, RefreshCw, Rocket, Save, SearchX, Trash2, X } from "lucide-react";
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
+import { FavoriteStar, useFavorites } from "../../components/Favorites";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const number = (value: number | null) => value == null ? "-" : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -140,6 +141,7 @@ export default function WatchlistPage() {
   const [manageQuery, setManageQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
+  const { isFavorite, toggle: toggleFavorite, reload: reloadFavorites } = useFavorites();
   const pickerRef = useRef<HTMLDetailsElement>(null);
   // Symbol list from the previous refresh (null until the first load).
   const allSymbolsRef = useRef<string[] | null>(null);
@@ -452,6 +454,7 @@ export default function WatchlistPage() {
         next.delete(symbol);
         return next;
       });
+      void reloadFavorites();
       await refreshWatchlist();
       setMessage(`Removed ${symbol} from the watchlist${describePurge(data.purged)}.`);
     } catch (error) {
@@ -503,6 +506,7 @@ export default function WatchlistPage() {
         });
         const renameData = await renameResponse.json();
         if (!renameResponse.ok) throw new Error(typeof renameData.detail === "string" ? renameData.detail : "Rename failed");
+        void reloadFavorites();
         if (newSymbol !== editingSymbol.toUpperCase()) {
           renameNote = renameData.purged ? `${describePurge(renameData.purged)} for ${editingSymbol}` : ` · ${editingSymbol} data kept`;
         }
@@ -672,7 +676,7 @@ export default function WatchlistPage() {
                   </form>
                 ) : (
                   <div className="watchlist-view">
-                    <span className="wl-symbol"><strong>{symbol}</strong><small>{classificationFields.map(({ key, label }) => classifications[symbol]?.[key] ? `${label}: ${classifications[symbol]?.[key]}` : null).filter(Boolean).join(" · ") || "automatic classification"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
+                    <span className="wl-symbol"><strong>{symbol}<FavoriteStar symbol={symbol} active={isFavorite(symbol)} onToggle={() => void toggleFavorite(symbol)} /></strong><small>{classificationFields.map(({ key, label }) => classifications[symbol]?.[key] ? `${label}: ${classifications[symbol]?.[key]}` : null).filter(Boolean).join(" · ") || "automatic classification"}</small>{aliases[symbol]?.length ? <small>aliases: {aliases[symbol].join(", ")}</small> : null}</span>
                     <span className="wl-actions">
                       <button className="test-button" type="button" onClick={() => beginEdit(symbol)} disabled={savingEdit}><Pencil size={13} /> Edit</button>
                       <button className="test-button danger" type="button" onClick={() => deleteSymbol(symbol)}><Trash2 size={13} /> Delete</button>
@@ -717,6 +721,7 @@ export default function WatchlistPage() {
                 <label key={symbol} className="symbol-row">
                   <input type="checkbox" checked={selectedSymbols.has(symbol)} onChange={() => toggleSymbol(symbol)} />
                   {symbol}
+                  <FavoriteStar symbol={symbol} active={isFavorite(symbol)} onToggle={() => void toggleFavorite(symbol)} />
                 </label>
               ))}
               {allSymbols.length > 0 && allSymbols.filter((s) => s.toLowerCase().includes(pickerQuery.toLowerCase())).length === 0 && (

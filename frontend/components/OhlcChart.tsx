@@ -28,6 +28,7 @@ const GRID = "#eef2f3";
 const AXIS = "#71808b";
 const INK = "#15232d";
 const RSI_COLOR = "#287b79";
+const ALERT_COLOR = "#e07b00";
 export const EMA_COLORS = { ema20: "#356c9b", ema50: "#c08a2e", ema200: "#7c3aed" } as const;
 export const VWAP_COLOR = "#db2777";
 const FONT = "'DM Mono', ui-monospace, monospace";
@@ -216,6 +217,8 @@ export default function OhlcChart({
   initialCount,
   resetKey,
   levels,
+  alertLines,
+  onAltClick,
 }: {
   bars: Bar[];
   overlays: Overlays;
@@ -229,6 +232,10 @@ export default function OhlcChart({
   resetKey: string;
   /** 52-week high/low from daily data. */
   levels?: { high: number; low: number } | null;
+  /** Price alerts to draw; inactive ones are faded. */
+  alertLines?: { id: string; price: number; active: boolean }[];
+  /** Alt+click inside the price pane reports the price under the cursor. */
+  onAltClick?: (price: number) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const clipId = `ohlc-clip-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -447,6 +454,16 @@ export default function OhlcChart({
               </text>
             </g>
           ))}
+          {(alertLines ?? [])
+            .filter(({ price }) => price >= lo && price <= hi)
+            .map(({ id, price, active }) => (
+              <g key={`alert-${id}`} opacity={active ? 1 : 0.4}>
+                <line x1={0} x2={plotW} y1={y(price)} y2={y(price)} stroke={ALERT_COLOR} strokeDasharray="6 3" />
+                <text x={4} y={y(price) - 4} fontSize={9.5} fill={ALERT_COLOR} fontFamily={FONT}>
+                  ALERT {formatPrice(price)}
+                </text>
+              </g>
+            ))}
           {lastY >= yTop && lastY <= yBot ? (
             <line x1={0} x2={plotW} y1={lastY} y2={lastY} stroke={lastUp ? UP : DOWN} strokeDasharray="3 3" opacity={0.7} />
           ) : null}
@@ -484,7 +501,7 @@ export default function OhlcChart({
     );
     // y/xc/ry are derived from the listed values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, series, overlays, levels, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId]);
+  }, [bars, series, overlays, levels, alertLines, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId]);
 
   // ---- interaction --------------------------------------------------------
 
@@ -541,6 +558,11 @@ export default function OhlcChart({
           height={size.h}
           className="ohlc-svg"
           onPointerDown={(event) => {
+            if (event.altKey && onAltClick) {
+              const point = localPoint(event);
+              if (point.x <= plotW && point.y >= yTop && point.y <= yBot) onAltClick(priceAt(point.y));
+              return;
+            }
             drag.current = { x: event.clientX, start: v.start };
             event.currentTarget.setPointerCapture(event.pointerId);
           }}

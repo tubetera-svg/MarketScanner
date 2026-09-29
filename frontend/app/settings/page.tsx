@@ -17,6 +17,7 @@ type Automation = {
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
   data_auto_sync: { enabled: boolean; lookback_days: number; interval_hours: number };
   ltf_confirmation: { enabled: boolean; interval_minutes: number };
+  price_alerts: { enabled: boolean; interval_minutes: number };
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
 type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
@@ -40,6 +41,7 @@ type Payload = {
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
     data_auto_sync: { running: boolean; last_run_at: string | null; last_error: string | null };
     ltf_confirmation: { running: boolean; last_check_at: string | null; last_error: string | null };
+    price_alerts: { running: boolean; last_check_at: string | null; last_error: string | null };
   };
 };
 
@@ -200,6 +202,10 @@ export default function SettingsPage() {
             <Row title="Intraday confirmation watcher" hint={`Arms daily setups after each market's close, then waits for an intraday CISD in the next session — ${stateNote(status.ltf_confirmation.running, status.ltf_confirmation.last_check_at, status.ltf_confirmation.last_error)}`}>
               <NumberField value={auto.ltf_confirmation.interval_minutes} min={1} max={60} unit="min" onCommit={(v) => patchAuto("ltf_confirmation", { interval_minutes: v })} />
               <Switch label="Intraday confirmation watcher" on={auto.ltf_confirmation.enabled} onChange={(v) => patchAuto("ltf_confirmation", { enabled: v })} />
+            </Row>
+            <Row title="Price alerts" hint={`How often chart-popup price alerts are checked (completed 5m bars, open markets only; 5 min minimum) — ${stateNote(status.price_alerts.running, status.price_alerts.last_check_at, status.price_alerts.last_error)}`}>
+              <NumberField value={auto.price_alerts.interval_minutes} min={5} max={240} unit="min" onCommit={(v) => patchAuto("price_alerts", { interval_minutes: v })} />
+              <Switch label="Price alerts" on={auto.price_alerts.enabled} onChange={(v) => patchAuto("price_alerts", { enabled: v })} />
             </Row>
           </section>
 

@@ -26,7 +26,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from . import database
+from . import database, favorites
 from .config import (
     IPO_MAX_AGE_DAYS,
     KNOWN_SOURCES,
@@ -589,6 +589,7 @@ def delete_ipos(request: DeleteIPORequest) -> dict:
             {"symbol": sym.strip().upper(), "removed": ipo_service.remove_ipo_completely(sym)}
             for sym in dict.fromkeys(s for s in request.symbols if s.strip())
         ]
+        favorites.remove_favorites([row["symbol"] for row in results])
         return {"deleted": len(results), "results": results}
     except Exception as exc:
         log.exception("Unhandled IPO delete error")

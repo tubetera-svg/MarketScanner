@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
+import { playAlertSound } from "../components/alertSound";
 import Navigation from "../components/Navigation";
+import { FavoriteStar, useFavorites } from "../components/Favorites";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string; index?: string; f_and_o?: string };
@@ -208,10 +210,12 @@ const isCommodity = (symbol: string) => /(?:COMEX|NYMEX|CBOT|MCX|NATURALGAS|NATG
 // places a symbol in the matching Nifty pill, so the hard-coded lists can't drift.
 const inSavedIndex = (item: { index?: string }, scope: WatchScope) =>
   (item.index ?? "").split(",").some((value) => value.trim().toUpperCase() === scope.toUpperCase());
-const matchesScope_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scope: WatchScope) => {
+const matchesScope_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scope: WatchScope, favorites?: Set<string>) => {
   const symbol = item.symbol.toUpperCase();
   const base = baseSymbol(symbol);
   if (scope === "All") return true;
+  // Starred symbols (config/favorites.json), shared with the Watchlist and IPO pages.
+  if (scope === "Favorites") return favorites?.has(symbol) ?? false;
   // F&O pill also covers F&O stocks kept under another scope (e.g. IPO).
   if (scope === "F&O" && item.f_and_o === "F&O") return true;
   if (scope === "Forex" || scope === "Commodities" || scope === "Crypto" || scope === "F&O" || scope === "Equity" || scope === "IPO" || item.scope === scope) return item.scope === scope;
@@ -220,8 +224,8 @@ const matchesScope_check = (item: { symbol: string; session: string; scope?: str
   if (scope === "Nifty 50") return symbol.startsWith("NSE:") && nifty50.includes(base);
   return symbol.startsWith("NSE:") && (sectorSymbols[scope as keyof typeof sectorSymbols] ?? []).includes(base);
 };
-const matchesScopes_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scopes: WatchScope[]) =>
-  scopes.length === 0 || scopes.includes("All") || scopes.some((scope) => matchesScope_check(item, scope));
+const matchesScopes_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scopes: WatchScope[], favorites?: Set<string>) =>
+  scopes.length === 0 || scopes.includes("All") || scopes.some((scope) => matchesScope_check(item, scope, favorites));
 
 const biasBadge = (bias: string | null | undefined, label: string) => {
   if (!bias || bias === "Neutral") return <span className="bias-badge bias-neutral">{label}</span>;
@@ -323,48 +327,13 @@ const formatIST = (instant: Date): string =>
     hour12: false,
   }).format(instant) + " IST";
 
-type AudioContextWindow = Window & { webkitAudioContext?: typeof AudioContext };
-let audioContext: AudioContext | null = null;
-
-const playTones = (frequencies: number[], toneSeconds: number, gapSeconds: number) => {
-  const Context = window.AudioContext ?? (window as AudioContextWindow).webkitAudioContext;
-  if (!Context) return;
-  audioContext = audioContext ?? new Context();
-  if (audioContext.state === "suspended") void audioContext.resume();
-  const startAt = audioContext.currentTime + 0.05;
-  frequencies.forEach((frequency, index) => {
-    const context = audioContext as AudioContext;
-    const start = startAt + index * (toneSeconds + gapSeconds);
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.value = frequency;
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + toneSeconds);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start(start);
-    oscillator.stop(start + toneSeconds);
-  });
-};
-
-// Browser-side replacement for the scanner's terminal Ring04.wav alert.
-const playAlertSound = (urgent: boolean) => {
-  try {
-    if (urgent) playTones([988, 1319, 988, 1319], 0.16, 0.07);
-    else playTones([784, 1047], 0.4, 0.15);
-  } catch {
-    // Audio is best-effort; never break scanning over it.
-  }
-};
-
 export default function Home() {
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading watchlist...");
   const [watchScopes, setWatchScopes] = useState<WatchScope[]>(["Commodities"]);
+  const { favorites, isFavorite, toggle: toggleFavorite } = useFavorites();
   const [watchQuery, setWatchQuery] = useState("");
   const [newSymbol, setNewSymbol] = useState("");
   const [watchlistMessage, setWatchlistMessage] = useState("");
@@ -1036,7 +1005,7 @@ export default function Home() {
       setWatchlist(symbols);
       const added = symbols.find((entry) => entry.symbol === newSymbol.trim().toUpperCase());
       // Only auto-select when the new symbol is visible under the active scope filter.
-      if (added && matchesScopes_check(added, watchScopes)) {
+      if (added && matchesScopes_check(added, watchScopes, favorites)) {
         setSelected((current) => (current.includes(added.symbol) ? current : [...current, added.symbol]));
       }
       setNewSymbol("");
@@ -1046,7 +1015,7 @@ export default function Home() {
     }
   };
 
-  const filteredWatchlist = watchlist.filter((item) => matchesScopes_check(item, watchScopes) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase()));
+  const filteredWatchlist = watchlist.filter((item) => matchesScopes_check(item, watchScopes, favorites) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase()));
   const visibleWatchSymbols = new Set(filteredWatchlist.map((item) => item.symbol));
   const hiddenSelectedCount = selected.filter((symbol) => !visibleWatchSymbols.has(symbol)).length;
 
@@ -1284,7 +1253,7 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small title={hiddenSelectedCount ? `${hiddenSelectedCount} selected symbol(s) are hidden by the current search` : undefined}>{selected.length}/{watchlist.length}{hiddenSelectedCount ? ` (${hiddenSelectedCount} hidden)` : ""}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage.startsWith("Added") ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => { setWatchScopes(["All"]); setSelected(watchlist.map((item) => item.symbol)); }}>All</button>{(["IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Equity","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => { const newScopes = watchScopes.includes(opt) ? watchScopes.filter((s) => s !== opt) : [...watchScopes.filter((s) => s !== "All"), opt]; setWatchScopes(newScopes); const newFiltered = watchlist.filter((item) => matchesScopes_check(item, newScopes) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase())); setSelected(newFiltered.map((item) => item.symbol)); }}>{opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span>{item.symbol}</span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : item.symbol.toUpperCase().startsWith("NSEIX:") ? "NSEIX" : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small title={hiddenSelectedCount ? `${hiddenSelectedCount} selected symbol(s) are hidden by the current search` : undefined}>{selected.length}/{watchlist.length}{hiddenSelectedCount ? ` (${hiddenSelectedCount} hidden)` : ""}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage.startsWith("Added") ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => { setWatchScopes(["All"]); setSelected(watchlist.map((item) => item.symbol)); }}>All</button>{(["Favorites","IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Equity","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => { const newScopes = watchScopes.includes(opt) ? watchScopes.filter((s) => s !== opt) : [...watchScopes.filter((s) => s !== "All"), opt]; setWatchScopes(newScopes); const newFiltered = watchlist.filter((item) => matchesScopes_check(item, newScopes, favorites) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase())); setSelected(newFiltered.map((item) => item.symbol)); }}>{opt === "Favorites" ? "★ Favorites" : opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span className="check-symbol">{item.symbol}<FavoriteStar symbol={item.symbol} active={isFavorite(item.symbol)} onToggle={() => void toggleFavorite(item.symbol)} /></span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : item.symbol.toUpperCase().startsWith("NSEIX:") ? "NSEIX" : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }} id="scan" ref={(el) => { sectionRefs.current.scan = el; }}>
         <section className="auto-scan">

@@ -36,6 +36,8 @@ DEFAULTS: dict[str, Any] = {
         "ipo_scanner": {"enabled": False, "interval_minutes": 60, "lookback_days": 7},
         "data_auto_sync": {"enabled": False, "lookback_days": 14, "interval_hours": 0.25},
         "ltf_confirmation": {"enabled": False, "interval_minutes": 2},
+        # Price alerts from the chart popup (api/price_alerts.py).
+        "price_alerts": {"enabled": True, "interval_minutes": 15},
     },
     "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
     # Daily-bar "final" cut-off per market, 'HH:MM' in the market's fixed
@@ -61,6 +63,7 @@ _INT_LIMITS = {
     ("ipo_scanner", "lookback_days"): (1, 90),
     ("data_auto_sync", "lookback_days"): (1, 120),
     ("ltf_confirmation", "interval_minutes"): (1, 60),
+    ("price_alerts", "interval_minutes"): (5, 240),
 }
 
 # (section, key) -> (min, max) for float fields

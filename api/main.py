@@ -24,7 +24,9 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
 import app_settings  # noqa: E402  (persisted automation / show-hide settings)
 import fno_membership  # noqa: E402  (NSE F&O list cache + watchlist F&O re-check)
 import news_calendar  # noqa: E402  (ForexFactory high-impact news, fetched once per IST day)
+import price_alerts  # noqa: E402  (chart-popup price alerts, in-app delivery)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
+from market_data import favorites  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data  # noqa: E402
 from market_data.liquidity_screener import screen_all_ipos  # noqa: E402
@@ -72,6 +74,10 @@ class WatchlistAddRequest(BaseModel):
 
 class FnoApplyRequest(BaseModel):
     preview_id: str = Field(min_length=1, max_length=64)
+
+
+class FavoriteRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=80)
 
 
 class WatchlistRemoveRequest(BaseModel):
@@ -748,6 +754,7 @@ class LtfConfirmationWatcher:
 
 
 ltf_watcher = LtfConfirmationWatcher()
+price_alert_watcher = price_alerts.PriceAlertWatcher()
 
 
 service = ScannerService()
@@ -776,6 +783,7 @@ async def stop_silver_bullet_auto_schedule() -> None:
         silver_bullet_scanner.auto_task.cancel()
         silver_bullet_scanner.auto_task = None
     ltf_watcher.stop()
+    price_alert_watcher.stop()
 
 
 app.add_middleware(
@@ -809,6 +817,27 @@ def add_watchlist_item(request: WatchlistAddRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.get("/api/favorites")
+def get_favorites() -> dict[str, Any]:
+    return {"symbols": favorites.load_favorites()}
+
+
+@app.post("/api/favorites")
+def add_favorite(request: FavoriteRequest) -> dict[str, Any]:
+    try:
+        return {"symbols": favorites.add_favorite(request.symbol)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/favorites")
+def remove_favorite(request: FavoriteRequest) -> dict[str, Any]:
+    try:
+        return {"symbols": favorites.remove_favorite(request.symbol)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/watchlist/fno")
 def get_fno_list_info() -> dict[str, Any]:
     """Saved NSE F&O list: when it was last refreshed and how many symbols."""
@@ -840,6 +869,7 @@ def apply_fno_refresh(request: FnoApplyRequest) -> dict[str, Any]:
 def remove_watchlist_item(request: WatchlistRemoveRequest) -> dict[str, Any]:
     try:
         symbols = service.remove_from_watchlist(request.symbol)
+        favorites.remove_favorites([request.symbol])
         purged = service.purge_symbol_data(request.symbol) if request.delete_data else None
         return {"symbols": symbols, "purged": purged}
     except ValueError as exc:
@@ -854,6 +884,8 @@ def rename_watchlist_item(request: WatchlistRenameRequest) -> dict[str, Any]:
         symbols = service.rename_in_watchlist(request.old_symbol, request.new_symbol, request.category, request.classification)
         old_symbol = request.old_symbol.strip().upper()
         renamed_away = all(item["symbol"] != old_symbol for item in symbols)
+        if renamed_away:
+            favorites.rename_favorite(old_symbol, service.module.categorize_symbol(request.new_symbol)["symbol"])
         purged = service.purge_symbol_data(old_symbol) if request.delete_old_data and renamed_away else None
         return {"symbols": symbols, "purged": purged}
     except ValueError as exc:
@@ -1005,6 +1037,12 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
     elif not ltf["enabled"] and ltf_running:
         ltf_watcher.stop()
 
+    alerts = auto["price_alerts"]
+    if alerts["enabled"] and (not price_alert_watcher.running or price_alert_watcher.interval_minutes != alerts["interval_minutes"]):
+        price_alert_watcher.start(alerts["interval_minutes"])
+    elif not alerts["enabled"] and price_alert_watcher.running:
+        price_alert_watcher.stop()
+
 
 def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
     strategies, master = strategy_bridge.list_strategies()
@@ -1020,6 +1058,11 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
                 "running": ltf_watcher.task is not None and not ltf_watcher.task.done(),
                 "last_check_at": ltf_watcher.last_check_at,
                 "last_error": ltf_watcher.last_error,
+            },
+            "price_alerts": {
+                "running": price_alert_watcher.running,
+                "last_check_at": price_alert_watcher.last_check_at,
+                "last_error": price_alert_watcher.last_error,
             },
         },
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
@@ -1046,6 +1089,44 @@ def get_high_impact_news(refresh: bool = False) -> dict[str, Any]:
     """ForexFactory red-folder events this week (cached per IST day; refresh=true fetches live)."""
     currencies = app_settings.load_settings()["news"]["currencies"]
     return news_calendar.get_events(currencies, refresh=refresh)
+
+
+@app.get("/api/price-alerts")
+def get_price_alerts() -> dict[str, Any]:
+    """All price alerts, recent trigger events, and watcher status."""
+    return price_alert_watcher.status()
+
+
+@app.post("/api/price-alerts")
+def create_price_alert(body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return price_alerts.create(body)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/price-alerts/{alert_id}")
+def update_price_alert(alert_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        alert = price_alerts.update(alert_id, body)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if alert is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return alert
+
+
+@app.delete("/api/price-alerts/{alert_id}")
+def delete_price_alert(alert_id: str) -> dict[str, bool]:
+    if not price_alerts.delete(alert_id):
+        raise HTTPException(status_code=404, detail="alert not found")
+    return {"deleted": True}
+
+
+@app.post("/api/price-alerts/check")
+async def check_price_alerts() -> dict[str, Any]:
+    """Evaluate all active alerts now (ignores the interval)."""
+    return await price_alert_watcher.check()
 
 
 @app.get("/api/ltf-confirmation")

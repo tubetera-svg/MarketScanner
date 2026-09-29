@@ -11,6 +11,7 @@ import OhlcChart, {
   type Bar,
   type Overlays,
 } from "./OhlcChart";
+import PriceAlertPanel, { type PriceAlert } from "./PriceAlertPanel";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -242,6 +243,9 @@ export default function TradingViewChartModal({
   const [reloadNonce, setReloadNonce] = useState(0);
   const [resetNonce, setResetNonce] = useState(0);
   const [fitAll, setFitAll] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [symbolAlerts, setSymbolAlerts] = useState<PriceAlert[]>([]);
+  const [pickedLevel, setPickedLevel] = useState<{ price: number; nonce: number } | null>(null);
   const chartWrapRef = useRef<HTMLDivElement>(null);
 
   const interval = prefs.interval;
@@ -405,6 +409,16 @@ export default function TradingViewChartModal({
     }
   };
 
+  const alertLines = useMemo(
+    () => symbolAlerts.map((alert) => ({ id: alert.id, price: alert.level, active: alert.status === "active" })),
+    [symbolAlerts],
+  );
+
+  const pickLevel = (price: number) => {
+    setAlertsOpen(true);
+    setPickedLevel((current) => ({ price, nonce: (current?.nonce ?? 0) + 1 }));
+  };
+
   if (!chart) return null;
 
   const up = (stats?.change ?? 0) >= 0;
@@ -434,6 +448,9 @@ export default function TradingViewChartModal({
             ) : null}
           </div>
           <div className="chart-modal-actions">
+            <button type="button" className={`chart-tool-btn${alertsOpen ? " active" : ""}`} onClick={() => setAlertsOpen((value) => !value)} title="Price alerts for this symbol (Alt+click the chart to pick a level)">
+              Alert{symbolAlerts.some((alert) => alert.status === "active") ? ` (${symbolAlerts.filter((alert) => alert.status === "active").length})` : ""}
+            </button>
             <button type="button" className="chart-tool-btn" onClick={copySymbol} title="Copy symbol">
               {copied ? "Copied" : "Copy"}
             </button>
@@ -496,6 +513,11 @@ export default function TradingViewChartModal({
               </div>
             </div>
 
+            {/* Stays mounted while collapsed so alert lines still draw on the chart. */}
+            <div hidden={!alertsOpen}>
+              <PriceAlertPanel symbol={chart.symbol} lastPrice={stats?.last.close ?? null} pickedLevel={pickedLevel} onAlertsChange={setSymbolAlerts} />
+            </div>
+
             {stats && data.status === "ready" ? (
               <div className="chart-stats">
                 <span className="chart-stat" title={data.notes.join(" ") || undefined}>
@@ -544,6 +566,8 @@ export default function TradingViewChartModal({
                   initialCount={fitAll ? null : VISIBLE_FOR[interval]}
                   resetKey={`${data.key}|${resetNonce}`}
                   levels={!intraday && stats ? { high: stats.high, low: stats.low } : null}
+                  alertLines={alertLines}
+                  onAltClick={pickLevel}
                 />
               ) : data.status === "loading" ? (
                 <div className="chart-frame chart-frame-loading">Loading {chart.symbol} {intervalLabel} candles…</div>

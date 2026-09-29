@@ -3,6 +3,7 @@
 import TradingViewChartModal, { type ChartTarget } from "../../components/TradingViewChartModal";
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
+import { FavoriteStar, useFavorites } from "../../components/Favorites";
 
 // IPO tracker: reads NSE IPO metadata + live performance from the local API.
 // Data loads from the local SQLite store on mount/refresh.
@@ -134,6 +135,8 @@ export default function IPOPage() {
   const [bucket, setBucket] = useState<PerfBucket>("all");
   const [freshness, setFreshness] = useState<Freshness>("all");
   const [liquidOnly, setLiquidOnly] = useState(true);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const { favorites, isFavorite, toggle: toggleFavorite, reload: reloadFavorites } = useFavorites();
   const [signalFilter, setSignalFilter] = useState<SignalFilter>("all");
   const [hydrated, setHydrated] = useState(false);
   const [review, setReview] = useState<{ rows: MergedReviewRow[]; keep_count: number; screenError?: string } | null>(null);
@@ -150,6 +153,7 @@ export default function IPOPage() {
       const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null");
       if (saved) {
         if (typeof saved.liquidOnly === "boolean") setLiquidOnly(saved.liquidOnly);
+        if (typeof saved.favoritesOnly === "boolean") setFavoritesOnly(saved.favoritesOnly);
         if (PRESETS.some((p) => p.key === saved.signalFilter)) setSignalFilter(saved.signalFilter);
         if (typeof saved.sortKey === "string") setSortKey(saved.sortKey);
         if (saved.sortDir === "asc" || saved.sortDir === "desc") setSortDir(saved.sortDir);
@@ -163,11 +167,11 @@ export default function IPOPage() {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ liquidOnly, signalFilter, sortKey, sortDir }));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ liquidOnly, favoritesOnly, signalFilter, sortKey, sortDir }));
     } catch {
       // ignore
     }
-  }, [hydrated, liquidOnly, signalFilter, sortKey, sortDir]);
+  }, [hydrated, liquidOnly, favoritesOnly, signalFilter, sortKey, sortDir]);
 
   const summary = useMemo(() => {
     const pool = liquidOnly ? items.filter((i) => i.liquidity === "LIQUID") : items;
@@ -181,10 +185,10 @@ export default function IPOPage() {
   }, [items, liquidOnly]);
 
   const advancedActive = [year !== "all", bucket !== "all", freshness !== "all", minPct !== "", maxPct !== "", neverAbove].filter(Boolean).length;
-  const anyFilter = query !== "" || advancedActive > 0 || signalFilter !== "all" || !liquidOnly;
+  const anyFilter = query !== "" || advancedActive > 0 || signalFilter !== "all" || !liquidOnly || favoritesOnly;
   const clearFilters = () => {
     setQuery(""); setYear("all"); setBucket("all"); setFreshness("all");
-    setMinPct(""); setMaxPct(""); setNeverAbove(false); setSignalFilter("all"); setLiquidOnly(true);
+    setMinPct(""); setMaxPct(""); setNeverAbove(false); setSignalFilter("all"); setLiquidOnly(true); setFavoritesOnly(false);
   };
 
   const years = useMemo(
@@ -205,6 +209,7 @@ export default function IPOPage() {
         if (!(listed >= cutoff)) return false;
       }
       if (liquidOnly && item.liquidity !== "LIQUID") return false;
+      if (favoritesOnly && !favorites.has(item.symbol.toUpperCase())) return false;
       if (signalFilter === "leaders" && item.signal !== "LEADER") return false;
       if (signalFilter === "entry" && !(item.breakout_20d || item.pullback_20dma)) return false;
       if (signalFilter === "breakout" && !item.breakout_20d) return false;
@@ -247,7 +252,7 @@ export default function IPOPage() {
       return (na - nb) * dir;
     });
     return out;
-  }, [items, query, year, bucket, freshness, liquidOnly, signalFilter, minPct, maxPct, neverAbove, sortKey, sortDir]);
+  }, [items, query, year, bucket, freshness, liquidOnly, favoritesOnly, favorites, signalFilter, minPct, maxPct, neverAbove, sortKey, sortDir]);
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -340,6 +345,7 @@ export default function IPOPage() {
       setReview((prev) => (prev ? { ...prev, rows: prev.rows.filter((row) => !gone.has(row.symbol)) } : prev));
       setSelected((prev) => new Set([...prev].filter((s) => !gone.has(s))));
       setMessage(`Deleted ${symbols.length} IPO(s)`);
+      void reloadFavorites();
       await loadPerformance(true);
     } catch (error) {
       setMessage(`Delete failed: ${error instanceof Error ? error.message : error}`);
@@ -481,6 +487,10 @@ export default function IPOPage() {
         <label className="filter-label filter-check" title="Only IPOs whose 60-day median traded value is above the liquid threshold (Rs 1 cr/day)">
           <input type="checkbox" checked={liquidOnly} onChange={(e) => setLiquidOnly(e.target.checked)} />
           Liquid only
+        </label>
+        <label className="filter-label filter-check" title="Only starred symbols (favorites are shared with the scanner and Watchlist pages)">
+          <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
+          ★ Favorites{favorites.size ? ` (${favorites.size})` : ""}
         </label>
         <details className="ipo-more">
           <summary><SlidersHorizontal size={13} /> More filters{advancedActive ? ` (${advancedActive})` : ""}</summary>
@@ -647,7 +657,7 @@ export default function IPOPage() {
                     v == null ? "—" : `${v > 0 ? "+" : ""}${v}${suffix}`;
                   return (
                   <tr key={item.symbol} className={item.signal === "LEADER" ? "ipo-row-leader" : undefined}>
-                    <td>{chartLink(item.symbol)}</td>
+                    <td><span className="ipo-symbol-cell"><FavoriteStar symbol={item.symbol} active={isFavorite(item.symbol)} onToggle={() => void toggleFavorite(item.symbol)} />{chartLink(item.symbol)}</span></td>
                     <td>
                       <span className={`badge ${item.signal === "LEADER" ? "bias-bull" : item.signal === "WEAK" ? "bias-bear" : "bias-neutral"}`}>
                         {item.signal}{item.strength_score != null ? ` ${item.strength_score}/6` : ""}
