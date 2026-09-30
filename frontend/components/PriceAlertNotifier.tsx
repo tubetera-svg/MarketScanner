@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 import TradingViewChartModal, { type ChartTarget } from "./TradingViewChartModal";
-import { CONDITION_LABEL, type PriceAlertEvent, type PriceAlertStatus } from "./PriceAlertPanel";
+import { describeAlert, type PriceAlertEvent, type PriceAlertStatus } from "./PriceAlertPanel";
 import { playAlertSound } from "./alertSound";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -34,8 +34,8 @@ export default function PriceAlertNotifier() {
           setToasts((current) => [...current, ...fresh].slice(-5));
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             for (const event of fresh) {
-              new Notification(`${event.symbol} ${CONDITION_LABEL[event.condition]} ${event.level}`, {
-                body: `Last ${event.price ?? "-"}${event.note ? ` · ${event.note}` : ""}`,
+              new Notification(`${event.symbol} ${describeAlert(event)}`, {
+                body: `At ${event.price ?? "-"}${event.note ? ` · ${event.note}` : ""}`,
                 tag: event.id,
               });
             }
@@ -50,19 +50,39 @@ export default function PriceAlertNotifier() {
 
   const dismiss = (id: string) => setToasts((current) => current.filter((item) => item.id !== id));
 
+  // Toast actions: snooze a repeating alert, re-arm a one-shot one.
+  const act = (event: PriceAlertEvent, body: Record<string, unknown>) => {
+    dismiss(event.id);
+    fetch(`${API}/api/price-alerts/${event.alert_id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => undefined);
+  };
+
   return (
     <>
       {toasts.length > 0 && (
         <div className="price-alert-toasts" role="status" aria-live="assertive">
           {toasts.map((event) => (
             <div key={event.id} className="price-alert-toast">
-              <button type="button" className="price-alert-toast-body" onClick={() => { setChart({ symbol: event.symbol, sourceLink: null }); dismiss(event.id); }}>
-                <Zap size={14} />
-                <span>
-                  <strong>{event.symbol}</strong> {CONDITION_LABEL[event.condition]} {event.level}
-                  <small>Last {event.price ?? "-"}{event.note ? ` · ${event.note}` : ""}</small>
-                </span>
-              </button>
+              <div className="price-alert-toast-main">
+                <button type="button" className="price-alert-toast-body" onClick={() => { setChart({ symbol: event.symbol, sourceLink: null, interval: "5m" }); dismiss(event.id); }} title="Open the 5m chart (the trigger is marked)">
+                  <Zap size={14} />
+                  <span>
+                    <strong>{event.symbol}</strong> {describeAlert(event)}
+                    <small>At {event.price ?? "-"}{event.note ? ` · ${event.note}` : ""}</small>
+                  </span>
+                </button>
+                <div className="price-alert-toast-actions">
+                  <button type="button" onClick={() => { setChart({ symbol: event.symbol, sourceLink: null, interval: "5m" }); dismiss(event.id); }}>Chart</button>
+                  {event.trigger === "once" ? (
+                    <button type="button" onClick={() => act(event, { status: "active" })} title="Watch this level again">Re-arm</button>
+                  ) : (
+                    <button type="button" onClick={() => act(event, { snooze_minutes: 30 })} title="Mute this alert for 30 minutes">Snooze 30m</button>
+                  )}
+                </div>
+              </div>
               <button type="button" className="price-alert-toast-close" aria-label="Dismiss alert" onClick={() => dismiss(event.id)}>×</button>
             </div>
           ))}

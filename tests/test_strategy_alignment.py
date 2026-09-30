@@ -171,6 +171,49 @@ def test_target_behind_entry_is_dropped():
     assert row["target"] is None and row["rr"] is None
 
 
+def test_invalidation_bar_sweeping_both_sides_and_closing_inside_is_ignored():
+    # Invalidation takes the reference high 105 and low 100.5, closes inside above EQ.
+    row = _dbi((104.0, 104.2, 101.5, 102.0), invalidation=(104.5, 106.0, 100.0, 104.0))
+    assert bool(row["final_signal"]) is False
+
+
+# ---------------------------------------------------------------------------
+# Two-sided sweeps
+# ---------------------------------------------------------------------------
+def _consolidation(thursday):
+    rows = _flat_history() + [
+        (date(2026, 2, 9), (100.0, 101.0, 99.0, 100.2)),
+        (date(2026, 2, 10), (100.2, 100.8, 99.2, 100.0)),
+        (date(2026, 2, 11), (100.0, 100.9, 99.1, 100.1)),
+        (date(2026, 2, 12), thursday),
+    ]
+    return all_strategy.run_weekly_profile(
+        ["TEST"], date(2026, 2, 12), daily_map={"TEST": _frame(rows)},
+        profile_key="consolidation_reversal_sweep",
+    ).results.iloc[0]
+
+
+def test_consolidation_reversal_one_sided_fake_break_signals():
+    row = _consolidation((100.1, 101.5, 99.5, 100.2))
+    assert bool(row["bearish_match"]) is True
+
+
+def test_consolidation_reversal_both_sides_swept_is_ignored():
+    row = _consolidation((100.1, 101.5, 98.5, 100.2))
+    assert bool(row["bullish_match"]) is False and bool(row["bearish_match"]) is False
+    assert "thursday_swept_both_sides" in row["note"]
+
+
+def test_ict_sweep_of_both_sides_closing_inside_is_ignored():
+    import ict_scanner
+
+    levels = dict(pdh=105.0, pdl=100.0, pwh=110.0, pwl=95.0)
+    assert ict_scanner.detect_liquidity_sweep([(102.0, 106.0, 99.0, 102.0)], **levels) is None
+    assert ict_scanner.detect_liquidity_sweep([(102.0, 104.0, 99.0, 102.0)], **levels) == "PDL"
+    # Took PDL but closed beyond PDH: close-beyond keeps the sell-side read.
+    assert ict_scanner.detect_liquidity_sweep([(102.0, 106.0, 99.0, 105.5)], **levels) == "PDL"
+
+
 def test_daily_bias_invalidation_fetches_when_no_daily_map(monkeypatch):
     calls = []
     monkeypatch.setattr(

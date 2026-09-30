@@ -1872,8 +1872,14 @@ def run_daily_bias_invalidation(
             or (bias == "Bearish" and invalidation_close > eq)
         )
         # Opposing setup = an opposite candle 2: sweep the bias-side extreme,
-        # then close back inside the reference range.
-        opposing_setup = (
+        # then close back inside the reference range. A bar that swept both
+        # extremes and closed inside proves nothing, so it is ignored.
+        swept_both_closed_inside = (
+            float(invalidation["High"]) > reference_high
+            and float(invalidation["Low"]) < reference_low
+            and reference_low < invalidation_close < reference_high
+        )
+        opposing_setup = not swept_both_closed_inside and (
             (bias == "Bullish" and float(invalidation["High"]) > reference_high and invalidation_close < reference_high)
             or (bias == "Bearish" and float(invalidation["Low"]) < reference_low and invalidation_close > reference_low)
         )
@@ -2276,6 +2282,9 @@ def _evaluate_consolidation_reversal(context: Dict[str, object]) -> Dict[str, ob
     fake_down = float(thu["low"]) < cons_low and float(thu["close"]) > cons_low
     if not fake_up and not fake_down:
         return {"bullish": False, "bearish": False, "note": "no_thursday_failure"}
+    if fake_up and fake_down:
+        # Both sides swept and closed back inside: no directional conclusion.
+        return {"bullish": False, "bearish": False, "note": "thursday_swept_both_sides"}
 
     # Fake upside break expects downside expansion on Friday; mirror otherwise.
     direction = -1 if fake_up else 1

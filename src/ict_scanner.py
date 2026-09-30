@@ -972,18 +972,24 @@ def detect_liquidity_sweep(
 
     # Sell-side liquidity: candle must actually trade through the level
     # (or come within `tolerance` of it) and close back above it.
+    sell_side = None
     if (l < pdl or slightly_beyond(l, pdl)) and c > pdl:
-        return "PDL"
-    if (l < pwl or slightly_beyond(l, pwl)) and c > pwl:
-        return "PWL"
+        sell_side = "PDL"
+    elif (l < pwl or slightly_beyond(l, pwl)) and c > pwl:
+        sell_side = "PWL"
 
     # Buy-side liquidity: candle must trade through the level (or
     # within `tolerance`) and close back below it.
+    buy_side = None
     if (h > pdh or slightly_beyond(h, pdh)) and c < pdh:
-        return "PDH"
-    if (h > pwh or slightly_beyond(h, pwh)) and c < pwh:
-        return "PWH"
-    return None
+        buy_side = "PDH"
+    elif (h > pwh or slightly_beyond(h, pwh)) and c < pwh:
+        buy_side = "PWH"
+
+    # Both sides swept and closed back inside: no directional conclusion.
+    if sell_side and buy_side:
+        return None
+    return sell_side or buy_side
 
 
 # ==================================================

@@ -6,12 +6,14 @@ import OhlcChart, {
   VWAP_COLOR,
   aggregate,
   downloadSvgPng,
+  ema,
+  inferTick,
   formatPrice,
   formatVolume,
   type Bar,
   type Overlays,
 } from "./OhlcChart";
-import PriceAlertPanel, { type PriceAlert } from "./PriceAlertPanel";
+import PriceAlertPanel, { describeAlert, type AlertCondition, type PriceAlert, type PriceAlertEvent } from "./PriceAlertPanel";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -21,7 +23,13 @@ export type ChartTarget = {
   sourceLink?: string | null;
   /** Pre-resolved TradingView symbol; skips the resolution round-trip when set. */
   tvSymbol?: string | null;
+  /** Interval to open on (e.g. "5m" from an alert toast); otherwise the saved one. */
+  interval?: "5m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1M";
+  /** Scanner setup levels: drawn as guides, offered as one-click alerts ("Watch setup"). */
+  levels?: ChartLevel[];
 };
+
+export type ChartLevel = { label: string; price: number; price2?: number | null };
 
 /**
  * Resolve an app symbol (e.g. NSE:ACHYUT) to the TradingView symbol that
@@ -245,10 +253,16 @@ export default function TradingViewChartModal({
   const [fitAll, setFitAll] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [symbolAlerts, setSymbolAlerts] = useState<PriceAlert[]>([]);
-  const [pickedLevel, setPickedLevel] = useState<{ price: number; nonce: number } | null>(null);
+  const [pickedLevel, setPickedLevel] = useState<{ price: number; price2?: number | null; nonce: number } | null>(null);
+  const [symbolEvents, setSymbolEvents] = useState<PriceAlertEvent[]>([]);
+  const [menu, setMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+  const [alertNote, setAlertNote] = useState<string | null>(null);
   const chartWrapRef = useRef<HTMLDivElement>(null);
 
-  const interval = prefs.interval;
+  // chart.interval (toast / Silver Bullet chip) applies to this popup only and
+  // is never saved as the default; picking an interval clears it.
+  const [intervalOverride, setIntervalOverride] = useState<Interval | null>(chart?.interval ?? null);
+  const interval = intervalOverride ?? prefs.interval;
   const intraday = INTRADAY.has(interval);
 
   // "Open" link target: provider link, preset, or the symbol the backend
@@ -335,10 +349,15 @@ export default function TradingViewChartModal({
     return () => window.clearInterval(timer);
   }, [intraday, prefs.autoRefresh, data.live]);
 
+  const menuRef = useRef(false);
+  menuRef.current = menu !== null;
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        // First Escape closes the quick-alert menu, the next one the popup.
+        if (menuRef.current) setMenu(null);
+        else onClose();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -387,6 +406,7 @@ export default function TradingViewChartModal({
     setPrefs((current) => ({ ...current, overlays: { ...current.overlays, [key]: value } }));
 
   const setInterval_ = (value: Interval) => {
+    setIntervalOverride(null);
     setPrefs((current) => ({ ...current, interval: value }));
     setFitAll(false);
   };
@@ -410,16 +430,119 @@ export default function TradingViewChartModal({
   };
 
   const alertLines = useMemo(
-    () => symbolAlerts.map((alert) => ({ id: alert.id, price: alert.level, active: alert.status === "active" })),
+    () => symbolAlerts.map((alert) => ({
+      id: alert.id,
+      price: alert.level,
+      price2: alert.level2 ?? null,
+      active: alert.status === "active",
+      draggable: alert.status === "active" || alert.status === "paused",
+    })),
     [symbolAlerts],
   );
+  const [alertsRefresh, setAlertsRefresh] = useState(0);
+  const tick = useMemo(() => inferTick(data.bars), [data.bars]);
+  const markers = useMemo(
+    () => symbolEvents.map((event) => ({
+      id: event.id,
+      ts: event.ts,
+      price: event.price ?? event.level,
+      label: `${describeAlert(event)} — ${new Date(event.ts).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`,
+    })),
+    [symbolEvents],
+  );
+  const setupLevels = useMemo(() => chart?.levels ?? [], [chart?.levels]);
+  const guideLines = useMemo(
+    () => setupLevels.flatMap((level) => (level.price2 != null
+      ? [{ price: Math.max(level.price, level.price2), label: `${level.label} high` }, { price: Math.min(level.price, level.price2), label: `${level.label} low` }]
+      : [{ price: level.price, label: level.label }])),
+    [setupLevels],
+  );
 
-  const pickLevel = (price: number) => {
+  // Right-click menu: common reference levels at the latest bar.
+  const quickLevels = useMemo(() => {
+    const bars = data.bars;
+    if (!bars.length) return [] as ChartLevel[];
+    const closes = bars.map((bar) => bar.close);
+    const out: ChartLevel[] = [{ label: "Last close", price: closes[closes.length - 1] }];
+    if (intraday) {
+      // Previous session high/low from the intraday bars (IST dates).
+      const lastDay = bars[bars.length - 1].date.slice(0, 10);
+      const prevDay = [...bars].reverse().find((bar) => bar.date.slice(0, 10) < lastDay)?.date.slice(0, 10);
+      const prev = prevDay ? bars.filter((bar) => bar.date.startsWith(prevDay)) : [];
+      if (prev.length) {
+        out.push({ label: "Prev day high", price: Math.max(...prev.map((bar) => bar.high)) });
+        out.push({ label: "Prev day low", price: Math.min(...prev.map((bar) => bar.low)) });
+      }
+    } else if (bars.length > 1) {
+      out.push({ label: "Prev bar high", price: bars[bars.length - 2].high });
+      out.push({ label: "Prev bar low", price: bars[bars.length - 2].low });
+    }
+    if (stats && !intraday) {
+      out.push({ label: "52W high", price: stats.high });
+      out.push({ label: "52W low", price: stats.low });
+    }
+    for (const period of [20, 50, 200]) {
+      const value = ema(closes, period)[closes.length - 1];
+      if (value != null) out.push({ label: `EMA ${period}`, price: value });
+    }
+    return out;
+  }, [data.bars, intraday, stats]);
+
+  const flash = (text: string) => {
+    setAlertNote(text);
+    window.setTimeout(() => setAlertNote(null), 3500);
+  };
+
+  // One-click alerts (quick menu / scanner levels): crosses (or enters zone), once.
+  const createAlerts = async (levels: ChartLevel[]) => {
+    if (!symbol || !levels.length) return;
+    const body = {
+      alerts: levels.map((level) => ({
+        symbol,
+        level: snap(level.price),
+        level2: level.price2 != null ? snap(level.price2) : null,
+        condition: (level.price2 != null ? "enters_zone" : "crosses") as AlertCondition,
+        trigger: "once",
+        note: level.label,
+        reference_price: stats?.last.close ?? null,
+      })),
+    };
+    try {
+      const response = await fetch(`${API}/api/price-alerts/batch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const payload = await response.json().catch(() => null);
+      flash(response.ok ? `Added ${levels.length} alert${levels.length === 1 ? "" : "s"}` : typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
+    } catch {
+      flash("Couldn't create the alert");
+    }
+    setAlertsRefresh((n) => n + 1);
+  };
+
+  // Dragged alert line: show the new level at once, save it, then reload the
+  // panel (a failed save reloads the stored level). The backend re-seeds the
+  // cross side on a level change, so a move past the price never fires by itself.
+  const moveAlert = (id: string, edge: "level" | "level2", price: number) => {
+    setSymbolAlerts((current) => current.map((alert) => (alert.id === id ? { ...alert, [edge]: price } : alert)));
+    fetch(`${API}/api/price-alerts/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [edge]: price }),
+    })
+      .catch(() => undefined)
+      .finally(() => setAlertsRefresh((n) => n + 1));
+  };
+
+  const pickLevel = (price: number, price2: number | null = null) => {
     setAlertsOpen(true);
-    setPickedLevel((current) => ({ price, nonce: (current?.nonce ?? 0) + 1 }));
+    setPickedLevel((current) => ({ price, price2, nonce: (current?.nonce ?? 0) + 1 }));
   };
 
   if (!chart) return null;
+
+  function snap(value: number) {
+    if (!tick) return Number(value.toPrecision(6));
+    const decimals = (tick.toString().split(".")[1] ?? "").length;
+    return Number((Math.round(value / tick) * tick).toFixed(decimals));
+  }
 
   const up = (stats?.change ?? 0) >= 0;
   const intervalLabel = INTERVALS.find(([key]) => key === interval)?.[1] ?? interval;
@@ -448,6 +571,12 @@ export default function TradingViewChartModal({
             ) : null}
           </div>
           <div className="chart-modal-actions">
+            {alertNote ? <span className="chart-alert-flash" role="status">{alertNote}</span> : null}
+            {setupLevels.length ? (
+              <button type="button" className="chart-tool-btn" onClick={() => void createAlerts(setupLevels)} title={`Create alerts at the scanner setup's levels: ${setupLevels.map((level) => level.label).join(", ")}`}>
+                Watch setup ({setupLevels.length})
+              </button>
+            ) : null}
             <button type="button" className={`chart-tool-btn${alertsOpen ? " active" : ""}`} onClick={() => setAlertsOpen((value) => !value)} title="Price alerts for this symbol (Alt+click the chart to pick a level)">
               Alert{symbolAlerts.some((alert) => alert.status === "active") ? ` (${symbolAlerts.filter((alert) => alert.status === "active").length})` : ""}
             </button>
@@ -515,7 +644,7 @@ export default function TradingViewChartModal({
 
             {/* Stays mounted while collapsed so alert lines still draw on the chart. */}
             <div hidden={!alertsOpen}>
-              <PriceAlertPanel symbol={chart.symbol} lastPrice={stats?.last.close ?? null} pickedLevel={pickedLevel} onAlertsChange={setSymbolAlerts} />
+              <PriceAlertPanel symbol={chart.symbol} lastPrice={stats?.last.close ?? null} tick={tick} pickedLevel={pickedLevel} onAlertsChange={(alerts, events) => { setSymbolAlerts(alerts); setSymbolEvents(events); }} refreshKey={alertsRefresh} />
             </div>
 
             {stats && data.status === "ready" ? (
@@ -568,6 +697,12 @@ export default function TradingViewChartModal({
                   levels={!intraday && stats ? { high: stats.high, low: stats.low } : null}
                   alertLines={alertLines}
                   onAltClick={pickLevel}
+                  onAlertMove={moveAlert}
+                  onZoneDraw={(low, high) => pickLevel(low, high)}
+                  onContextMenu={(price, x, y) => setMenu({ price, x, y })}
+                  guideLines={guideLines}
+                  markers={markers}
+                  tick={tick}
                 />
               ) : data.status === "loading" ? (
                 <div className="chart-frame chart-frame-loading">Loading {chart.symbol} {intervalLabel} candles…</div>
@@ -591,8 +726,29 @@ export default function TradingViewChartModal({
                 </div>
               )}
             </div>
+            {menu ? (
+              <div className="chart-quick-backdrop" onMouseDown={() => setMenu(null)} onContextMenu={(event) => { event.preventDefault(); setMenu(null); }}>
+                <div
+                  className="chart-quick-menu"
+                  role="menu"
+                  style={{ left: Math.min(menu.x, window.innerWidth - 250), top: Math.min(menu.y, window.innerHeight - 320) }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <p>Quick alert · crosses, once</p>
+                  {[{ label: "At cursor", price: menu.price }, ...setupLevels, ...quickLevels].map((level, index) => (
+                    <button key={`${level.label}-${index}`} type="button" role="menuitem" onClick={() => { setMenu(null); void createAlerts([level]); }}>
+                      <span>{level.label}</span>
+                      <em>{level.price2 != null ? `${formatPrice(Math.min(level.price, level.price2))} – ${formatPrice(Math.max(level.price, level.price2))}` : formatPrice(snap(level.price))}</em>
+                    </button>
+                  ))}
+                  <button type="button" role="menuitem" className="more" onClick={() => { setMenu(null); pickLevel(menu.price); }}>
+                    <span>More options at {formatPrice(snap(menu.price))}…</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="chart-footnote muted">
-              Candles via backend (TradingView feed, local DB fallback) · times IST · scroll to zoom · drag to pan · ←/→ keys · double-click resets
+              Candles via backend (TradingView feed, local DB fallback) · times IST · scroll to zoom · drag to pan · drag an alert line to move it · Alt+drag draws a zone · right-click for quick alerts · ←/→ keys · double-click resets
             </div>
         </>
       </section>

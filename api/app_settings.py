@@ -37,7 +37,9 @@ DEFAULTS: dict[str, Any] = {
         "data_auto_sync": {"enabled": False, "lookback_days": 14, "interval_hours": 0.25},
         "ltf_confirmation": {"enabled": False, "interval_minutes": 2},
         # Price alerts from the chart popup (api/price_alerts.py).
-        "price_alerts": {"enabled": True, "interval_minutes": 15},
+        # near_pct: check every 5 min while price is within this % of a level
+        # (0 = off); push: also send fired alerts to Telegram/ntfy (env vars).
+        "price_alerts": {"enabled": True, "interval_minutes": 15, "near_pct": 0.5, "push": False},
     },
     "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
     # Daily-bar "final" cut-off per market, 'HH:MM' in the market's fixed
@@ -69,6 +71,7 @@ _INT_LIMITS = {
 # (section, key) -> (min, max) for float fields
 _FLOAT_LIMITS = {
     ("data_auto_sync", "interval_hours"): (0.25, 24.0),
+    ("price_alerts", "near_pct"): (0.0, 10.0),
 }
 
 

@@ -1,99 +1,61 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { formatPrice } from "./OhlcChart";
+import PriceAlertForm, { type AlertPayload } from "./PriceAlertForm";
+import {
+  TRIGGER_LABEL,
+  WINDOW_LABEL,
+  alertSymbol,
+  describeAlert,
+  type PriceAlert,
+  type PriceAlertEvent,
+  type PriceAlertStatus,
+} from "./priceAlertShared";
+
+export * from "./priceAlertShared";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
-export type PriceAlert = {
-  id: string;
-  symbol: string;
-  level: number;
-  condition: "crosses_above" | "crosses_below" | "crosses";
-  trigger: "once" | "once_per_day" | "every_check";
-  cooldown_min: number;
-  expires_at: string | null;
-  note: string;
-  status: "active" | "paused" | "triggered" | "expired";
-  last_price: number | null;
-  last_triggered_at: string | null;
-  trigger_count: number;
-  /** Fired within the current daily bar (per Settings > Daily bar cut-offs). */
-  triggered_this_session?: boolean;
-};
-
-export type PriceAlertEvent = {
-  id: string;
-  alert_id: string;
-  ts: string;
-  symbol: string;
-  condition: PriceAlert["condition"];
-  level: number;
-  price: number | null;
-  note: string;
-};
-
-export type PriceAlertStatus = {
-  running: boolean;
-  interval_minutes: number;
-  last_check_at: string | null;
-  last_error: string | null;
-  alerts: PriceAlert[];
-  triggered_session_count: number;
-  events: PriceAlertEvent[];
-};
-
-export const CONDITION_LABEL: Record<PriceAlert["condition"], string> = {
-  crosses: "crosses",
-  crosses_above: "crosses above",
-  crosses_below: "crosses below",
-};
-
-const TRIGGER_LABEL: Record<PriceAlert["trigger"], string> = {
-  once: "Once",
-  once_per_day: "Once per day (cut-off)",
-  every_check: "Every cross",
-};
-
-const EXPIRY: [string, number | null][] = [
-  ["Never", null],
-  ["1 day", 1],
-  ["1 week", 7],
-  ["1 month", 30],
-];
-
-/** Backend symbol key: bare symbols are NSE. */
-export const alertSymbol = (symbol: string) => {
-  const value = symbol.trim().toUpperCase();
-  return value.includes(":") ? value : `NSE:${value}`;
+/** POST/PUT a JSON body; returns an error message or null. */
+export const saveAlert = async (url: string, method: "POST" | "PUT", body: unknown): Promise<string | null> => {
+  try {
+    const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    return typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`;
+  } catch {
+    return "Request failed";
+  }
 };
 
 /**
- * Chart-popup alert form + this symbol's alerts. Evaluated server-side every
- * `interval_minutes` on completed 5m bars; delivery is in-app (scanner page).
+ * Chart-popup alert form + this symbol's alerts (each editable in place).
+ * Evaluated server-side on completed bars (see api/price_alerts.py); delivery
+ * is PriceAlertNotifier.
  */
 export default function PriceAlertPanel({
   symbol,
   lastPrice,
+  tick,
   pickedLevel,
   onAlertsChange,
+  refreshKey = 0,
 }: {
   symbol: string;
   lastPrice: number | null;
-  /** Level picked by Alt+click on the chart (nonce forces refill of the same price). */
-  pickedLevel: { price: number; nonce: number } | null;
-  onAlertsChange: (alerts: PriceAlert[]) => void;
+  /** Price step used to snap levels. */
+  tick?: number | null;
+  /** Level (or zone) picked on the chart; the nonce refills the same price. */
+  pickedLevel: { price: number; price2?: number | null; nonce: number } | null;
+  onAlertsChange: (alerts: PriceAlert[], events: PriceAlertEvent[]) => void;
+  /** Bump to reload now (e.g. after a line was dragged on the chart). */
+  refreshKey?: number;
 }) {
   const key = alertSymbol(symbol);
   const [status, setStatus] = useState<PriceAlertStatus | null>(null);
-  const [level, setLevel] = useState(lastPrice != null ? formatPrice(lastPrice).replace(/,/g, "") : "");
-  const [condition, setCondition] = useState<PriceAlert["condition"]>("crosses");
-  const [trigger, setTrigger] = useState<PriceAlert["trigger"]>("once");
-  const [cooldown, setCooldown] = useState(60);
-  const [expiryDays, setExpiryDays] = useState<number | null>(null);
-  const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     fetch(`${API}/api/price-alerts`, { cache: "no-store" })
@@ -108,21 +70,16 @@ export default function PriceAlertPanel({
     return () => window.clearInterval(id);
   }, [load]);
 
+  useEffect(() => {
+    if (refreshKey) load();
+  }, [refreshKey, load]);
+
   const mine = (status?.alerts ?? []).filter((alert) => alert.symbol === key);
   useEffect(() => {
-    onAlertsChange(mine);
+    onAlertsChange(mine, (status?.events ?? []).filter((event) => event.symbol === key));
     // `mine` is derived from status; the callback identity is the caller's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, key]);
-
-  useEffect(() => {
-    if (pickedLevel) setLevel(String(Number(pickedLevel.price.toPrecision(6))));
-  }, [pickedLevel]);
-
-  // Candles load after mount: prefill the level with the last close once.
-  useEffect(() => {
-    if (lastPrice != null) setLevel((current) => current || formatPrice(lastPrice).replace(/,/g, ""));
-  }, [lastPrice]);
 
   const send = async (url: string, init: RequestInit) => {
     setBusy(true);
@@ -132,7 +89,6 @@ export default function PriceAlertPanel({
       if (!response.ok) {
         const body = await response.json().catch(() => null);
         setError(typeof body?.detail === "string" ? body.detail : `HTTP ${response.status}`);
-        return;
       }
       load();
     } catch {
@@ -142,58 +98,27 @@ export default function PriceAlertPanel({
     }
   };
 
-  const create = () => {
-    const value = Number(level);
-    if (!Number.isFinite(value) || value <= 0) {
-      setError("Enter a price level");
-      return;
+  const create = async (payload: AlertPayload) => {
+    const failure = await saveAlert(`${API}/api/price-alerts`, "POST", { ...payload, symbol: key, reference_price: lastPrice });
+    if (!failure) load();
+    return failure;
+  };
+
+  const edit = async (id: string, payload: AlertPayload) => {
+    const failure = await saveAlert(`${API}/api/price-alerts/${id}`, "PUT", payload);
+    if (!failure) {
+      setEditingId(null);
+      load();
     }
-    const expires = expiryDays ? new Date(Date.now() + expiryDays * 86400000).toISOString() : null;
-    void send(`${API}/api/price-alerts`, {
-      method: "POST",
-      body: JSON.stringify({
-        symbol: key,
-        level: value,
-        condition,
-        trigger,
-        cooldown_min: trigger === "every_check" ? cooldown : 0,
-        expires_at: expires,
-        note,
-        reference_price: lastPrice,
-      }),
-    });
-    setNote("");
+    return failure;
   };
 
   return (
     <div className="chart-alerts">
-      <div className="chart-alerts-form">
-        <span className="chart-alerts-title">Alert when price</span>
-        <select value={condition} onChange={(event) => setCondition(event.target.value as PriceAlert["condition"])} aria-label="Condition">
-          {Object.entries(CONDITION_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-        <input className="chart-alerts-level" type="number" step="any" value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Price level" />
-        <select value={trigger} onChange={(event) => setTrigger(event.target.value as PriceAlert["trigger"])} aria-label="Trigger frequency">
-          {Object.entries(TRIGGER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-        {trigger === "every_check" ? (
-          <label title="Minimum minutes between two triggers">
-            Cooldown
-            <input className="chart-alerts-num" type="number" min={0} max={1440} value={cooldown} onChange={(event) => setCooldown(Number(event.target.value) || 0)} />
-            min
-          </label>
-        ) : null}
-        <label>
-          Expires
-          <select value={expiryDays ?? ""} onChange={(event) => setExpiryDays(event.target.value ? Number(event.target.value) : null)}>
-            {EXPIRY.map(([label, days]) => <option key={label} value={days ?? ""}>{label}</option>)}
-          </select>
-        </label>
-        <input className="chart-alerts-note" type="text" placeholder="Note (optional)" maxLength={200} value={note} onChange={(event) => setNote(event.target.value)} />
-        <button type="button" className="chart-tool-btn primary" onClick={create} disabled={busy}>Create alert</button>
-      </div>
+      <PriceAlertForm tick={tick} lastPrice={lastPrice} pickedLevel={editingId ? null : pickedLevel} submitLabel="Create alert" onSubmit={create} />
       <div className="chart-alerts-meta muted">
-        Alt+click the chart to pick a level · "day" rolls at this market's daily bar cut-off (Settings) · checked every {status?.interval_minutes ?? 15} min on completed 5m bars (Settings)
+        Alt+click picks a level · Alt+drag draws a zone · drag a line to move it · right-click for quick alerts · checked every {status?.interval_minutes ?? 15} min{status?.near_pct ? ` (every 5 min within ${status.near_pct}% of a level)` : ""}
+        {tick ? ` · tick ${tick}` : ""}
         {status && !status.running ? <span className="warn"> · watcher is off</span> : null}
         {status?.last_error ? <span className="warn" title={status.last_error}> · last check had errors</span> : null}
         {error ? <span className="warn"> · {error}</span> : null}
@@ -201,26 +126,49 @@ export default function PriceAlertPanel({
       {mine.length ? (
         <ul className="chart-alerts-list">
           {mine.map((alert) => (
-            <li key={alert.id} className={`chart-alert-item ${alert.status}`}>
-              <span>
-                {CONDITION_LABEL[alert.condition]} <strong>{formatPrice(alert.level)}</strong> · {TRIGGER_LABEL[alert.trigger]}
-                {alert.trigger === "every_check" && alert.cooldown_min ? ` (${alert.cooldown_min}m cooldown)` : ""}
-                {alert.note ? <span className="muted"> · {alert.note}</span> : null}
-              </span>
-              <span className="chart-alert-state">{alert.status}{alert.trigger_count ? ` ×${alert.trigger_count}` : ""}</span>
-              {alert.status === "active" || alert.status === "paused" ? (
-                <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => void send(`${API}/api/price-alerts/${alert.id}`, { method: "PUT", body: JSON.stringify({ status: alert.status === "active" ? "paused" : "active" }) })}>
-                  {alert.status === "active" ? "Pause" : "Resume"}
+            editingId === alert.id ? (
+              <li key={alert.id} className="chart-alert-edit">
+                <PriceAlertForm
+                  key={alert.id}
+                  initial={alert}
+                  tick={tick}
+                  lastPrice={lastPrice}
+                  pickedLevel={pickedLevel}
+                  title="Edit alert"
+                  submitLabel="Save changes"
+                  onSubmit={(payload) => edit(alert.id, payload)}
+                  onCancel={() => setEditingId(null)}
+                />
+              </li>
+            ) : (
+              <li key={alert.id} className={`chart-alert-item ${alert.status}`}>
+                <span>
+                  {describeAlert(alert)} · {TRIGGER_LABEL[alert.trigger]}
+                  {alert.trigger === "every_check" && alert.cooldown_min ? ` (${alert.cooldown_min}m cooldown)` : ""}
+                  {alert.window && alert.window !== "always" ? ` · ${WINDOW_LABEL[alert.window]}` : ""}
+                  {alert.note ? <span className="muted"> · {alert.note}</span> : null}
+                </span>
+                <span className="chart-alert-state">
+                  {alert.snoozed_until && Date.parse(alert.snoozed_until) > Date.now() ? "snoozed" : alert.status}
+                  {alert.trigger_count ? ` ×${alert.trigger_count}` : ""}
+                </span>
+                <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => setEditingId(alert.id)} title="Edit this alert (Alt+click / Alt+drag on the chart fills its levels)">
+                  Edit
                 </button>
-              ) : (
-                <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => void send(`${API}/api/price-alerts/${alert.id}`, { method: "PUT", body: JSON.stringify(alert.status === "expired" ? { status: "active", expires_at: null } : { status: "active" }) })}>
-                  Re-arm
+                {alert.status === "active" || alert.status === "paused" ? (
+                  <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => void send(`${API}/api/price-alerts/${alert.id}`, { method: "PUT", body: JSON.stringify({ status: alert.status === "active" ? "paused" : "active" }) })}>
+                    {alert.status === "active" ? "Pause" : "Resume"}
+                  </button>
+                ) : (
+                  <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => void send(`${API}/api/price-alerts/${alert.id}`, { method: "PUT", body: JSON.stringify(alert.status === "expired" ? { status: "active", expires_at: null } : { status: "active" }) })}>
+                    Re-arm
+                  </button>
+                )}
+                <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => void send(`${API}/api/price-alerts/${alert.id}`, { method: "DELETE" })}>
+                  Delete
                 </button>
-              )}
-              <button type="button" className="chart-tool-btn" disabled={busy} onClick={() => void send(`${API}/api/price-alerts/${alert.id}`, { method: "DELETE" })}>
-                Delete
-              </button>
-            </li>
+              </li>
+            )
           ))}
         </ul>
       ) : null}

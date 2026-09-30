@@ -17,7 +17,7 @@ type Automation = {
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
   data_auto_sync: { enabled: boolean; lookback_days: number; interval_hours: number };
   ltf_confirmation: { enabled: boolean; interval_minutes: number };
-  price_alerts: { enabled: boolean; interval_minutes: number };
+  price_alerts: { enabled: boolean; interval_minutes: number; near_pct: number; push: boolean };
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
 type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
@@ -41,7 +41,7 @@ type Payload = {
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
     data_auto_sync: { running: boolean; last_run_at: string | null; last_error: string | null };
     ltf_confirmation: { running: boolean; last_check_at: string | null; last_error: string | null };
-    price_alerts: { running: boolean; last_check_at: string | null; last_error: string | null };
+    price_alerts: { running: boolean; last_check_at: string | null; last_error: string | null; push_channels?: string[]; last_push_error?: string | null };
   };
 };
 
@@ -85,7 +85,7 @@ function NumberField({ value, min, max, unit, step = 1, onCommit }: { value: num
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   const commit = () => {
-    const parsed = Math.max(min, Math.min(max, Math.round(Number(draft) / step) * step || value));
+    const parsed = Number(Math.max(min, Math.min(max, Math.round(Number(draft) / step) * step || value)).toFixed(6));
     setDraft(String(parsed));
     if (parsed !== value) onCommit(parsed);
   };
@@ -206,6 +206,32 @@ export default function SettingsPage() {
             <Row title="Price alerts" hint={`How often chart-popup price alerts are checked (completed 5m bars, open markets only; 5 min minimum) — ${stateNote(status.price_alerts.running, status.price_alerts.last_check_at, status.price_alerts.last_error)}`}>
               <NumberField value={auto.price_alerts.interval_minutes} min={5} max={240} unit="min" onCommit={(v) => patchAuto("price_alerts", { interval_minutes: v })} />
               <Switch label="Price alerts" on={auto.price_alerts.enabled} onChange={(v) => patchAuto("price_alerts", { enabled: v })} />
+            </Row>
+            <Row title="Price alerts: near-level checks" hint="Check a symbol every 5 minutes while price is within this % of one of its alert levels (0 = always use the interval above)">
+              <NumberField value={auto.price_alerts.near_pct} min={0} max={10} step={0.1} unit="%" onCommit={(v) => patchAuto("price_alerts", { near_pct: v })} />
+            </Row>
+            <Row
+              title="Price alerts: push"
+              hint={`Also send fired alerts to your phone. Channels come from environment variables on the API machine (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, and/or NTFY_TOPIC) — configured: ${status.price_alerts.push_channels?.length ? status.price_alerts.push_channels.join(", ") : "none"}${status.price_alerts.last_push_error ? ` · last send failed: ${status.price_alerts.last_push_error}` : ""}`}
+            >
+              <button
+                type="button"
+                className="chart-tool-btn"
+                disabled={!status.price_alerts.push_channels?.length}
+                title="Send a test message to the configured channels"
+                onClick={async () => {
+                  try {
+                    const response = await fetch(`${API}/api/price-alerts/test-push`, { method: "POST" });
+                    const body = await response.json().catch(() => null);
+                    setMessage(response.ok ? (body?.errors?.length ? `Test push failed: ${body.errors.join("; ")}` : `Test push sent (${body?.channels?.join(", ")})`) : `Test push: ${body?.detail ?? response.status}`);
+                  } catch (error) {
+                    setMessage(`Test push failed: ${error instanceof Error ? error.message : error}`);
+                  }
+                }}
+              >
+                Send test
+              </button>
+              <Switch label="Price alert push" on={auto.price_alerts.push} onChange={(v) => patchAuto("price_alerts", { push: v })} />
             </Row>
           </section>
 

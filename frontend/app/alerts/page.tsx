@@ -23,7 +23,7 @@ export default function AlertsPage() {
         </div>
       </header>
 
-      <PriceAlertList onOpenChart={(symbol) => setChart({ symbol, sourceLink: null })} />
+      <PriceAlertList onOpenChart={(symbol, interval) => setChart({ symbol, sourceLink: null, interval })} />
 
       {chart && <TradingViewChartModal key={chart.symbol} chart={chart} onClose={() => setChart(null)} />}
     </main>

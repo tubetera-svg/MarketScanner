@@ -29,6 +29,8 @@ const AXIS = "#71808b";
 const INK = "#15232d";
 const RSI_COLOR = "#287b79";
 const ALERT_COLOR = "#e07b00";
+const GUIDE_COLOR = "#2f6f9e";
+const IST_OFFSET_MS = 5.5 * 3600 * 1000;
 export const EMA_COLORS = { ema20: "#356c9b", ema50: "#c08a2e", ema200: "#7c3aed" } as const;
 export const VWAP_COLOR = "#db2777";
 const FONT = "'DM Mono', ui-monospace, monospace";
@@ -135,6 +137,30 @@ export const aggregate = (bars: Bar[], timeframe: "D" | "W" | "M"): Bar[] => {
 
 // ---- formatting ----------------------------------------------------------
 
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+
+/** Price step implied by the bars (e.g. 0.05 for most NSE stocks); null when unknown. */
+export const inferTick = (bars: Bar[]): number | null => {
+  const values = bars.slice(-300).flatMap((bar) => [bar.open, bar.high, bar.low, bar.close]).filter((v) => Number.isFinite(v) && v > 0);
+  if (!values.length) return null;
+  let decimals = 0;
+  for (const value of values) decimals = Math.max(decimals, (value.toFixed(6).replace(/0+$/, "").split(".")[1] ?? "").length);
+  const scale = 10 ** Math.min(decimals, 6);
+  let step = 0;
+  for (const value of values) {
+    step = gcd(step, Math.round(value * scale));
+    if (step === 1) break;
+  }
+  return step ? step / scale : null;
+};
+
+/** Round ``price`` to ``tick`` (or 6 significant digits without one). */
+export const snapPrice = (price: number, tick?: number | null) => {
+  if (!tick) return Number(price.toPrecision(6));
+  const decimals = (tick.toString().split(".")[1] ?? "").length;
+  return Number((Math.round(price / tick) * tick).toFixed(decimals));
+};
+
 export const formatPrice = (value: number) => {
   const abs = Math.abs(value);
   const digits = abs < 1 ? 4 : abs < 10 ? 3 : 2;
@@ -218,7 +244,13 @@ export default function OhlcChart({
   resetKey,
   levels,
   alertLines,
+  guideLines,
+  markers,
+  tick,
   onAltClick,
+  onZoneDraw,
+  onAlertMove,
+  onContextMenu,
 }: {
   bars: Bar[];
   overlays: Overlays;
@@ -233,9 +265,22 @@ export default function OhlcChart({
   /** 52-week high/low from daily data. */
   levels?: { high: number; low: number } | null;
   /** Price alerts to draw; inactive ones are faded. */
-  alertLines?: { id: string; price: number; active: boolean }[];
+  /** Price alerts to draw (``price2`` = zone); inactive ones are faded. */
+  alertLines?: { id: string; price: number; price2?: number | null; active: boolean; draggable?: boolean }[];
+  /** Reference levels (e.g. a scanner setup's entry/SL/target), drawn dotted. */
+  guideLines?: { price: number; label: string }[];
+  /** Fired alerts: ``ts`` = ISO time of the bar where it happened. */
+  markers?: { id: string; ts: string; price: number; label: string }[];
+  /** Price step for snapping picked/dragged levels. */
+  tick?: number | null;
   /** Alt+click inside the price pane reports the price under the cursor. */
   onAltClick?: (price: number) => void;
+  /** Alt+drag inside the price pane reports the band drawn. */
+  onZoneDraw?: (low: number, high: number) => void;
+  /** A draggable alert line (or one zone edge) was dropped at ``price``. */
+  onAlertMove?: (id: string, edge: "level" | "level2", price: number) => void;
+  /** Right-click inside the price pane. */
+  onContextMenu?: (price: number, clientX: number, clientY: number) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const clipId = `ohlc-clip-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -248,6 +293,11 @@ export default function OhlcChart({
   const prevLen = useRef(bars.length);
 
   const len = bars.length;
+  // Alert line being dragged (preview price) and whether the cursor is on one.
+  const [alertDrag, setAlertDrag] = useState<{ id: string; edge: "level" | "level2"; price: number; from: number } | null>(null);
+  // Alt+drag zone being drawn (prices) and where the drag started (px).
+  const [zoneDraw, setZoneDraw] = useState<{ from: number; to: number; y0: number } | null>(null);
+  const [overAlert, setOverAlert] = useState(false);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -344,6 +394,7 @@ export default function OhlcChart({
   const yBot = priceH - 6 - volSpace;
   const y = (price: number) => yBot - ((price - lo) / (hi - lo)) * (yBot - yTop);
   const priceAt = (py: number) => lo + ((yBot - py) / (yBot - yTop)) * (hi - lo);
+  const clampY = (py: number) => Math.min(yBot, Math.max(yTop, py));
   const rsiTop = priceH + 8;
   const rsiBot = plotH - 4;
   const ry = (value: number) => rsiBot - (value / 100) * (rsiBot - rsiTop);
@@ -454,16 +505,68 @@ export default function OhlcChart({
               </text>
             </g>
           ))}
-          {(alertLines ?? [])
+          {(guideLines ?? [])
             .filter(({ price }) => price >= lo && price <= hi)
-            .map(({ id, price, active }) => (
-              <g key={`alert-${id}`} opacity={active ? 1 : 0.4}>
-                <line x1={0} x2={plotW} y1={y(price)} y2={y(price)} stroke={ALERT_COLOR} strokeDasharray="6 3" />
-                <text x={4} y={y(price) - 4} fontSize={9.5} fill={ALERT_COLOR} fontFamily={FONT}>
-                  ALERT {formatPrice(price)}
+            .map(({ price, label }, index) => (
+              <g key={`guide-${index}`}>
+                <line x1={0} x2={plotW} y1={y(price)} y2={y(price)} stroke={GUIDE_COLOR} strokeDasharray="1 3" opacity={0.8} />
+                <text x={plotW - 4} y={y(price) - 4} fontSize={9.5} fill={GUIDE_COLOR} fontFamily={FONT} textAnchor="end">
+                  {label} {formatPrice(price)}
                 </text>
               </g>
             ))}
+          {zoneDraw ? (
+            <rect x={0} width={plotW} y={clampY(y(Math.max(zoneDraw.from, zoneDraw.to)))} height={Math.abs(clampY(y(zoneDraw.from)) - clampY(y(zoneDraw.to)))} fill={ALERT_COLOR} opacity={0.14} stroke={ALERT_COLOR} strokeDasharray="4 3" />
+          ) : null}
+          {(alertLines ?? []).map((line) => {
+            const dragging = alertDrag?.id === line.id;
+            const price = dragging && alertDrag.edge === "level" ? alertDrag.price : line.price;
+            const price2 = line.price2 == null ? null : dragging && alertDrag.edge === "level2" ? alertDrag.price : line.price2;
+            const top = Math.max(price, price2 ?? price);
+            const bottom = Math.min(price, price2 ?? price);
+            if (top < lo || bottom > hi) return null;
+            const edges = price2 == null ? [price] : [price, price2];
+            // Line labels sit above the line on the left; zone labels inside
+            // the band on the right, so a nearby line alert stays readable.
+            const labelY = price2 != null ? clampY(y(top)) + 11 : clampY(y(top)) - 4 < yTop ? clampY(y(top)) + 11 : clampY(y(top)) - 4;
+            return (
+              <g key={`alert-${line.id}`} opacity={line.active || dragging ? 1 : 0.4}>
+                {price2 != null ? (
+                  <rect x={0} width={plotW} y={clampY(y(top))} height={Math.max(0, clampY(y(bottom)) - clampY(y(top)))} fill={ALERT_COLOR} opacity={0.08} />
+                ) : null}
+                {dragging ? (
+                  <line x1={0} x2={plotW} y1={y(alertDrag.from)} y2={y(alertDrag.from)} stroke={ALERT_COLOR} strokeDasharray="2 4" opacity={0.45} />
+                ) : null}
+                {edges
+                  .filter((edge) => edge >= lo && edge <= hi)
+                  .map((edge, index) => (
+                    <line key={index} x1={0} x2={plotW} y1={y(edge)} y2={y(edge)} stroke={ALERT_COLOR} strokeDasharray={dragging ? undefined : "6 3"} strokeWidth={dragging ? 1.5 : 1} />
+                  ))}
+                <text x={price2 != null ? plotW - 4 : 4} y={labelY} fontSize={9.5} fill={ALERT_COLOR} fontFamily={FONT} textAnchor={price2 != null ? "end" : "start"}>
+                  {price2 != null ? `ZONE ${formatPrice(bottom)} – ${formatPrice(top)}` : `ALERT ${formatPrice(price)}`}
+                </text>
+              </g>
+            );
+          })}
+          {(markers ?? []).map((marker) => {
+            // Bar containing the trigger (bars are labelled by IST open time).
+            const label = new Date(Date.parse(marker.ts) - 60000 + IST_OFFSET_MS).toISOString().slice(0, 16);
+            const key = intraday ? label : label.slice(0, 10);
+            let index = -1;
+            for (let i = len - 1; i >= 0; i--) {
+              if (bars[i].date <= key) {
+                index = i;
+                break;
+              }
+            }
+            if (index < v.start || index >= end || marker.price < lo || marker.price > hi) return null;
+            return (
+              <g key={`marker-${marker.id}`}>
+                <title>{marker.label}</title>
+                <circle cx={xc(index)} cy={y(marker.price)} r={4.5} fill={ALERT_COLOR} stroke="#fff" strokeWidth={1.5} />
+              </g>
+            );
+          })}
           {lastY >= yTop && lastY <= yBot ? (
             <line x1={0} x2={plotW} y1={lastY} y2={lastY} stroke={lastUp ? UP : DOWN} strokeDasharray="3 3" opacity={0.7} />
           ) : null}
@@ -501,18 +604,51 @@ export default function OhlcChart({
     );
     // y/xc/ry are derived from the listed values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, series, overlays, levels, alertLines, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId]);
+  }, [bars, series, overlays, levels, alertLines, alertDrag, guideLines, markers, zoneDraw, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId]);
 
   // ---- interaction --------------------------------------------------------
 
-  const localPoint = (event: React.PointerEvent) => {
+  const localPoint = (event: { clientX: number; clientY: number }) => {
     const rect = wrapRef.current?.getBoundingClientRect();
     return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
   };
 
+  /** Draggable alert line (or zone edge) within 5px of ``py`` (price pane only). */
+  const alertAt = (px: number, py: number) => {
+    if (!onAlertMove || px > plotW || py < yTop || py > yBot) return null;
+    let best: { id: string; edge: "level" | "level2"; price: number; gap: number } | null = null;
+    for (const line of alertLines ?? []) {
+      if (!line.draggable) continue;
+      const edges: Array<["level" | "level2", number]> = [["level", line.price]];
+      if (line.price2 != null) edges.push(["level2", line.price2]);
+      for (const [edge, price] of edges) {
+        if (price < lo || price > hi) continue;
+        const gap = Math.abs(y(price) - py);
+        if (gap <= 5 && (!best || gap < best.gap)) best = { id: line.id, edge, price, gap };
+      }
+    }
+    return best;
+  };
+  const clampPrice = (py: number) => snapPrice(priceAt(Math.min(yBot, Math.max(yTop, py))), tick);
+  const capture = (event: React.PointerEvent<SVGSVGElement>) => {
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // pointer already released (e.g. synthetic events): dragging still works inside the chart
+    }
+  };
+  const inPricePane = (point: { x: number; y: number }) => point.x <= plotW && point.y >= yTop && point.y <= yBot;
+
   const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!len || !step) return;
     const point = localPoint(event);
+    if (zoneDraw) {
+      setZoneDraw({ ...zoneDraw, to: clampPrice(point.y) });
+    } else if (alertDrag) {
+      setAlertDrag({ ...alertDrag, price: clampPrice(point.y) });
+    } else if (!drag.current) {
+      setOverAlert(Boolean(alertAt(point.x, point.y)));
+    }
     if (drag.current) {
       const { x, start } = drag.current;
       setView((current) => clampView(start - (event.clientX - x) / step, current.count, len));
@@ -550,7 +686,7 @@ export default function OhlcChart({
       className="ohlc-chart"
       tabIndex={0}
       onKeyDown={onKeyDown}
-      aria-label={`${title} candlestick chart. Scroll to zoom, drag to pan, arrow keys to move, double-click to reset.`}
+      aria-label={`${title} candlestick chart. Scroll to zoom, drag to pan, drag an alert line to move it, Alt+drag to draw an alert zone, right-click for alert options, arrow keys to move, double-click to reset.`}
     >
       {size.w > 0 && size.h > 0 ? (
         <svg
@@ -558,21 +694,57 @@ export default function OhlcChart({
           height={size.h}
           className="ohlc-svg"
           onPointerDown={(event) => {
-            if (event.altKey && onAltClick) {
-              const point = localPoint(event);
-              if (point.x <= plotW && point.y >= yTop && point.y <= yBot) onAltClick(priceAt(point.y));
+            if (event.button === 2) return; // right-click: context menu
+            const point = localPoint(event);
+            if (event.altKey && (onAltClick || onZoneDraw)) {
+              // Alt+click picks a level; Alt+drag draws a zone.
+              if (inPricePane(point)) {
+                const price = clampPrice(point.y);
+                setZoneDraw({ from: price, to: price, y0: point.y });
+                capture(event);
+              }
               return;
             }
-            drag.current = { x: event.clientX, start: v.start };
-            event.currentTarget.setPointerCapture(event.pointerId);
+            const grabbed = alertAt(point.x, point.y);
+            if (grabbed) {
+              // Drag the alert line instead of panning; saved on release.
+              setAlertDrag({ id: grabbed.id, edge: grabbed.edge, price: grabbed.price, from: grabbed.price });
+            } else {
+              drag.current = { x: event.clientX, start: v.start };
+            }
+            capture(event);
           }}
           onPointerMove={onPointerMove}
-          onPointerUp={() => {
+          onPointerUp={(event) => {
             drag.current = null;
+            if (zoneDraw) {
+              const moved = Math.abs(localPoint(event).y - zoneDraw.y0) >= 4;
+              if (moved && onZoneDraw && zoneDraw.from !== zoneDraw.to) onZoneDraw(Math.min(zoneDraw.from, zoneDraw.to), Math.max(zoneDraw.from, zoneDraw.to));
+              else onAltClick?.(zoneDraw.from);
+              setZoneDraw(null);
+            }
+            if (alertDrag) {
+              if (alertDrag.price !== alertDrag.from) onAlertMove?.(alertDrag.id, alertDrag.edge, alertDrag.price);
+              setAlertDrag(null);
+            }
+          }}
+          onPointerCancel={() => {
+            drag.current = null;
+            setAlertDrag(null);
+            setZoneDraw(null);
+          }}
+          onContextMenu={(event) => {
+            if (!onContextMenu) return;
+            const point = localPoint(event);
+            if (!inPricePane(point)) return;
+            event.preventDefault();
+            onContextMenu(clampPrice(point.y), event.clientX, event.clientY);
           }}
           onPointerLeave={() => {
-            if (!drag.current) setHover(null);
+            if (!drag.current && !alertDrag) setHover(null);
+            setOverAlert(false);
           }}
+          style={alertDrag || overAlert ? { cursor: "ns-resize" } : undefined}
           onDoubleClick={() => setView(resetView(len))}
         >
           <defs>

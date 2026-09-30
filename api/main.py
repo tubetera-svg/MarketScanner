@@ -1038,6 +1038,8 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
         ltf_watcher.stop()
 
     alerts = auto["price_alerts"]
+    price_alert_watcher.near_pct = alerts["near_pct"]
+    price_alert_watcher.push_enabled = alerts["push"]
     if alerts["enabled"] and (not price_alert_watcher.running or price_alert_watcher.interval_minutes != alerts["interval_minutes"]):
         price_alert_watcher.start(alerts["interval_minutes"])
     elif not alerts["enabled"] and price_alert_watcher.running:
@@ -1063,6 +1065,8 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
                 "running": price_alert_watcher.running,
                 "last_check_at": price_alert_watcher.last_check_at,
                 "last_error": price_alert_watcher.last_error,
+                "push_channels": price_alerts.push_channels(),
+                "last_push_error": price_alert_watcher.last_push_error,
             },
         },
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
@@ -1105,6 +1109,34 @@ def create_price_alert(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/price-alerts/batch")
+def create_price_alerts(body: dict[str, Any]) -> dict[str, Any]:
+    """Create several alerts at once (e.g. a scanner setup's levels); all or nothing."""
+    try:
+        return {"alerts": price_alerts.create_many(list(body.get("alerts") or []))}
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/price-alerts/bulk")
+def bulk_price_alerts(body: dict[str, Any]) -> dict[str, int]:
+    """Pause / resume (re-arm) / delete many alerts: {"ids": [...], "action": ...}."""
+    try:
+        return {"count": price_alerts.bulk([str(i) for i in body.get("ids") or []], str(body.get("action")))}
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/price-alerts/test-push")
+async def test_price_alert_push() -> dict[str, Any]:
+    """Send a test message to the configured push channels (env vars)."""
+    channels = price_alerts.push_channels()
+    if not channels:
+        raise HTTPException(status_code=400, detail="No push channel configured: set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and/or NTFY_TOPIC")
+    errors = await asyncio.to_thread(price_alerts.push_message, "Test message from Market Scanner price alerts.", "Price alert test")
+    return {"channels": channels, "errors": errors}
+
+
 @app.put("/api/price-alerts/{alert_id}")
 def update_price_alert(alert_id: str, body: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -1126,7 +1158,7 @@ def delete_price_alert(alert_id: str) -> dict[str, bool]:
 @app.post("/api/price-alerts/check")
 async def check_price_alerts() -> dict[str, Any]:
     """Evaluate all active alerts now (ignores the interval)."""
-    return await price_alert_watcher.check()
+    return await price_alert_watcher.check(force=True)
 
 
 @app.get("/api/ltf-confirmation")

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import TradingViewChartModal, { type ChartTarget } from "../components/TradingViewChartModal";
+import TradingViewChartModal, { type ChartLevel, type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import { playAlertSound } from "../components/alertSound";
 import Navigation from "../components/Navigation";
@@ -327,6 +327,17 @@ const formatIST = (instant: Date): string =>
     hour12: false,
   }).format(instant) + " IST";
 
+// Scanner setup levels handed to the chart popup (guides + "Watch setup"
+// alerts). Read-only: strategy output is never changed here.
+const setupLevels = (pairs: [string, number | null | undefined][]): ChartLevel[] => {
+  const seen = new Set<number>();
+  return pairs.flatMap(([label, price]) => {
+    if (typeof price !== "number" || !Number.isFinite(price) || price <= 0 || seen.has(price)) return [];
+    seen.add(price);
+    return [{ label, price }];
+  });
+};
+
 export default function Home() {
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -471,7 +482,14 @@ export default function Home() {
   const openTradingViewChart = (event: React.MouseEvent<HTMLAnchorElement>, row: StrategyRow) => {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || !row.tradingview_link) return;
     event.preventDefault();
-    setChart({ symbol: row.symbol, sourceLink: row.tradingview_link });
+    setChart({
+      symbol: row.symbol,
+      sourceLink: row.tradingview_link,
+      levels: setupLevels([
+        ["Entry", row.entry], ["SL", row.sl], ["Target", row.target], ["Swing", row.swing_level],
+        ["Protected", row.protected_level], ["Triggered", row.triggered_level], ["OB mid", row.order_block_midpoint], ["Flip", row.flip_level],
+      ]),
+    });
   };
 
   const syncData = async () => {
@@ -957,7 +975,14 @@ export default function Home() {
       onClick={(event) => {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
-        setChart({ symbol: setup.symbol, sourceLink: null });
+        setChart({
+          symbol: setup.symbol,
+          sourceLink: null,
+          levels: [
+            ...(setup.zone_low > 0 && setup.zone_high > 0 ? [{ label: "LTF zone", price: setup.zone_low, price2: setup.zone_high }] : []),
+            ...setupLevels([["Invalidation", setup.invalidation], ["Entry", setup.entry], ["SL", setup.sl], ["Target", setup.target]]),
+          ],
+        });
       }}
     >
       {setup.direction > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
@@ -1108,11 +1133,7 @@ export default function Home() {
         id: `symbol:${item.symbol}`,
         label: item.symbol,
         category: "Watchlist",
-        action: () => {
-          const el = document.querySelector(`.check-row input[value="${item.symbol}"]`) as HTMLInputElement | null;
-          el?.scrollIntoView({ behavior: "smooth", block: "center" });
-          el?.focus();
-        },
+        action: () => setChart({ symbol: item.symbol, sourceLink: null }),
         keywords: [item.symbol.toLowerCase(), item.session?.toLowerCase() ?? "", item.scope?.toLowerCase() ?? ""],
       });
     }
@@ -1301,11 +1322,25 @@ export default function Home() {
                 ) : silverBullet?.signals.length ? (
                   <div className="tracker-list">
                     {silverBullet.signals.slice().reverse().map((signal) => (
-                      <div key={signal.id} className={`signal-chip ${signal.direction === "bullish" ? "bull" : "bear"}`}>
+                      <button
+                        key={signal.id}
+                        type="button"
+                        className={`signal-chip signal-chip-button ${signal.direction === "bullish" ? "bull" : "bear"}`}
+                        title="Open chart with this setup's levels (Watch setup adds alerts)"
+                        onClick={() => setChart({
+                          symbol: signal.symbol,
+                          sourceLink: null,
+                          interval: "5m",
+                          levels: [
+                            ...(signal.range_low > 0 && signal.range_high > 0 ? [{ label: "SB range", price: signal.range_low, price2: signal.range_high }] : []),
+                            ...setupLevels([["Entry", signal.entry], ["SL", signal.stop_loss], ["Target", signal.target]]),
+                          ],
+                        })}
+                      >
                         {signal.direction === "bullish" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                         <strong>{signal.symbol}</strong>
                         <small>Trigger={signal.entry} — Time={new Date(signal.signal_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} NY</small>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ) : (
