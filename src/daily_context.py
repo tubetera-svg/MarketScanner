@@ -20,6 +20,8 @@ the previous bar's wick / equilibrium by the latest bar, never a later one.
   the previous bar's range (Candle 4 behaviour).
 * Liquidity map   - previous day/week/month high-low and the nearest unswept
   3-bar swing high above / swing low below the latest close.
+* Multi-timeframe bias - daily/weekly/monthly sweep bias on closed bars and
+  their agreement (``ctx_bias_*``).
 """
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ CONTEXT_COLUMNS = [
     "ctx_prev_wick_mid", "ctx_prev_wick_status", "ctx_prev_eq", "ctx_prev_eq_status",
     "ctx_pdh", "ctx_pdl", "ctx_pwh", "ctx_pwl", "ctx_pmh", "ctx_pml",
     "ctx_draw_above", "ctx_draw_below",
+    "ctx_bias_d", "ctx_bias_w", "ctx_bias_m", "ctx_bias_confluence", "ctx_bias_direction",
 ]
 
 
@@ -126,6 +129,58 @@ def _prior_period_extremes(daily: pd.DataFrame, freq: str) -> tuple[Optional[flo
     return float(block["High"].max()), float(block["Low"].min())
 
 
+def sweep_bias(bar: pd.Series, ref: pd.Series) -> str:
+    """TTrades bias of a *closed* bar vs the bar before it, same on every
+    timeframe: a close beyond the reference range continues; a sweep of one
+    side that closes back inside shifts the bias the other way. An outside
+    bar closing inside the range is Neutral."""
+    _, high, low, close = _ohlc(bar)
+    _, ref_high, ref_low, _ = _ohlc(ref)
+    bull = close > ref_high or (low < ref_low and close > ref_low)
+    bear = close < ref_low or (high > ref_high and close < ref_high)
+    if bull and not bear:
+        return "Bullish"
+    if bear and not bull:
+        return "Bearish"
+    return "Neutral"
+
+
+def multi_timeframe_bias(daily: pd.DataFrame) -> Dict[str, object]:
+    """Daily / weekly / monthly :func:`sweep_bias` on closed bars only.
+
+    The latest daily bar is closed (bhavcopy is published after the session).
+    The current week counts only once its Friday bar is in, the current month
+    only on its last business day; otherwise W-1 vs W-2 / M-1 vs M-2 is read.
+    A holiday on that day defers the period until the next one starts. The
+    reference bucket must not be the first one in ``daily`` (it may be partial).
+    """
+    out: Dict[str, object] = {"daily": "Neutral", "weekly": "Neutral", "monthly": "Neutral"}
+    if daily is None or len(daily) < 2:
+        out.update(confluence=0, direction=0)
+        return out
+    out["daily"] = sweep_bias(daily.iloc[-1], daily.iloc[-2])
+
+    last_day = pd.Timestamp(daily.index[-1]).normalize()
+    agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+    weekly = daily.resample("W-FRI").agg(agg).dropna()
+    monthly = daily.resample("ME").agg(agg).dropna()
+    closed_weeks = weekly if last_day.weekday() == 4 else weekly.iloc[:-1]
+    month_closed = last_day == pd.offsets.BMonthEnd().rollforward(last_day)
+    closed_months = monthly if month_closed else monthly.iloc[:-1]
+    if len(closed_weeks) >= 3:
+        out["weekly"] = sweep_bias(closed_weeks.iloc[-1], closed_weeks.iloc[-2])
+    if len(closed_months) >= 3:
+        out["monthly"] = sweep_bias(closed_months.iloc[-1], closed_months.iloc[-2])
+
+    non_neutral = [out[k] for k in ("daily", "weekly", "monthly") if out[k] != "Neutral"]
+    out["confluence"] = len(non_neutral)
+    if non_neutral and len(set(non_neutral)) == 1:
+        out["direction"] = 1 if non_neutral[0] == "Bullish" else -1
+    else:
+        out["direction"] = 0
+    return out
+
+
 def unswept_draws(daily: pd.DataFrame) -> tuple[Optional[float], Optional[float]]:
     """Nearest unswept 3-bar swing high above / swing low below the latest close.
 
@@ -149,7 +204,7 @@ def unswept_draws(daily: pd.DataFrame) -> tuple[Optional[float], Optional[float]
     return above, below
 
 
-def compute_daily_context(daily: pd.DataFrame) -> Dict[str, object]:
+def compute_daily_context(daily: pd.DataFrame, include_bias: bool = True) -> Dict[str, object]:
     """Side-independent context for the latest bar. ``ctx_opposing_wick_pct`` /
     ``ctx_wick_class`` are filled per row by :func:`annotate_frame`."""
     out: Dict[str, object] = {col: None for col in CONTEXT_COLUMNS}
@@ -199,6 +254,12 @@ def compute_daily_context(daily: pd.DataFrame) -> Dict[str, object]:
     out["ctx_pmh"], out["ctx_pml"] = _r(mh), _r(ml)
     above, below = unswept_draws(daily)
     out["ctx_draw_above"], out["ctx_draw_below"] = _r(above), _r(below)
+
+    if not include_bias:
+        return out
+    bias = multi_timeframe_bias(daily)
+    out["ctx_bias_d"], out["ctx_bias_w"], out["ctx_bias_m"] = bias["daily"], bias["weekly"], bias["monthly"]
+    out["ctx_bias_confluence"], out["ctx_bias_direction"] = bias["confluence"], bias["direction"]
     return out
 
 

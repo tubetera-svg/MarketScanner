@@ -8,6 +8,7 @@ import Navigation from "../../components/Navigation";
 // toggles use their existing endpoint and apply immediately.
 
 import { useCallback, useEffect, useState } from "react";
+import { previewSound, setSoundSettings, soundLabel, type AlertSoundKind, type SoundSettings } from "../../components/alertSound";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -21,7 +22,14 @@ type Automation = {
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
 type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
-type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; news: { currencies: string[] }; ui: { hidden_strategies: string[]; hidden_pages: string[] } };
+type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; news: { currencies: string[] }; ui: { hidden_strategies: string[]; hidden_pages: string[] }; sounds: SoundSettings };
+
+const SOUND_ROWS: { kind: AlertSoundKind; title: string; hint: string }[] = [
+  { kind: "ltf", title: "LTF trigger", hint: "An intraday confirmation setup triggers" },
+  { kind: "silver_bullet", title: "Silver Bullet", hint: "A new Silver Bullet signal appears" },
+  { kind: "price_alert", title: "Price alert", hint: "A chart-popup price alert fires (any page)" },
+  { kind: "news_event", title: "News event", hint: "Shortly before a high-impact news or EIA inventory release (scanner page open)" },
+];
 
 // Timezone and day are fixed per market; only the time is configurable.
 const CUTOFF_ROWS: { key: keyof DataCutoffs; title: string; hint: string }[] = [
@@ -36,6 +44,7 @@ type Payload = {
   hideable_pages: string[];
   strategy_choices: Record<keyof StrategyParams, string[]>;
   news_currencies: string[];
+  sound_choices: string[];
   status: {
     silver_bullet: { auto_armed: boolean };
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
@@ -113,12 +122,27 @@ function TimeField({ value, label, onCommit }: { value: string; label: string; o
   );
 }
 
+// Range slider that saves on release instead of on every step.
+function VolumeField({ value, onCommit }: { value: number; onCommit: (next: number) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => { if (draft !== value) onCommit(draft); };
+  return (
+    <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--muted)" }}>
+      <input type="range" aria-label="Alert volume" min={0} max={100} step={5} value={draft} onChange={(e) => setDraft(Number(e.target.value))}
+        onPointerUp={commit} onKeyUp={commit} onBlur={commit} style={{ width: 140 }} />
+      <span style={{ font: "12px 'DM Mono', monospace", minWidth: 32 }}>{draft}%</span>
+    </label>
+  );
+}
+
 export default function SettingsPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [message, setMessage] = useState("Loading…");
 
   const apply = (payload: Payload, note: string) => {
     setData(payload);
+    setSoundSettings(payload.settings.sounds); // alerts on this page pick it up at once
     setMessage(note);
   };
 
@@ -270,6 +294,37 @@ export default function SettingsPage() {
                 );
               })}
               {data.settings.news.currencies.length > 0 && <button type="button" onClick={() => save({ news: { currencies: [] } })} style={{ font: "11px 'DM Mono', monospace" }}>All</button>}
+            </Row>
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Alert sounds</span><small>played in the browser · header 🔊 = temporary mute</small></div>
+            <Row title="Alert sounds" hint="Master switch and volume for every alert sound. Toasts and desktop notifications are not affected.">
+              <VolumeField value={data.settings.sounds.volume} onCommit={(v) => save({ sounds: { volume: v } })} />
+              <Switch label="Alert sounds" on={data.settings.sounds.enabled} onChange={(v) => save({ sounds: { enabled: v } })} />
+            </Row>
+            {SOUND_ROWS.map(({ kind, title, hint }) => {
+              const choice = data.settings.sounds[kind];
+              return (
+                <Row key={kind} title={title} hint={hint}>
+                  {kind === "news_event" && (
+                    <NumberField value={data.settings.sounds.news_event.lead_minutes} min={1} max={60} unit="min before"
+                      onCommit={(v) => save({ sounds: { news_event: { lead_minutes: v } } })} />
+                  )}
+                  <select aria-label={`${title} sound`} value={choice.sound} onChange={(e) => save({ sounds: { [kind]: { sound: e.target.value } } })}
+                    style={{ height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace", background: "var(--bg, transparent)", color: "inherit" }}>
+                    {data.sound_choices.map((id) => <option key={id} value={id}>{soundLabel(id)}</option>)}
+                  </select>
+                  <button type="button" className="chart-tool-btn" title="Play this sound" onClick={() => previewSound(choice.sound, data.settings.sounds.volume)}>▶ Test</button>
+                  <Switch label={`${title} sound`} on={choice.enabled} onChange={(v) => save({ sounds: { [kind]: { enabled: v } } })} />
+                </Row>
+              );
+            })}
+            <Row title="Quiet hours" hint="No alert sounds in this IST window (may cross midnight, e.g. 23:00 → 07:00).">
+              <TimeField label="Quiet hours start" value={data.settings.sounds.quiet_hours.start} onCommit={(v) => save({ sounds: { quiet_hours: { start: v } } })} />
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>to</span>
+              <TimeField label="Quiet hours end" value={data.settings.sounds.quiet_hours.end} onCommit={(v) => save({ sounds: { quiet_hours: { end: v } } })} />
+              <Switch label="Quiet hours" on={data.settings.sounds.quiet_hours.enabled} onChange={(v) => save({ sounds: { quiet_hours: { enabled: v } } })} />
             </Row>
           </section>
 

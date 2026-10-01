@@ -125,16 +125,9 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - Scenario handling: if scanned on Thursday with no Friday bar, "Thursday already reversed" variant matches when Thursday closes against the leg without exceeding its extreme (`thursday_reversed_friday_continuation`). This is the only tradeable variant on daily data; the Friday-close stage is a label (see "Fire once per week" above) and is traded intraday by the confirmation watcher instead.
 - Target: 25% retracement of the weekly range (`TGIF_RETRACE_TARGET_PCT`, midpoint of the source's 20-30%).
 
-### `multi_timeframe_bias`
-- Replicates the ICT daily bias logic across daily, weekly, and monthly timeframes for backtesting and historical analysis.
-- Daily bias (TTrades rule): a close beyond the previous day's high/low continues that way; a sweep of one side that closes back inside the previous range shifts the bias to the other side. Conflicting reads (an outside day closing inside) are Neutral.
-- Weekly bias: same rule against the previous completed week's high/low (W-FRI anchored), including a sweep of last week's high/low that closes back inside.
-- Monthly bias: compares current close to previous completed month's high/low (month-end anchored).
-- Confluence scoring: Strong (3/3 aligned), Medium (2/3 aligned), Weak (1/3 aligned). Signals fire only when all non-neutral biases agree and confluence meets the active profile's threshold.
-- Strategy Profiles (from `config/strategy_profiles.json`) constrain the analysis to specific date ranges and set the minimum confluence required.
-- Asset selection: evaluates all provided symbols but only emits signals for those with sufficient daily/weekly/monthly history; insufficient-data symbols are marked `no_data`.
-- Output columns: `daily_bias`, `weekly_bias`, `monthly_bias`, `confluence`, `direction`, `entry`, `sl`, `target`, `rr`.
-- SL is previous day's low (bullish) or high (bearish). Target is the nearest completed weekly (last 8) or monthly (last 6) high/low still beyond entry — the next HTF draw on liquidity; levels price already broke are behind it. Fallback: a 2R measured move.
+### Multi-timeframe bias (extra info, not a strategy)
+- Shown on every strategy row as `ctx_bias_d/w/m` (+ `ctx_bias_confluence`, `ctx_bias_direction`) when "Extra info" is on; see `src/daily_context.py` `multi_timeframe_bias`. Never gates a signal.
+- Same rule on each timeframe, closed bars only: bullish if the bar closes above the previous bar's high, or sweeps its low and closes back above it (bearish mirrored; outside bar closing inside = Neutral). An unfinished week/month is skipped (mid-week reads W-1 vs W-2).
 
 ### `daily_bias_invalidation`
 - Establishes the daily bias from completed historical daily candles only.

@@ -29,7 +29,6 @@ from market_data.service import is_crypto_symbol  # noqa: E402
 CORE_STRATEGIES = [
     ("inside_bar_pattern_daily_sweep", "Inside Bar Pattern"),
     ("ema5_sweep", "EMA5 Sweep"),
-    ("multi_timeframe_bias", "Multi-TimeFrame Bias"),
     ("daily_bias_invalidation", "Daily Bias Invalidation"),
     ("protected_swings", "Protected Swings"),
     ("points_of_interest", "Points of Interest"),
@@ -159,6 +158,8 @@ def run_scan(
     strategy_names: list[str] | None,
     anchor_date: date | None = None,
     timeframe: str = "daily",
+    include_context: bool = True,
+    include_bias: bool = True,
 ) -> dict[str, Any]:
     """Run the enabled/requested strategies over the given symbols."""
     module = load_module()
@@ -196,6 +197,8 @@ def run_scan(
         verbose=False,
         print_values=False,
         timeframe=timeframe,
+        include_context=include_context,
+        include_bias=include_bias,
     )
 
     labels = {**dict(CORE_STRATEGIES), **dict(module.WEEKLY_PROFILE_LABELS)}

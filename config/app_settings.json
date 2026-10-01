@@ -33,12 +33,41 @@
   "news": {
     "currencies": []
   },
+  "sounds": {
+    "enabled": true,
+    "ltf": {
+      "enabled": true,
+      "sound": "chime"
+    },
+    "news_event": {
+      "enabled": true,
+      "lead_minutes": 9,
+      "sound": "vibes"
+    },
+    "price_alert": {
+      "enabled": true,
+      "sound": "doorbell"
+    },
+    "quiet_hours": {
+      "enabled": true,
+      "end": "08:00",
+      "start": "23:00"
+    },
+    "silver_bullet": {
+      "enabled": true,
+      "sound": "ping"
+    },
+    "volume": 70
+  },
   "strategy": {
     "ltf_timeframe": "1h",
     "propulsion_mean_threshold": "range"
   },
   "ui": {
     "hidden_pages": [],
-    "hidden_strategies": []
+    "hidden_strategies": [
+      "ema5_sweep",
+      "inside_bar_pattern_daily_sweep"
+    ]
   }
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Activity, Bell, Database, History, Rocket, Settings } from "lucide-react";
+import SoundToggle from "./SoundToggle";
 
 type NavigationProps = {
   active: "/" | "/alerts" | "/watchlist" | "/ipo" | "/backtest" | "/settings";
@@ -40,6 +41,7 @@ export default function Navigation({ active }: NavigationProps) {
       {!hidden.includes("ipo") && <a className={`top-link${active === "/ipo" ? " active" : ""}`} href="/ipo" aria-current={active === "/ipo" ? "page" : undefined}><Rocket size={13} /> IPO</a>}
       {!hidden.includes("backtest") && <a className={`top-link${active === "/backtest" ? " active" : ""}`} href="/backtest" aria-current={active === "/backtest" ? "page" : undefined}><History size={13} /> Backtest</a>}
       <a className={`top-link${active === "/settings" ? " active" : ""}`} href="/settings" aria-current={active === "/settings" ? "page" : undefined}><Settings size={13} /> Settings</a>
+      <SoundToggle />
     </>
   );
 }

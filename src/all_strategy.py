@@ -1463,321 +1463,6 @@ def run_propulsion_blocks(
     return StrategyExecution("propulsion_blocks", results, bullish_frame, bearish_frame)
 
 
-def _load_bias_profile() -> dict:
-    from pathlib import Path
-    import json
-
-    path = Path(__file__).resolve().parent.parent / "config" / "strategy_profiles.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "active_profile": "default",
-            "profiles": {
-                "default": {
-                    "start_date": None,
-                    "end_date": None,
-                    "min_confluence": 2,
-                    "description": "No date range constraint; analyze all available history.",
-                }
-            },
-        }
-    if not isinstance(data, dict):
-        return {
-            "active_profile": "default",
-            "profiles": {
-                "default": {
-                    "start_date": None,
-                    "end_date": None,
-                    "min_confluence": 2,
-                    "description": "No date range constraint; analyze all available history.",
-                }
-            },
-        }
-    return data
-
-
-def _compute_multi_timeframe_bias(daily: pd.DataFrame, price: float) -> dict:
-    if daily is None or daily.empty or len(daily) < 2:
-        return {
-            "daily_bias": "Neutral",
-            "weekly_bias": "Neutral",
-            "monthly_bias": "Neutral",
-            "confluence": 0,
-            "direction": 0,
-            "pd_h": None,
-            "pd_l": None,
-            "pw_h": None,
-            "pw_l": None,
-            "pm_h": None,
-            "pm_l": None,
-        }
-
-    curr = daily.iloc[-1]
-    pd_ = daily.iloc[-2]
-
-    pd_h = float(pd_["High"])
-    pd_l = float(pd_["Low"])
-
-    today_high = float(curr["High"])
-    today_low = float(curr["Low"])
-
-    def _sweep_bias(high: float, low: float, ref_high: float, ref_low: float) -> str:
-        # TTrades daily bias: a close beyond the reference range continues; a
-        # sweep of one side that closes back inside the range shifts the bias
-        # the other way. Conflicting reads (outside bar closing inside) = Neutral.
-        bull = price > ref_high or (low < ref_low and price > ref_low)
-        bear = price < ref_low or (high > ref_high and price < ref_high)
-        if bull and not bear:
-            return "Bullish"
-        if bear and not bull:
-            return "Bearish"
-        return "Neutral"
-
-    daily_bias = _sweep_bias(today_high, today_low, pd_h, pd_l)
-
-    weekly_bias = "Neutral"
-    pw_h = None
-    pw_l = None
-    weekly = (
-        daily.resample("W-FRI")
-        .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
-        .dropna(subset=["Open", "High", "Low", "Close"])
-    )
-    if len(weekly) >= 2:
-        pw = weekly.iloc[-2]
-        cw = weekly.iloc[-1]  # current (possibly partial) week up to the latest bar
-        pw_h = float(pw["High"])
-        pw_l = float(pw["Low"])
-        weekly_bias = _sweep_bias(float(cw["High"]), float(cw["Low"]), pw_h, pw_l)
-
-    monthly_bias = "Neutral"
-    pm_h = None
-    pm_l = None
-    monthly = (
-        daily.resample("ME")
-        .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
-        .dropna(subset=["Open", "High", "Low", "Close"])
-    )
-    if len(monthly) >= 2:
-        pm = monthly.iloc[-2]
-        pm_h = float(pm["High"])
-        pm_l = float(pm["Low"])
-        if price > pm_h:
-            monthly_bias = "Bullish"
-        elif price < pm_l:
-            monthly_bias = "Bearish"
-
-    biases = [daily_bias, weekly_bias, monthly_bias]
-    non_neutral = [b for b in biases if b != "Neutral"]
-    confluence = len(non_neutral)
-
-    if confluence == 0:
-        direction = 0
-    elif len(set(non_neutral)) == 1:
-        direction = 1 if non_neutral[0] == "Bullish" else -1
-    else:
-        direction = 0
-
-    # Completed weekly/monthly extremes (current bucket excluded): the
-    # higher-timeframe liquidity the target is drawn from.
-    htf_highs = [float(v) for v in weekly["High"].iloc[-9:-1]] + [float(v) for v in monthly["High"].iloc[-7:-1]]
-    htf_lows = [float(v) for v in weekly["Low"].iloc[-9:-1]] + [float(v) for v in monthly["Low"].iloc[-7:-1]]
-
-    return {
-        "htf_highs": htf_highs,
-        "htf_lows": htf_lows,
-        "daily_bias": daily_bias,
-        "weekly_bias": weekly_bias,
-        "monthly_bias": monthly_bias,
-        "confluence": confluence,
-        "direction": direction,
-        "pd_h": pd_h,
-        "pd_l": pd_l,
-        "pw_h": pw_h,
-        "pw_l": pw_l,
-        "pm_h": pm_h,
-        "pm_l": pm_l,
-    }
-
-
-def run_multi_timeframe_bias(
-    symbols: Sequence[str],
-    as_of_date: date,
-    verbose: bool = False,
-    print_values: bool = False,
-    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
-) -> StrategyExecution:
-    profile = _load_bias_profile()
-    active = profile.get("active_profile", "default")
-    profiles = profile.get("profiles", {})
-    active_profile = profiles.get(active, profiles.get("default", {}))
-
-    start_date = active_profile.get("start_date")
-    end_date = active_profile.get("end_date")
-    if start_date:
-        sd = date.fromisoformat(start_date)
-        if as_of_date < sd:
-            return _empty_mtf_bias_results(symbols, "profile_date_skipped")
-    if end_date:
-        ed = date.fromisoformat(end_date)
-        if as_of_date > ed:
-            return _empty_mtf_bias_results(symbols, "profile_date_skipped")
-
-    min_confluence = int(active_profile.get("min_confluence", 2))
-
-    results = pd.DataFrame(
-        {
-            "symbol": list(symbols),
-            "bullish_match": False,
-            "bearish_match": False,
-            "final_signal": False,
-            "status": "pending",
-            "daily_bias": "Neutral",
-            "weekly_bias": "Neutral",
-            "monthly_bias": "Neutral",
-            "confluence": 0,
-            "direction": 0,
-            "entry": None,
-            "sl": None,
-            "target": None,
-            "rr": None,
-            "note": "",
-        }
-    )
-
-    for idx, symbol in enumerate(symbols):
-        symbol_upper = str(symbol).upper()
-        if daily_map is None:
-            daily = _fetch_daily_from_bhavcopy(
-                symbol=symbol_upper, as_of_date=as_of_date, max_lookback_days=600
-            )
-        else:
-            daily = daily_map.get(
-                symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"])
-            )
-
-        if daily is None or daily.empty or len(daily) < 2:
-            results.at[idx, "status"] = "no_data"
-            if verbose:
-                print(f"{symbol_upper}: SKIPPED (no_data)")
-            continue
-        if _is_stale(symbol_upper, daily, as_of_date):
-            results.at[idx, "status"] = "stale"
-            continue
-
-        price = float(daily.iloc[-1]["Close"])
-        bias = _compute_multi_timeframe_bias(daily, price)
-
-        if bias["confluence"] < min_confluence or bias["direction"] == 0:
-            results.at[idx, "status"] = "no_confluence"
-            if verbose:
-                print(
-                    f"{symbol_upper}: d={bias['daily_bias']} w={bias['weekly_bias']} m={bias['monthly_bias']} "
-                    f"confluence={bias['confluence']} -> no signal"
-                )
-            continue
-
-        direction = bias["direction"]
-        bullish = direction == 1
-        bearish = direction == -1
-
-        entry = price
-        sl = None
-        target = None
-        rr = None
-
-        # Target: the nearest completed weekly/monthly extreme still beyond
-        # entry (the next HTF draw on liquidity); levels price has already
-        # broken are behind it. Fallback: a 2R measured move.
-        if bullish:
-            sl = bias["pd_l"]
-            above = [h for h in bias["htf_highs"] if h > entry]
-            if above:
-                target = min(above)
-            elif sl is not None and sl < entry:
-                target = entry + 2.0 * (entry - sl)
-        elif bearish:
-            sl = bias["pd_h"]
-            below = [l for l in bias["htf_lows"] if l < entry]
-            if below:
-                target = max(below)
-            elif sl is not None and sl > entry:
-                target = entry - 2.0 * (sl - entry)
-
-        if sl is not None and target is not None and entry is not None:
-            risk = abs(entry - sl)
-            reward = abs(target - entry)
-            if risk > 0:
-                rr = reward / risk
-
-        note = f"d={bias['daily_bias']} w={bias['weekly_bias']} m={bias['monthly_bias']} confluence={bias['confluence']}"
-
-        results.at[idx, "daily_bias"] = bias["daily_bias"]
-        results.at[idx, "weekly_bias"] = bias["weekly_bias"]
-        results.at[idx, "monthly_bias"] = bias["monthly_bias"]
-        results.at[idx, "confluence"] = bias["confluence"]
-        results.at[idx, "bullish_match"] = bullish
-        results.at[idx, "bearish_match"] = bearish
-        results.at[idx, "final_signal"] = True
-        results.at[idx, "status"] = "complete"
-        results.at[idx, "direction"] = direction
-        results.at[idx, "entry"] = entry
-        results.at[idx, "sl"] = sl
-        results.at[idx, "target"] = target
-        results.at[idx, "rr"] = rr
-        results.at[idx, "note"] = note
-
-        if verbose:
-            rr_str = f"{rr:.2f}" if rr is not None else "None"
-            print(
-                f"{symbol_upper}: {note} -> {'BULL' if bullish else 'BEAR'} "
-                f"entry={entry:.2f} sl={sl} target={target} rr={rr_str}"
-            )
-
-    bullish_frame, bearish_frame = _extract_signal_frames(results)
-    for frame in (bullish_frame, bearish_frame):
-        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
-
-    return StrategyExecution(
-        name="multi_timeframe_bias",
-        results=results,
-        bullish=bullish_frame,
-        bearish=bearish_frame,
-    )
-
-
-def _empty_mtf_bias_results(symbols: Sequence[str], status: str) -> StrategyExecution:
-    results = pd.DataFrame(
-        {
-            "symbol": list(symbols),
-            "bullish_match": False,
-            "bearish_match": False,
-            "final_signal": False,
-            "status": status,
-            "daily_bias": "Neutral",
-            "weekly_bias": "Neutral",
-            "monthly_bias": "Neutral",
-            "confluence": 0,
-            "direction": 0,
-            "entry": None,
-            "sl": None,
-            "target": None,
-            "rr": None,
-            "note": "",
-        }
-    )
-    bullish_frame, bearish_frame = _extract_signal_frames(results)
-    for frame in (bullish_frame, bearish_frame):
-        frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
-    return StrategyExecution(
-        name="multi_timeframe_bias",
-        results=results,
-        bullish=bullish_frame,
-        bearish=bearish_frame,
-    )
-
-
 def _daily_bias_from_history(history: pd.DataFrame) -> tuple[str, float | None, float | None, float | None]:
     """Resolve the historical daily bias and its candle range references.
 
@@ -2980,10 +2665,6 @@ def strategy_registry() -> Dict[str, StrategySpec]:
             name="ema5_sweep",
             runner=run_ema5_sweep,
         ),
-        "multi_timeframe_bias": StrategySpec(
-            name="multi_timeframe_bias",
-            runner=run_multi_timeframe_bias,
-        ),
         "daily_bias_invalidation": StrategySpec(
             name="daily_bias_invalidation",
             runner=run_daily_bias_invalidation,
@@ -3057,7 +2738,11 @@ def run_strategies(
     print_values: bool = False,
     parallel: bool = True,
     timeframe: str = "daily",
+    include_context: bool = True,
+    include_bias: bool = True,
 ) -> List[StrategyExecution]:
+    """``include_context=False`` skips the display-only ``ctx_*`` columns;
+    ``include_bias=False`` skips only the M/W/D bias (and its longer history)."""
     normalized_timeframe = str(timeframe).strip().lower()
     if any(name in strategy_names for name in ("protected_swings", "points_of_interest", "candle_3_closure", "propulsion_blocks")) and normalized_timeframe not in PROTECTED_SWING_TIMEFRAMES:
         supported = ", ".join(PROTECTED_SWING_TIMEFRAMES)
@@ -3073,7 +2758,6 @@ def run_strategies(
         "weekly_vs_daily_sweep": 420,
         "inside_bar_pattern_daily_sweep": 160,
         "ema5_sweep": 40,
-        "multi_timeframe_bias": 600,
         "daily_bias_invalidation": 600,
         "classic_expansion_sweep": 60,
         "midweek_reversal_sweep": 60,
@@ -3087,6 +2771,8 @@ def run_strategies(
         "propulsion_blocks": _PB_LOOKBACK,
      }
     max_lookback = max(lookback_by_strategy.get(name, 60) for name in strategy_names) if strategy_names else 60
+    if include_context and include_bias:
+        max_lookback = max(max_lookback, CONTEXT_LOOKBACK_DAYS)
     daily_map = _build_daily_map_for_symbols(symbols=symbols, as_of_date=as_of_date, max_lookback_days=max_lookback)
 
     if parallel and len(strategy_names) > 1:
@@ -3109,7 +2795,8 @@ def run_strategies(
                 name = future_to_name[future]
                 results_by_name[name] = future.result()
 
-        return _with_daily_context([results_by_name[name] for name in strategy_names], daily_map, symbols, as_of_date)
+        ordered = [results_by_name[name] for name in strategy_names]
+        return _with_daily_context(ordered, daily_map, symbols, as_of_date, include_bias) if include_context else ordered
 
     executions: List[StrategyExecution] = []
     for name in strategy_names:
@@ -3125,7 +2812,11 @@ def run_strategies(
         execution = registry[name].runner(**runner_kwargs)
         executions.append(execution)
 
-    return _with_daily_context(executions, daily_map, symbols, as_of_date)
+    return _with_daily_context(executions, daily_map, symbols, as_of_date, include_bias) if include_context else executions
+
+
+# Monthly bias needs M-1 vs M-2 with a full bucket before M-2 (up to ~4 months).
+CONTEXT_LOOKBACK_DAYS = 130
 
 
 def _with_daily_context(
@@ -3133,11 +2824,14 @@ def _with_daily_context(
     daily_map: Dict[str, pd.DataFrame],
     symbols: Sequence[str],
     as_of_date: date,
+    include_bias: bool = True,
 ) -> List[StrategyExecution]:
     """Append display-only ``ctx_*`` columns (see daily_context.py); never gates a signal."""
     contexts: Dict[str, Dict[str, object]] = {}
     for symbol in symbols:
         symbol_upper = str(symbol).strip().upper()
+        if symbol_upper in contexts:
+            continue  # once per symbol; every row/strategy for it shares this
         try:
             daily = daily_map.get(symbol_upper)
             if daily is None or daily.empty:
@@ -3146,7 +2840,7 @@ def _with_daily_context(
                 daily = _trim_in_progress_daily(daily)
             if _daily_frame_stale(symbol_upper, daily, as_of_date, "daily"):
                 continue
-            contexts[symbol_upper] = compute_daily_context(daily)
+            contexts[symbol_upper] = compute_daily_context(daily, include_bias)
         except Exception as exc:
             log.warning("Daily context failed for %s: %s", symbol_upper, exc)
     if not contexts:

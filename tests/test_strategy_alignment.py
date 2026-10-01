@@ -1,8 +1,8 @@
 """Strategy behaviour aligned with the TTrades source material.
 
 Covers the weekly-profile once-per-week / Friday-label rules, the Midweek
-Reversal Thursday fallback, daily-bias invalidation, the multi-timeframe
-daily-bias rule, the stale-data guard and run_strategies timeframe plumbing.
+Reversal Thursday fallback, daily-bias invalidation, the stale-data guard
+and run_strategies timeframe / extra-info plumbing.
 Synthetic frames only (no network, no SQLite).
 """
 from __future__ import annotations
@@ -225,23 +225,6 @@ def test_daily_bias_invalidation_fetches_when_no_daily_map(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Multi-timeframe bias (daily rule)
-# ---------------------------------------------------------------------------
-def _daily_bias(today):
-    frame = _frame([(date(2026, 2, 5), (100.0, 102.0, 98.0, 100.0)), (date(2026, 2, 6), today)])
-    return all_strategy._compute_multi_timeframe_bias(frame, today[3])["daily_bias"]
-
-
-def test_mtf_sweep_and_close_back_inside_range_is_bullish():
-    # Sweeps the prior low (98) and closes back inside the range (below the prior body).
-    assert _daily_bias((99.0, 101.0, 97.0, 99.0)) == "Bullish"
-
-
-def test_mtf_outside_bar_closing_inside_is_neutral():
-    assert _daily_bias((100.0, 103.0, 97.0, 100.5)) == "Neutral"
-
-
-# ---------------------------------------------------------------------------
 # Stale data + run_strategies plumbing
 # ---------------------------------------------------------------------------
 def test_stale_symbol_is_not_evaluated():
@@ -261,3 +244,52 @@ def test_run_strategies_passes_timeframe_to_single_structure_strategy(monkeypatc
     monkeypatch.setattr(all_strategy, "_build_daily_map_for_symbols", lambda **kwargs: {})
     all_strategy.run_strategies(["points_of_interest"], ["TEST"], date(2026, 2, 6), timeframe="1h")
     assert seen["timeframe"] == "1h"
+
+
+def _patch_extra_info_run(monkeypatch):
+    calls, lookbacks = [], []
+    rows = [(d, (100.0, 101.0, 99.0, 100.0)) for d in pd.bdate_range("2026-01-05", "2026-02-06").date]
+
+    def fake_runner(name):
+        def run(**kwargs):
+            frame = pd.DataFrame({"symbol": ["ABC", "ABC"], "direction": [1, -1]})
+            return all_strategy.StrategyExecution(name, frame, frame.iloc[:1], frame.iloc[1:])
+        return run
+
+    monkeypatch.setattr(all_strategy, "run_ema5_sweep", fake_runner("ema5_sweep"))
+    monkeypatch.setattr(all_strategy, "run_inside_bar_daily_sweep", fake_runner("inside_bar_pattern_daily_sweep"))
+    monkeypatch.setattr(
+        all_strategy, "_build_daily_map_for_symbols",
+        lambda **kwargs: lookbacks.append(kwargs["max_lookback_days"]) or {"ABC": _frame(rows)},
+    )
+    monkeypatch.setattr(all_strategy, "_track_mode_for", lambda symbol: "live")
+    monkeypatch.setattr(all_strategy, "_daily_frame_stale", lambda *args: False)
+    real = all_strategy.compute_daily_context
+    monkeypatch.setattr(all_strategy, "compute_daily_context", lambda daily, bias=True: calls.append(1) or real(daily, bias))
+    return calls, lookbacks
+
+
+def test_extra_info_computed_once_per_symbol(monkeypatch):
+    calls, lookbacks = _patch_extra_info_run(monkeypatch)
+    names = ["ema5_sweep", "inside_bar_pattern_daily_sweep"]
+    executions = all_strategy.run_strategies(names, ["ABC", "abc"], date(2026, 2, 6), parallel=False)
+    assert len(calls) == 1
+    assert lookbacks == [160]  # inside-bar lookback already exceeds CONTEXT_LOOKBACK_DAYS
+    for execution in executions:
+        assert execution.results["ctx_bias_d"].notna().all()
+
+
+def test_extra_info_off_skips_context(monkeypatch):
+    calls, lookbacks = _patch_extra_info_run(monkeypatch)
+    on = all_strategy.run_strategies(["ema5_sweep"], ["ABC"], date(2026, 2, 6), parallel=False)
+    assert lookbacks == [all_strategy.CONTEXT_LOOKBACK_DAYS] and len(calls) == 1
+    assert "ctx_bias_d" in on[0].results.columns
+    calls.clear(), lookbacks.clear()
+    no_bias = all_strategy.run_strategies(["ema5_sweep"], ["ABC"], date(2026, 2, 6), parallel=False, include_bias=False)
+    assert lookbacks == [40] and len(calls) == 1
+    assert no_bias[0].results["ctx_adr"].notna().all() and no_bias[0].results["ctx_bias_d"].isna().all()
+    calls.clear(), lookbacks.clear()
+    executions = all_strategy.run_strategies(["ema5_sweep"], ["ABC"], date(2026, 2, 6), include_context=False)
+    assert calls == []
+    assert lookbacks == [40]
+    assert "ctx_bias_d" not in executions[0].results.columns

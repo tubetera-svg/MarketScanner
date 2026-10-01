@@ -30,7 +30,7 @@ export default function PriceAlertNotifier() {
           const wasSeeded = seeded.current;
           seeded.current = true;
           if (!wasSeeded || !fresh.length) return;
-          playAlertSound(true);
+          playAlertSound("price_alert");
           setToasts((current) => [...current, ...fresh].slice(-5));
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             for (const event of fresh) {

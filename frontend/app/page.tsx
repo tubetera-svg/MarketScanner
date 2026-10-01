@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import TradingViewChartModal, { type ChartLevel, type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
-import { playAlertSound } from "../components/alertSound";
+import { getSoundSettings, playAlertSound } from "../components/alertSound";
 import Navigation from "../components/Navigation";
 import { FavoriteStar, useFavorites } from "../components/Favorites";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
@@ -90,9 +91,10 @@ type StrategyRow = {
   order_block_midpoint?: number | null;
   flip_level?: number | null;
   signal_date?: string | null;
-  daily_bias?: string | null;
-  weekly_bias?: string | null;
-  monthly_bias?: string | null;
+  ctx_bias_d?: string | null;
+  ctx_bias_w?: string | null;
+  ctx_bias_m?: string | null;
+  ctx_bias_confluence?: number | null;
   ctx_adr?: number | null;
   ctx_adr_used_pct?: number | null;
   ctx_opposing_wick_pct?: number | null;
@@ -227,8 +229,26 @@ const matchesScope_check = (item: { symbol: string; session: string; scope?: str
 const matchesScopes_check = (item: { symbol: string; session: string; scope?: string; index?: string; f_and_o?: string }, scopes: WatchScope[], favorites?: Set<string>) =>
   scopes.length === 0 || scopes.includes("All") || scopes.some((scope) => matchesScope_check(item, scope, favorites));
 
+type ExtraInfoFlags = { adr: boolean; wick: boolean; bias: boolean };
+const EXTRA_INFO_OPTIONS: { key: keyof ExtraInfoFlags; label: string; help: string }[] = [
+  {
+    key: "adr",
+    label: "ADR",
+    help: "ADR % = signal bar's range as % of the average daily range of the prior 20 bars. Near/above 100%: the day already made a typical move, less room to expand. Low %: room to run. Hover a result for the ADR value.",
+  },
+  {
+    key: "wick",
+    label: "Wick",
+    help: "Opposing wick as % of the signal bar's range (lower wick for bullish rows, upper for bearish). Small (<=25%): clean close, supports expansion. Large (>=50%): strong rejection, wait for the next candle. wick50: after a sweep-and-reject bar, whether price respected or closed through that wick's midpoint (closing through weakens the reversal).",
+  },
+  {
+    key: "bias",
+    label: "M/W/D bias",
+    help: "Monthly / weekly / daily bias from closed bars only (an unfinished week or month is skipped, e.g. mid-week reads W-1 vs W-2). Bullish: closed above the previous bar's high, or swept its low and closed back inside. Green = bullish, red = bearish, grey = neutral. Strongest when all three agree with the signal.",
+  },
+];
+
 const biasBadge = (bias: string | null | undefined, label: string) => {
-  if (!bias || bias === "Neutral") return <span className="bias-badge bias-neutral">{label}</span>;
   if (bias === "Bullish") return <span className="bias-badge bias-bull">{label}</span>;
   if (bias === "Bearish") return <span className="bias-badge bias-bear">{label}</span>;
   return <span className="bias-badge bias-neutral">{label}</span>;
@@ -383,6 +403,26 @@ export default function Home() {
   const statusFlash = useStatusFlash(message);
   const [autoRunOnDateChange, setAutoRunOnDateChange] = useState(true);
   const [includeSilverBulletTests, setIncludeSilverBulletTests] = useState(false);
+  // Extra info on strategy results. The server computes it only when at least
+  // one is on; each checkbox then just shows/hides its part.
+  const [extraInfo, setExtraInfo] = useState<ExtraInfoFlags>({ adr: true, wick: true, bias: true });
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("strategyExtraInfo");
+      if (raw === "0") setExtraInfo({ adr: false, wick: false, bias: false });
+      else if (raw && raw !== "1") setExtraInfo((prev) => ({ ...prev, ...JSON.parse(raw) }));
+    } catch {}
+  }, []);
+  const toggleExtraInfo = (key: keyof ExtraInfoFlags, value: boolean) => {
+    setExtraInfo((prev) => {
+      const next = { ...prev, [key]: value };
+      try {
+        window.localStorage.setItem("strategyExtraInfo", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+  const includeExtraInfo = extraInfo.adr || extraInfo.wick || extraInfo.bias;
   const [strategyResultsGroupBy, setStrategyResultsGroupBy] = useState<"strategy" | "symbol">("strategy");
   const [activeSection, setActiveSection] = useState<"scan" | "alerts" | "strategies">("scan");
   const [scanProgress, setScanProgress] = useState<string | null>(null);
@@ -687,7 +727,7 @@ export default function Home() {
       const response = await fetch(`${API}/api/strategy-scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: selected, anchor_date: dateOverride, timeframe: protectedSwingTimeframe }),
+        body: JSON.stringify({ symbols: selected, anchor_date: dateOverride, timeframe: protectedSwingTimeframe, include_context: includeExtraInfo, include_bias: extraInfo.bias }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Strategy scan failed");
@@ -829,6 +869,32 @@ export default function Home() {
   };
   useEffect(() => { loadHighImpactNews(); }, []);
 
+  // Sound shortly before each high-impact news / EIA release (Settings →
+  // Alert sounds → News event). Past events are never announced.
+  const newsFeedRef = useRef<NewsFeed | null>(null);
+  newsFeedRef.current = newsFeed;
+  const announcedNewsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const check = () => {
+      const { enabled, lead_minutes } = getSoundSettings().news_event;
+      if (!enabled) return;
+      const now = Date.now();
+      const events = [
+        ...(newsFeedRef.current?.events ?? []).map((event) => ({ key: `${event.currency}|${event.title}|${event.time_utc}`, at: Date.parse(event.time_utc) })),
+        ...INVENTORY_REPORTS.map((report) => {
+          const at = nextReleaseInstantET(new Date(now), report.weekdayET, report.hourET, report.minuteET).getTime();
+          return { key: `EIA|${report.key}|${at}`, at };
+        }),
+      ];
+      const due = events.filter((event) => event.at > now && event.at - now <= lead_minutes * 60_000 && !announcedNewsRef.current.has(event.key));
+      due.forEach((event) => announcedNewsRef.current.add(event.key));
+      if (due.length) playAlertSound("news_event");
+    };
+    check();
+    const id = window.setInterval(check, 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const upcomingNews = (newsFeed?.events ?? [])
     .map((event) => ({ ...event, instant: new Date(event.time_utc) }))
     .filter((event) => event.instant.getTime() > inventoryNow);
@@ -849,17 +915,24 @@ export default function Home() {
     return days;
   }, []);
 
-  // Close the news popover on outside click / Escape.
+  // News popover opens on hover of the News pill and stays open while the
+  // pointer is over the popover; a short delay bridges the gap between them.
+  const newsCloseTimer = useRef<number | null>(null);
+  const openNews = (anchor: HTMLElement) => {
+    if (newsCloseTimer.current) window.clearTimeout(newsCloseTimer.current);
+    const rect = anchor.getBoundingClientRect();
+    setNewsOpen({ top: rect.bottom + 6, right: document.documentElement.clientWidth - rect.right });
+  };
+  const keepNewsOpen = () => { if (newsCloseTimer.current) window.clearTimeout(newsCloseTimer.current); };
+  const closeNewsSoon = () => {
+    if (newsCloseTimer.current) window.clearTimeout(newsCloseTimer.current);
+    newsCloseTimer.current = window.setTimeout(() => setNewsOpen(null), 200);
+  };
   useEffect(() => {
     if (!newsOpen) return;
-    const onDown = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest(".news-popover") && !target.closest(".news-toggle")) setNewsOpen(null);
-    };
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setNewsOpen(null); };
-    document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+    return () => document.removeEventListener("keydown", onKey);
   }, [newsOpen]);
 
   const inventoryReports = INVENTORY_REPORTS.map((report) => {
@@ -935,11 +1008,10 @@ export default function Home() {
     // The first poll only records what already triggered, so a page load is silent.
     const seeded = ltfSeededRef.current;
     ltfSeededRef.current = true;
-    for (const setup of ltf.setups) {
-      if (setup.state !== "triggered" || announcedLtfRef.current.has(setup.key)) continue;
-      announcedLtfRef.current.add(setup.key);
-      if (seeded) playAlertSound(true);
-    }
+    const fresh = ltf.setups.filter((setup) => setup.state === "triggered" && !announcedLtfRef.current.has(setup.key));
+    fresh.forEach((setup) => announcedLtfRef.current.add(setup.key));
+    // One sound per poll, however many setups triggered.
+    if (seeded && fresh.length) playAlertSound("ltf");
   }, [ltf]);
 
   // Live triggers stay visible; armed setups and triggers whose window has
@@ -1008,11 +1080,9 @@ export default function Home() {
   };
 
   useEffect(() => {
-    for (const signal of silverBullet?.signals ?? []) {
-      if (announcedSilverBulletRef.current.has(signal.id)) continue;
-      announcedSilverBulletRef.current.add(signal.id);
-      playAlertSound(true);
-    }
+    const fresh = (silverBullet?.signals ?? []).filter((signal) => !announcedSilverBulletRef.current.has(signal.id));
+    fresh.forEach((signal) => announcedSilverBulletRef.current.add(signal.id));
+    if (fresh.length) playAlertSound("silver_bullet");
   }, [silverBullet?.signals]);
 
   const addToWatchlist = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -1066,11 +1136,11 @@ export default function Home() {
     <a key={key} href={row.tradingview_link ?? "#"} rel="noreferrer" className={`signal-chip ${side}`} onClick={(event) => openTradingViewChart(event, row)}>
       {side === "bull" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
       <strong>{heading}</strong>
-      {(row.daily_bias || row.weekly_bias || row.monthly_bias) && (
-        <span className="bias-badges">
-          {biasBadge(row.monthly_bias, "M")}
-          {biasBadge(row.weekly_bias, "W")}
-          {biasBadge(row.daily_bias, "D")}
+      {extraInfo.bias && (row.ctx_bias_d || row.ctx_bias_w || row.ctx_bias_m) && (
+        <span className="bias-badges" title={`MTF bias (closed bars) M ${row.ctx_bias_m} / W ${row.ctx_bias_w} / D ${row.ctx_bias_d} — confluence ${row.ctx_bias_confluence ?? 0}`}>
+          {biasBadge(row.ctx_bias_m, "M")}
+          {biasBadge(row.ctx_bias_w, "W")}
+          {biasBadge(row.ctx_bias_d, "D")}
         </span>
       )}
       {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
@@ -1102,19 +1172,19 @@ export default function Home() {
           {row.signal_date ? `${row.flip_level != null ? " — " : ""}${row.signal_date}` : ""}
         </small>
       )}
-      {row.ctx_candle_type && (() => {
+      {(extraInfo.adr || extraInfo.wick) && row.ctx_candle_type && (() => {
         const lvl = (label: string, value?: number | null) => (value != null ? `${label} ${value}` : null);
         const parts = [
-          row.ctx_adr_used_pct != null ? `ADR ${Math.round(row.ctx_adr_used_pct)}%` : null,
-          row.ctx_opposing_wick_pct != null ? `wick ${Math.round(row.ctx_opposing_wick_pct)}% ${row.ctx_wick_class}` : null,
+          extraInfo.adr && row.ctx_adr_used_pct != null ? `ADR ${Math.round(row.ctx_adr_used_pct)}%` : null,
+          extraInfo.wick && row.ctx_opposing_wick_pct != null ? `wick ${Math.round(row.ctx_opposing_wick_pct)}% ${row.ctx_wick_class}` : null,
           row.ctx_candle_type.replace(/_/g, " "),
           row.ctx_cont_streak ? `streak ${row.ctx_cont_streak > 0 ? "+" : ""}${row.ctx_cont_streak}${row.ctx_phase_change ? " (phase change?)" : ""}` : null,
-          row.ctx_prev_wick_status ? `wick50 ${row.ctx_prev_wick_status.replace(/_/g, " ")}` : null,
+          extraInfo.wick && row.ctx_prev_wick_status ? `wick50 ${row.ctx_prev_wick_status.replace(/_/g, " ")}` : null,
           row.ctx_prev_eq_status ? `EQ ${row.ctx_prev_eq_status.replace(/_/g, " ")}` : null,
         ].filter(Boolean);
         const detail = [
-          lvl("ADR", row.ctx_adr), `next-day bias ${row.ctx_next_day_bias}`,
-          lvl("wick 50%", row.ctx_prev_wick_mid), lvl("prev EQ", row.ctx_prev_eq),
+          extraInfo.adr ? lvl("ADR", row.ctx_adr) : null, `next-day bias ${row.ctx_next_day_bias}`,
+          extraInfo.wick ? lvl("wick 50%", row.ctx_prev_wick_mid) : null, lvl("prev EQ", row.ctx_prev_eq),
           lvl("PDH", row.ctx_pdh), lvl("PDL", row.ctx_pdl), lvl("PWH", row.ctx_pwh), lvl("PWL", row.ctx_pwl),
           lvl("PMH", row.ctx_pmh), lvl("PML", row.ctx_pml),
           lvl("draw above", row.ctx_draw_above), lvl("draw below", row.ctx_draw_below),
@@ -1227,21 +1297,22 @@ export default function Home() {
                   <span className="inventory-ist">{nextNews.time}</span>
                 </a>
               )}
-              <button
-                type="button"
+              <span
+                tabIndex={0}
                 className={`news-toggle${newsFeed?.stale ? " stale" : ""}`}
                 aria-expanded={!!newsOpen}
                 aria-label="High-impact news this week"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setNewsOpen((current) => current ? null : { top: rect.bottom + 6, right: window.innerWidth - rect.right });
-                }}
+                onMouseEnter={(event) => openNews(event.currentTarget)}
+                onMouseLeave={closeNewsSoon}
+                onFocus={(event) => openNews(event.currentTarget)}
+                onBlur={closeNewsSoon}
               >
                 News <span className="news-count">{upcomingNews.length}</span> <ChevronDown size={10} />
-              </button>
+              </span>
             </div>
-            {newsOpen && (
-              <div className="news-popover" role="dialog" aria-label="High-impact news" style={{ top: newsOpen.top, right: newsOpen.right }}>
+            {/* Portal to <body>: .section-nav's backdrop-filter would re-anchor position:fixed. */}
+            {newsOpen && createPortal(
+              <div className="news-popover" role="dialog" aria-label="High-impact news" style={{ top: newsOpen.top, right: newsOpen.right }} onMouseEnter={keepNewsOpen} onMouseLeave={closeNewsSoon} onFocus={keepNewsOpen} onBlur={closeNewsSoon}>
                 <div className="news-popover-head">
                   <span>High-impact · {newsFeed?.currencies.length ? newsFeed.currencies.join(", ") : "all currencies"}</span>
                   <button type="button" className="news-refresh" onClick={() => loadHighImpactNews(true)} disabled={newsLoading} aria-label="Fetch live high-impact news" title="Fetch live from ForexFactory">
@@ -1267,7 +1338,7 @@ export default function Home() {
                   <a href={FF_CALENDAR_URL} target="_blank" rel="noreferrer">ForexFactory ↗</a>
                 </div>
               </div>
-            )}
+            , document.body)}
           </div>
         </div>
       </nav>
@@ -1284,7 +1355,15 @@ export default function Home() {
                 <span className="auto-title info-title"><Timer size={14} /> AM Silver Bullet
                   <span className="info-trigger" aria-label="Info: AM Silver Bullet" role="button" tabIndex={0} onClick={() => setActiveTooltip(activeTooltip === "silver_bullet" ? null : "silver_bullet")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTooltip(activeTooltip === "silver_bullet" ? null : "silver_bullet"); } }}>
                     <Info size={12} />
-                    <span className={`info-tooltip${activeTooltip === "silver_bullet" ? " open" : ""}`}>Checks the New York 10:00–11:00 AM window for a confirmed commodity setup. Signals use the range break for entry, stop, and target.</span>
+                    <span className={`info-tooltip rich${activeTooltip === "silver_bullet" ? " open" : ""}`}><strong className="info-heading">AM Silver Bullet</strong>{renderInfoBody([
+                      "- Commodities only, 5-minute bars, New York time (10:00–11:00 NY = 19:30–20:30 IST in US summer, 20:30–21:30 IST in winter).",
+                      "- Range = high and low of the 09:00–10:00 NY hour.",
+                      "- Between 10:00 and 11:00 NY, price sweeps the range low (bullish) or range high (bearish).",
+                      "- Confirms on the first FVG whose middle candle is the sweep bar or later, with the third candle closing back inside the range.",
+                      "- Entry = FVG edge nearest price; stop-loss = swing extreme since the sweep; target = opposite side of the range.",
+                      "- No setup if one bar sweeps both sides, or the target side is hit before confirmation.",
+                      "- Uses closed bars only, so a shown signal never changes; one setup per symbol per session.",
+                    ].join(String.fromCharCode(10)))}</span>
                   </span>
                 </span>
                 {silverBullet?.running ? (
@@ -1534,6 +1613,18 @@ export default function Home() {
             />
             AM SB
           </label>
+          {EXTRA_INFO_OPTIONS.map((option) => (
+            <label key={option.key} className="strategy-date-auto" title={`${option.help}
+
+Unticking M/W/D bias skips its calculation; unticking all three skips all extra info. Ticking one back on applies on the next run.`}>
+              <input
+                type="checkbox"
+                checked={extraInfo[option.key]}
+                onChange={(event) => toggleExtraInfo(option.key, event.target.checked)}
+              />
+              {option.label}
+            </label>
+          ))}
         </div>
         {strategyDateNote && <p className="date-note">{strategyDateNote}</p>}
         {strategyGroups.length > 0 && (

@@ -95,3 +95,59 @@ def test_annotate_frame_side_specific_wick():
     bear = dc.annotate_frame(frame, ctx, -1)
     assert bear.loc[0, "ctx_wick_class"] == "small"
     assert "_upper_wick_pct" not in bull.columns
+
+
+def _weeks(start, *bars):
+    rows = []
+    for i, ohlc in enumerate(bars):
+        rows += [ohlc] * 5
+    return pd.DataFrame(rows, columns=["Open", "High", "Low", "Close"],
+                        index=pd.bdate_range(start, periods=len(rows)))
+
+
+def test_sweep_bias_rule():
+    ref = pd.Series({"Open": 100, "High": 102, "Low": 98, "Close": 100})
+    bar = lambda o, h, l, c: pd.Series({"Open": o, "High": h, "Low": l, "Close": c})  # noqa: E731
+    assert dc.sweep_bias(bar(99, 101, 97, 99), ref) == "Bullish"    # swept low, closed back inside
+    assert dc.sweep_bias(bar(100, 104, 99, 103), ref) == "Bullish"  # close above high
+    assert dc.sweep_bias(bar(100, 103, 97, 100.5), ref) == "Neutral"  # outside bar closing inside
+    assert dc.sweep_bias(bar(100, 101, 99, 100), ref) == "Neutral"  # inside bar
+
+
+def test_mtf_unfinished_week_reads_w1_vs_w2():
+    # W-2 range 98-102; W-1 sweeps 97 and closes 99 back inside -> Bullish.
+    # The partial current week (Mon 2026-02-09) breaks lower but is ignored.
+    daily = _weeks("2026-01-19", (100, 102, 98, 100), (100, 102, 98, 100), (99, 101, 97, 99))
+    daily.loc[pd.Timestamp("2026-02-09")] = [95, 96, 90, 91]
+    bias = dc.multi_timeframe_bias(daily)
+    assert bias["weekly"] == "Bullish"
+    assert bias["daily"] == "Bearish"
+
+
+def test_mtf_friday_closes_current_week():
+    daily = _weeks("2026-01-19", (100, 102, 98, 100), (100, 102, 98, 100), (95, 96, 90, 91))
+    assert daily.index[-1].weekday() == 4
+    assert dc.multi_timeframe_bias(daily)["weekly"] == "Bearish"
+
+
+def test_mtf_reference_week_must_be_complete():
+    # Only two weeks: the reference week is the first bucket (may be partial).
+    daily = _weeks("2026-01-26", (100, 102, 98, 100), (95, 96, 90, 91))
+    assert dc.multi_timeframe_bias(daily)["weekly"] == "Neutral"
+
+
+def test_mtf_monthly_on_closed_months_and_in_context():
+    def month(start, end, ohlc):
+        idx = pd.bdate_range(start, end)
+        return pd.DataFrame([ohlc] * len(idx), columns=["Open", "High", "Low", "Close"], index=idx)
+
+    daily = pd.concat([
+        month("2025-11-01", "2025-11-30", (100, 102, 98, 100)),
+        month("2025-12-01", "2025-12-31", (100, 102, 98, 100)),  # M-2 range 98-102
+        month("2026-01-01", "2026-01-30", (99, 101, 97, 99)),    # M-1 sweeps 97, closes inside
+        month("2026-02-02", "2026-02-02", (95, 96, 90, 91)),     # partial month, ignored
+    ])
+    ctx = dc.compute_daily_context(daily)
+    assert ctx["ctx_bias_m"] == "Bullish"
+    assert ctx["ctx_bias_d"] == "Bearish"
+    assert ctx["ctx_bias_direction"] == 0  # daily disagrees with monthly

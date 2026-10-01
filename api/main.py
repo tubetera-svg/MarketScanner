@@ -37,6 +37,8 @@ class StrategyScanRequest(BaseModel):
     strategies: list[str] | None = Field(default=None, max_length=50)
     anchor_date: date | None = None
     timeframe: Literal["daily", "weekly", "15m", "1h", "4h"] = "weekly"
+    include_context: bool = True
+    include_bias: bool = True
 
 
 class BacktestRequest(BaseModel):
@@ -922,6 +924,8 @@ async def run_strategy_scan(request: StrategyScanRequest) -> dict[str, Any]:
                 request.strategies,
                 request.anchor_date,
                 request.timeframe,
+                request.include_context,
+                request.include_bias,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1072,6 +1076,7 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
         "strategy_choices": {key: list(values) for key, values in app_settings.STRATEGY_CHOICES.items()},
         "news_currencies": list(app_settings.NEWS_CURRENCIES),
+        "sound_choices": list(app_settings.SOUND_CHOICES),
     }
 
 

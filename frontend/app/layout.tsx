@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import PriceAlertNotifier from "../components/PriceAlertNotifier";
+import AudioUnlockBanner from "../components/AudioUnlockBanner";
 
 export const metadata: Metadata = {
   title: "QuantLens",
@@ -9,5 +10,6 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   // PriceAlertNotifier: price-alert toasts/sound on every page.
-  return <html lang="en"><body>{children}<PriceAlertNotifier /></body></html>;
+  // AudioUnlockBanner: hint while the browser still blocks alert sounds.
+  return <html lang="en"><body>{children}<PriceAlertNotifier /><AudioUnlockBanner /></body></html>;
 }

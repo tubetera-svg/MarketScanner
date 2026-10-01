@@ -57,7 +57,24 @@ DEFAULTS: dict[str, Any] = {
         "hidden_strategies": [],
         "hidden_pages": [],
     },
+    # Browser alert sounds (frontend/components/alertSound.ts). Quiet hours are
+    # IST 'HH:MM' and may wrap midnight; news_event.lead_minutes = how long
+    # before a high-impact news / EIA release its sound plays.
+    "sounds": {
+        "enabled": True,
+        "volume": 70,
+        "ltf": {"enabled": True, "sound": "chime"},
+        "silver_bullet": {"enabled": True, "sound": "ping"},
+        "price_alert": {"enabled": True, "sound": "doorbell"},
+        "news_event": {"enabled": False, "sound": "bell", "lead_minutes": 5},
+        "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:00"},
+    },
 }
+
+# Sound ids offered per alert; keep in step with SOUNDS in alertSound.ts.
+SOUND_CHOICES = ("chime", "ping", "doorbell", "beeps", "rising", "falling", "bell", "marimba", "siren", "tick",
+                 "pulse_alarm", "harp", "sparkle", "notify_melody", "vibes", "fanfare")
+SOUND_KINDS = ("ltf", "silver_bullet", "price_alert", "news_event")
 
 # (section, key) -> (min, max) for integer fields
 _INT_LIMITS = {
@@ -119,6 +136,15 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
             settings["strategy"][key] = choices[0]
     for market, default in DEFAULTS["data_cutoffs"].items():
         settings["data_cutoffs"][market] = _normalize_hhmm(settings["data_cutoffs"][market]) or default
+    sounds = settings["sounds"]
+    sounds["volume"] = max(0, min(100, int(sounds["volume"])))
+    sounds["news_event"]["lead_minutes"] = max(1, min(60, int(sounds["news_event"]["lead_minutes"])))
+    for kind in SOUND_KINDS:
+        if sounds[kind]["sound"] not in SOUND_CHOICES:
+            sounds[kind]["sound"] = DEFAULTS["sounds"][kind]["sound"]
+    for edge in ("start", "end"):
+        quiet = sounds["quiet_hours"]
+        quiet[edge] = _normalize_hhmm(quiet[edge]) or DEFAULTS["sounds"]["quiet_hours"][edge]
     return settings
 
 
