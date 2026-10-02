@@ -153,6 +153,20 @@ def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return [{key: value for key, value in row.items()} for row in clean.to_dict("records")]
 
 
+class ScanCancelled(Exception):
+    """The scan was stopped via ``cancel_scan`` before it finished."""
+
+
+def cancel_scan() -> None:
+    """Signal the in-flight ``run_scan`` to stop at its next symbol."""
+    load_module().request_scan_cancel()
+
+
+def reset_cancel() -> None:
+    """Clear any stale cancel request (call before starting / after finishing a scan)."""
+    load_module().clear_scan_cancel()
+
+
 def run_scan(
     symbols: list[str] | None,
     strategy_names: list[str] | None,
@@ -190,16 +204,19 @@ def run_scan(
     else:
         _requested, resolved_date, reason = module.resolve_previous_working_date(requested_date)
 
-    executions = module.run_strategies(
-        strategy_names=requested,
-        symbols=cleaned_symbols,
-        as_of_date=resolved_date,
-        verbose=False,
-        print_values=False,
-        timeframe=timeframe,
-        include_context=include_context,
-        include_bias=include_bias,
-    )
+    try:
+        executions = module.run_strategies(
+            strategy_names=requested,
+            symbols=cleaned_symbols,
+            as_of_date=resolved_date,
+            verbose=False,
+            print_values=False,
+            timeframe=timeframe,
+            include_context=include_context,
+            include_bias=include_bias,
+        )
+    except module.ScanCancelled as exc:
+        raise ScanCancelled() from exc
 
     labels = {**dict(CORE_STRATEGIES), **dict(module.WEEKLY_PROFILE_LABELS)}
     groups: list[dict[str, Any]] = []

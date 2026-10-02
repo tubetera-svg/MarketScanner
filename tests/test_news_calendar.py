@@ -71,6 +71,32 @@ def test_failed_fetch_serves_stale_cache_without_retry(feed, monkeypatch):
     assert feed.count("fail") == 1
 
 
+def test_rate_limited_first_fetch_retries_after_backoff_not_next_day(feed, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from email.message import Message
+
+    now = [datetime(2026, 10, 2, 6, 0, tzinfo=timezone.utc)]
+    monkeypatch.setattr(news, "_now", lambda: now[0])
+    real_urlopen = news.urllib.request.urlopen
+
+    def rate_limited(request, timeout=0):
+        feed.append("429")
+        headers = Message()
+        headers["Retry-After"] = "3600"
+        raise news.urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", headers, None)
+
+    monkeypatch.setattr(news.urllib.request, "urlopen", rate_limited)
+    result = news.get_events()
+    assert result["stale"] and result["events"] == [] and result["fetched_at"] is None
+    news.get_events(refresh=True)  # still inside Retry-After: no new request
+    assert feed.count("429") == 1
+
+    now[0] += timedelta(seconds=3601)
+    monkeypatch.setattr(news.urllib.request, "urlopen", real_urlopen)
+    result = news.get_events()
+    assert not result["stale"] and len(result["events"]) == 2
+
+
 def test_settings_currency_filter_is_validated():
     settings = api_main.app_settings._clamp(api_main.app_settings._merge(api_main.app_settings.DEFAULTS, {"news": {"currencies": ["usd", "XYZ", "EUR"]}}))
     assert settings["news"]["currencies"] == ["EUR", "USD"]

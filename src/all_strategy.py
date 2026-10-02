@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import date, timedelta
 from io import StringIO
@@ -72,6 +73,36 @@ def resolve_previous_working_date(requested_date: date) -> tuple[date, date, str
         return requested_date, resolved_date, None
     reason = "weekend" if requested_date.weekday() >= 5 else "NSE holiday"
     return requested_date, resolved_date, reason
+
+
+class ScanCancelled(BaseException):
+    """Aborts a running scan. BaseException so per-symbol ``except Exception`` guards don't swallow it."""
+
+
+_scan_cancel = threading.Event()
+
+
+def request_scan_cancel() -> None:
+    """Ask the in-flight ``run_strategies`` call to stop at the next symbol."""
+    _scan_cancel.set()
+
+
+def clear_scan_cancel() -> None:
+    _scan_cancel.clear()
+
+
+def _check_scan_cancel() -> None:
+    if _scan_cancel.is_set():
+        raise ScanCancelled()
+
+
+class _CancellableSymbols(list):
+    """Symbol list that checks for a cancel request before yielding each symbol."""
+
+    def __iter__(self):
+        for symbol in super().__iter__():
+            _check_scan_cancel()
+            yield symbol
 
 
 @dataclass
@@ -354,6 +385,7 @@ def _build_daily_map_for_symbols(
                 log.warning("Batch OHLC read failed for %s: %s", source, exc)
 
     for sym in symbols_upper:
+        _check_scan_cancel()
         try:
             out[sym] = _fetch_strategy_daily(
                 sym, as_of_date, max_lookback_days, hist_rows=hist_by_symbol.get(sym)
@@ -2624,6 +2656,7 @@ def run_strategies(
         "candle_3_closure": PROTECTED_SWINGS_LOOKBACK_DAYS,
         "propulsion_blocks": _PB_LOOKBACK,
      }
+    symbols = _CancellableSymbols(symbols)
     max_lookback = max(lookback_by_strategy.get(name, 60) for name in strategy_names) if strategy_names else 60
     if include_context and include_bias:
         max_lookback = max(max_lookback, CONTEXT_LOOKBACK_DAYS)

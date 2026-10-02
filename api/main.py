@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -915,25 +915,53 @@ def update_strategy_flag(name: str, request: StrategyFlagUpdate) -> dict[str, An
     return {"strategies": strategies, "weekly_profiles_master_enabled": master}
 
 
+_strategy_scan_active = False
+
+
 @app.post("/api/strategy-scan")
-async def run_strategy_scan(request: StrategyScanRequest) -> dict[str, Any]:
+async def run_strategy_scan(request: StrategyScanRequest, http_request: Request) -> dict[str, Any]:
+    global _strategy_scan_active
     if service.lock.locked():
         raise HTTPException(status_code=409, detail="A scan is already running")
     async with service.lock:
+        strategy_bridge.reset_cancel()
+        _strategy_scan_active = True
+        scan = asyncio.ensure_future(asyncio.to_thread(
+            strategy_bridge.run_scan,
+            request.symbols,
+            request.strategies,
+            request.anchor_date,
+            request.timeframe,
+            request.include_context,
+            request.include_bias,
+        ))
         try:
-            return await asyncio.to_thread(
-                strategy_bridge.run_scan,
-                request.symbols,
-                request.strategies,
-                request.anchor_date,
-                request.timeframe,
-                request.include_context,
-                request.include_bias,
-            )
+            # Page reload / tab close drops the connection: stop the worker thread
+            # (it checks the flag per symbol) instead of letting it run to completion.
+            while not scan.done():
+                await asyncio.wait({scan}, timeout=0.5)
+                if not scan.done() and await http_request.is_disconnected():
+                    strategy_bridge.cancel_scan()
+                    logging.getLogger(__name__).info("Strategy scan cancelled: client disconnected")
+            return scan.result()
+        except strategy_bridge.ScanCancelled:
+            raise HTTPException(status_code=499, detail="Strategy scan cancelled")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            _strategy_scan_active = False
+            strategy_bridge.reset_cancel()
+
+
+@app.post("/api/strategy-scan/cancel")
+def cancel_strategy_scan() -> dict[str, Any]:
+    """Stop the running strategy scan (Stop button / page unload beacon)."""
+    if not _strategy_scan_active:
+        return {"cancelled": False}
+    strategy_bridge.cancel_scan()
+    return {"cancelled": True}
 
 
 @app.post("/api/backtest")

@@ -4,8 +4,11 @@ forexfactory.com/calendar itself is Cloudflare-protected (403 to scripts), so
 this reads ForexFactory's own weekly JSON export. Only ``impact == "High"``
 events are kept. The feed is downloaded at most once per IST calendar day and
 cached in data/state/ff_high_impact.json; ``get_events(refresh=True)`` (the UI
-"fetch live" button) bypasses that. On a failed download the last cache is
-served with ``stale: True`` and no retry happens until the next IST day.
+"fetch live" button) bypasses that. On a failed download the last cache (if
+any) is served with ``stale: True`` and no download is attempted again, not even
+by refresh, until ``retry_at``. That is RETRY_BACKOFF_SECONDS, or longer if a 429
+response sends Retry-After. Without the backoff, a fresh deploy with no cache
+that got a 429 would stay empty for the whole IST day.
 Currency filtering (app_settings ``news.currencies``) is applied on read, so
 changing it never needs a re-download.
 """
@@ -14,8 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -24,13 +28,27 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE_PATH = ROOT / "data" / "state" / "ff_high_impact.json"
 FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 IST = ZoneInfo("Asia/Kolkata")
+RETRY_BACKOFF_SECONDS = 30 * 60  # faireconomy rate-limits (HTTP 429) aggressively
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _today_ist() -> str:
-    return datetime.now(IST).date().isoformat()
+    return _now().astimezone(IST).date().isoformat()
+
+
+def _backoff_seconds(exc: Exception) -> int:
+    if isinstance(exc, urllib.error.HTTPError) and exc.headers is not None:
+        try:
+            return max(RETRY_BACKOFF_SECONDS, int(exc.headers.get("Retry-After", "")))
+        except ValueError:
+            pass
+    return RETRY_BACKOFF_SECONDS
 
 
 def _read_cache() -> dict[str, Any] | None:
@@ -71,20 +89,26 @@ def _load(refresh: bool) -> dict[str, Any]:
         today = _today_ist()
         if cache and not refresh and cache.get("fetched_day_ist") == today:
             return cache
+        retry_at = (cache or {}).get("retry_at")
+        if cache and retry_at and _now() < datetime.fromisoformat(retry_at):
+            return cache
         try:
             events = _download()
             doc = {
                 "fetched_day_ist": today,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "fetched_at": _now().isoformat(),
                 "source": FEED_URL,
                 "events": events,
                 "stale": False,
                 "error": None,
+                "retry_at": None,
             }
         except Exception as exc:  # network / parse failure: keep the old list
             logger.warning("ForexFactory calendar fetch failed: %s", exc)
-            doc = {**(cache or {"fetched_at": None, "source": FEED_URL, "events": []})}
-            doc.update({"fetched_day_ist": today, "stale": True, "error": str(exc)})
+            # fetched_day_ist stays at the last successful day so the next try happens after retry_at
+            doc = {**(cache or {"fetched_day_ist": None, "fetched_at": None, "source": FEED_URL, "events": []})}
+            retry = _now() + timedelta(seconds=_backoff_seconds(exc))
+            doc.update({"stale": True, "error": str(exc), "retry_at": retry.isoformat()})
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         CACHE_PATH.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         return doc

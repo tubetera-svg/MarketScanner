@@ -731,6 +731,11 @@ export default function Home() {
         body: JSON.stringify({ symbols: selected, anchor_date: dateOverride, timeframe: protectedSwingTimeframe, include_context: includeExtraInfo, include_bias: extraInfo.bias }),
       });
       const data = await response.json();
+      if (response.status === 499) {
+        setScanProgress(null);
+        setMessage("Strategy scan stopped");
+        return;
+      }
       if (!response.ok) throw new Error(data.detail ?? "Strategy scan failed");
       const groups: StrategyGroup[] = data.results ?? [];
       setStrategyGroups(groups);
@@ -748,6 +753,34 @@ export default function Home() {
       setStrategyScanning(false);
     }
   };
+
+  const stopStrategyScan = async () => {
+    setScanProgress("Stopping...");
+    try {
+      await fetch(`${API}/api/strategy-scan/cancel`, { method: "POST" });
+    } catch {
+      setMessage("Could not reach API to stop the scan");
+    }
+  };
+
+  // While a scan runs: warn before reload/close, and if the user leaves anyway
+  // tell the API to stop the scan instead of letting it finish in the background.
+  useEffect(() => {
+    if (!strategyScanning) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const cancelOnLeave = () => {
+      fetch(`${API}/api/strategy-scan/cancel`, { method: "POST", keepalive: true }).catch(() => undefined);
+    };
+    window.addEventListener("beforeunload", warn);
+    window.addEventListener("pagehide", cancelOnLeave);
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      window.removeEventListener("pagehide", cancelOnLeave);
+    };
+  }, [strategyScanning]);
 
   const shiftStrategyDate = (days: number) => {
     if (strategyScanning) return;
@@ -782,6 +815,9 @@ export default function Home() {
       if (event.key.toLowerCase() === "r") {
         event.preventDefault();
         if (!event.repeat && !strategyScanning && selected.length > 0) runStrategyScan();
+      } else if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (!event.repeat && strategyScanning) stopStrategyScan();
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         shiftStrategyDate(-1);
@@ -1493,6 +1529,12 @@ export default function Home() {
         <RefreshCw size={14} className={strategyScanning ? "spin" : undefined} />
         {strategyScanning ? (scanProgress ? scanProgress : "Scanning—") : "Run strategies"}
       </button>
+      {strategyScanning && (
+        <button className="test-button stop" type="button" title="Stop the running strategy scan (Alt+S)" onClick={stopStrategyScan}>
+          <Square size={14} />
+          Stop
+        </button>
+      )}
       {strategyScanning && scanProgress && <span className="scan-progress">{scanProgress}</span>}
     </div>
   </summary>
