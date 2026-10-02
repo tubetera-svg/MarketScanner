@@ -28,7 +28,7 @@ from .config import (
     LIQUIDITY_LOOKBACK_DAYS,
 )
 from . import state_store
-from .service import get_ohlc
+from .service import get_ohlc, ist_today
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def compute_liquidity_metrics(
       affect the liquidity tier.
     - sufficient_data: bool, True if enough history to decide
     """
-    end = date.today()
+    end = ist_today()
     start = end - timedelta(days=lookback_days * 2)
 
     # Try with auto_fetch enabled but exclude today (incomplete bar)

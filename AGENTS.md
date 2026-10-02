@@ -1,24 +1,39 @@
 # AGENTS.md — Operating Rules for This Project
 
-Senior developer maintaining a multi-strategy ICT-style market scanner. This file supersedes ad-hoc instructions unless the user gives an explicit higher-priority one.
+Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analysis market scanner (NSE equities/ETFs/IPOs, forex, commodities, crypto). This file supersedes ad-hoc instructions unless the user gives an explicit higher-priority one. It is the single source of truth for every agent: `CLAUDE.md` just imports it; Kilo reads it directly.
 
 ## 0. Project Map (read this instead of exploring)
 | Path | What | Notes |
 |---|---|---|
-| `src/all_strategy.py` | Strategy defs, `strategy_registry()`, NSE bhavcopy downloader | ~2.7k lines — **grep, never read whole** |
-| `src/ict_scanner.py` | Live scan loop, sessions, `is_daily_bar_ready` | ~2.4k lines — grep |
+| `src/all_strategy.py` | Strategy defs, `strategy_registry()`, `run_strategies`, NSE bhavcopy downloader | ~2.7k lines — **grep, never read whole** |
+| `src/ict_scanner.py` | Live scan loop (`AdaptiveScanner.run_once`), sessions/holidays, `is_daily_bar_ready`, FVG/sweep/displacement detectors, `OHLCCache` | ~2.7k lines — grep |
 | `src/{silver_bullet,propulsion_blocks,protected_swings}.py` | Individual strategy modules | |
-| `src/backtest/` | Backtest engine + metrics | Spec: `docs/BACKTEST_ENGINE_SPEC.md` |
-| `api/main.py` | FastAPI app (`uvicorn api.main:app`) | `api/strategy_bridge.py` = UI ↔ strategy flags |
-| `market_data/` | SQLite OHLC layer (`database.py`, `service.py`, `routes.py`, `sources/`), IPO (`ipo.py`, `equity_master.py`, `liquidity_screener.py`) | DB: `data/market_data.db` |
-| `frontend/app/` | Next.js pages: `page.tsx` (scanner, ~1.7k lines), `watchlist/`, `ipo/`, `backtest/` | Shared: `frontend/components/` |
-| `config/` | Watchlist, strategy flags/profiles, symbol aliases, app settings | Edited by users/UI; runtime state lives in `data/state/` (git-ignored) |
+| `src/ltf_confirmation.py` | 1h/15m confirmation of daily setups | Signal-sensitive |
+| `src/daily_context.py` | Display-only `ctx_*` columns appended to strategy rows | Must never gate a signal |
+| `src/backtest/` | `engine.py` + `metrics.py` | Spec: `docs/BACKTEST_ENGINE_SPEC.md` |
+| `api/main.py` | FastAPI app (`uvicorn api.main:app`), routes, Silver Bullet scheduler | ~1.3k lines — grep `@app.` |
+| `api/strategy_bridge.py` | UI ↔ strategy flags, `run_scan()` (anchor_date → historical scan) | |
+| `api/{app_settings,price_alerts,push,news_calendar,fno_membership}.py` | Settings JSON, price alerts, Telegram/ntfy push, econ calendar, F&O list | Push creds only from env |
+| `market_data/` | SQLite OHLC layer: `database.py` (schema), `service.py`, `routes.py`, `sources/{nse,tradingview}_source.py`, `auto_sync.py`, `bootstrap.py`, `tv_symbol.py`, `state_store.py` (`APP_STATE_STORE=db`), `favorites.py`, `etf_list.py`, `config.py` | DB: `data/market_data.db` (`ohlc_daily`, `ohlc_no_data`, `app_state`, …) |
+| `market_data/{ipo,equity_master,liquidity_screener}.py` | IPO tracking + liquidity screen | CLIs in `scripts/ipo/` |
+| `frontend/app/` | Next.js pages: `page.tsx` (scanner, ~1.8k lines), `watchlist/`, `ipo/`, `backtest/`, `alerts/`, `settings/` | Shared: `frontend/components/` |
+| `config/` | Watchlist, `strategy_flags.json`, `strategy_info.txt`, `symbol_aliases.json`, `app_settings.json`, `favorites.json` | Edited by users/UI; runtime state in `data/state/` (git-ignored) |
 | `main.py` | CLI: run strategies → CSVs in `strategy_outputs/` | |
-| `scripts/` | Launchers (`start/stop_market_scanner.bat`), `ipo/` (IPO CLIs + batch) | `scripts/debug/` = ad-hoc one-off checks, not production |
-| `tests/` | pytest suite | |
-| `docs/` | Specs | `RUNBOOK.md` (root) = setup + dated changelog |
+| `scripts/` | Launchers (`start/stop_market_scanner.bat`), `ipo/` | `scripts/debug/` = throwaway checks |
+| `tests/` | pytest suite (one file per area) | |
+| `docs/` | Specs + `pine/ict_scanner.pine` | `RUNBOOK.md` (root) = setup + dated changelog |
 
-**Do not read/scan** unless the task requires it: `data/` (116 MB DB, bhavcopy cache, logs, `state/` caches), `backups/`, `strategy_outputs/`, `.venv/`, `frontend/node_modules/`, `frontend/.next/`, `frontend/package-lock.json`, `__pycache__/`, `config/watchlist*.{txt,json}` (1k+ lines — grep for a symbol). In `RUNBOOK.md`, read only the relevant section; the "Current Context" changelog is long history — grep it by keyword/date.
+**Do not read/scan** unless the task requires it: `data/` (116 MB DB, bhavcopy cache, logs, `state/`), `backups/`, `strategy_outputs/`, `.venv/`, `frontend/node_modules/`, `frontend/.next/`, `.kilo/node_modules/`, `*package-lock.json`, `__pycache__/`, `config/watchlist*.{txt,json}` (1k+ lines — grep for a symbol). In `RUNBOOK.md`, read only the relevant section; "Current Context" is long history — grep by keyword/date.
+
+**Where to look by task**
+| Task | Start at | Also update |
+|---|---|---|
+| New/changed strategy | `strategy_registry()` in `all_strategy.py`, or a `src/<name>.py` module | `config/strategy_info.txt`, `strategy_flags.json` default, `tests/test_<name>.py`, backtest parity |
+| Session/timezone/holiday | `detect_session`, `NSE_HOLIDAYS`, `is_*_open`, `is_daily_bar_ready` in `ict_scanner.py` | `session-timezone-audit` skill |
+| New data source / sync | `market_data/sources/`, `service.py`, `auto_sync.py`, `config.py` env flags | `tests/test_market_data.py`, `test_data_cutoffs.py` |
+| Backtest | `src/backtest/engine.py`, `POST /api/backtest` | `docs/BACKTEST_ENGINE_SPEC.md`, `backtest-validation` skill |
+| Alerts / push | `api/price_alerts.py`, `api/push.py`, `frontend/components/PriceAlert*` | `tests/test_price_alerts.py`, `test_push.py` |
+| UI page | `frontend/app/<page>/page.tsx`, `frontend/components/` | API route in `api/main.py`; run `tsc --noEmit` |
 
 **Commands** (Windows, PowerShell; use `.venv\Scripts\python.exe` if `python` is not the venv):
 - Targeted test: `python -m pytest tests/test_<area>.py -q`
@@ -26,26 +41,44 @@ Senior developer maintaining a multi-strategy ICT-style market scanner. This fil
 - API: `python -m uvicorn api.main:app --reload --port 8000`
 - Known pre-existing failure: `tests/test_market_data.py::test_source_flags_are_independent` (needs live TradingView).
 
-**Domain facts:** NSE sessions are IST; forex/commodities (`FOREX_24_5`) and ICT kill zones use NY/ET. NSE daily bars are ready after bhavcopy publish (17:00 IST, `is_daily_bar_ready`). Sources are gated independently by env flags `FETCH_TRADINGVIEW_DATA` / `FETCH_NSE_DATA` / `AUTO_FETCH_MISSING_DATA`.
+**Domain facts:** NSE sessions are IST (09:15–15:30); forex/commodities (`FOREX_24_5`) and ICT kill zones / Silver Bullet use NY/ET with 17:00 NY rollover; crypto days are UTC. NSE daily bars are final after bhavcopy publish (17:00 IST, `is_daily_bar_ready`). TradingView returns IST wall-clock naive timestamps. Sources are gated independently by env flags `FETCH_TRADINGVIEW_DATA` / `FETCH_NSE_DATA` / `AUTO_FETCH_MISSING_DATA`.
 
-Review checklists for recurring tasks live in `.kilo/skill/` (backtest-validation, data-quality-check, session-timezone-audit, trading-strategy-review) — use when the task matches.
+**Skills** (review checklists): `backtest-validation`, `data-quality-check`, `session-timezone-audit`, `trading-strategy-review`. Use when the task matches.
 
 ## 1. Scope
 - Do exactly what was asked — the smallest viable change.
 - No unrelated refactors, "improvements," new abstractions/deps/config, or formatting/line-ending changes. Don't touch generated files or dependencies unless required.
 - Follow existing repo patterns. Put throwaway diagnostics in `scripts/debug/` (never repo root, never named `test_*.py` outside `tests/`), and delete them if not reusable.
+- New strategy → also add it to `config/strategy_info.txt`.
 
 ## 2. Trading Logic Safety
-- Entry, filters, position sizing, SL/TP, session, timeframe, and signal-timing logic are sensitive: never change silently.
+- Entry, filters, position sizing, SL/TP, RR threshold, session, timeframe, and signal-timing logic are sensitive: never change silently.
 - If a request risks altering strategy behavior, flag the risk before implementing. Efficiency/accuracy ideas that touch behavior: propose first, implement after approval.
+- Changing a constant (lookback, multiplier, window, threshold) is a behavior change.
+
+### 2a. Technical-Analysis Correctness Rules
+Apply to all strategy, indicator, scanner and backtest code. Violations are flagged per §3, not silently fixed.
+- **Closed bars only.** Decisions use completed bars. The last bar from a live fetch may be forming — exclude it or treat it as provisional. Daily bars count only after the market's cut-off (`is_daily_bar_ready` for NSE, 17:00 NY for FX, 00:00 UTC for crypto).
+- **Confirmation lag.** Swing highs/lows, pivots, fractals, protected swings, and order blocks are known only N bars after the extreme. Signals must be stamped at the confirmation bar, not the pivot bar.
+- **Signal time = detection time.** Each signal carries the bar timestamp it was decided on; the same setup must not re-fire on later scans (dedupe by symbol + strategy + setup bar).
+- **Higher-timeframe context** (PDH/PDL, PWH/PWL, weekly profile, daily bias) comes from the last *completed* HTF period relative to the bar being evaluated — never today's/this week's partial bar.
+- **Timezone-aware everywhere.** Never use host-local `date.today()` / naive `datetime.now()` for market dates (the app may run on a UTC/US server). Use `market_data.service.market_today(source, symbol)` (NSE/NSE IX = IST, crypto = UTC, other TradingView = NY) or `service.ist_today()` for NSE/IPO work. Stored bars are already host-independent (TradingView bars labelled by IST open). Store/compare in one zone per market.
+- **Calendars.** NSE holidays, weekends, half/special sessions (Muhurat) and FX DST shifts must not create phantom or missing bars. A missing bar is "no data", not "flat price".
+- **Price adjustments.** NSE splits/bonuses/rights change historical prices; mixing adjusted (TradingView) and unadjusted (bhavcopy) series breaks levels. Flag any cross-source comparison that ignores this.
+- **Data integrity before signals.** Reject bars with `high < low`, open/close outside range, zero/NaN prices, or duplicate timestamps rather than letting them form levels.
+- **Backtest realism.** Entries fill at the next tradable price after the signal bar (not the signal bar's close/extreme). If SL and TP both sit inside one bar, assume SL first unless intrabar data proves otherwise. Gaps through stops fill at the open. Account for costs (brokerage, STT/fees, slippage) or report results as gross. Universe must be point-in-time (no survivorship: delisted/SME-migrated symbols, IPO listing date).
+- **Parity.** Live scanner, historical test (`anchor_date`), and backtest must call the same detection functions with the same parameters.
+- **No over-fitting.** Don't tune parameters on the same window used to report performance; mention sample size (trades, period) with any metric.
 
 ## 3. Flag (don't silently fix, unless fixing is the task)
 - **Repainting** — signal uses data unavailable at its bar/timestamp (future bars, same-bar close after decision, future-derived indicators).
 - **Look-ahead** — historical/daily/backtest logic peeks at a later session than the one evaluated.
 - **Live/backtest drift** — IST vs NY/ET, session gating (NSE vs FOREX_24_5), source flags, cached vs live data.
+- Any §2a violation found while working on something else.
 
 ## 4. Context & Tool-Call Discipline
-- Use §0 first; then locate symbol (`rg`) → read minimal range → act. Stop once behavior is understood.
+- Use §0 first; then locate symbol (`rg -n "def <name>"`) → read minimal range → act. Stop once behavior is understood.
+- Reference code by **function/class name**, not line numbers, in docs and skills (line numbers rot).
 - Every tool call must answer a question that could change the implementation, validation, or report. Don't re-read files or re-establish facts already known this session.
 - Keep output small: quiet flags, `head`/`tail`/`Select-Object`, `rg -n` with tight patterns. Never dump full files, logs, DB tables, or test output; if truncated, resume rather than restart.
 - Prefer targeted edits over full-file rewrites.
@@ -55,14 +88,20 @@ Review checklists for recurring tasks live in `.kilo/skill/` (backtest-validatio
 - Ask only when ambiguity materially affects behavior, trading logic, data handling, architecture, or scope.
 
 ## 6. Expensive Work — ask first
-Large backtests, bulk downloads (bhavcopy/TradingView), full test suite, full-repo scans, DB-wide writes/deletes, IPO backfills. Lightweight targeted checks need no approval.
+Large backtests, bulk downloads (bhavcopy/TradingView), full test suite, full-repo scans, DB-wide writes/deletes, IPO backfills. Backups: code is versioned in git — never create code-copy/backup folders. Before a DB-wide delete or state purge, snapshot to `backups/pre_<op>_YYYYMMDD/` (existing pattern). Lightweight targeted checks need no approval.
 
 ## 7. Verification
 - Run the smallest relevant check (targeted pytest, `tsc --noEmit`, import check). Never claim a pass without running it; if you couldn't validate, say why.
+- Strategy/indicator changes: add or extend a test with a hand-built candle fixture that pins the expected signal bar and levels; tests must not hit the network.
 - Pre-existing unrelated failures: report, don't fix.
 - For notable behavior changes, append a dated entry to `RUNBOOK.md` "Current Context" (one short paragraph).
 
-## 8. Final Response
+## 8. Multi-Agent Sync
+Several agents (Claude Code, Kilo, …) work on this repo.
+- Rules live only here. `CLAUDE.md` imports this file — don't duplicate rules into it.
+- Skills exist in two copies: `.claude/skills/` (canonical) and `.kilo/skill/` (mirror for Kilo). Edit the canonical copy, then run `powershell -File scripts/sync_agent_skills.ps1`. `tests/test_agent_context.py` fails if they drift.
+
+## 9. Final Response
 Concise, no narrative. Cite locations as `path:line`. Sections:
 - **What changed**
 - **Files changed**

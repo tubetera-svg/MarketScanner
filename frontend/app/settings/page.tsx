@@ -261,8 +261,13 @@ export default function SettingsPage() {
                 <li>In Telegram, message @BotFather → <code>/newbot</code> → copy the bot token.</li>
                 <li>Open your new bot, tap Start and send it any message.</li>
                 <li>Visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> and copy <code>chat.id</code> (empty result = message the bot again; or ask @userinfobot for your ID).</li>
-                <li>On the API machine run <code>setx TELEGRAM_BOT_TOKEN &quot;…&quot;</code> and <code>setx TELEGRAM_CHAT_ID &quot;…&quot;</code>.</li>
-                <li>Restart the scanner (stop/start launchers), then check that &quot;configured&quot; shows telegram and press Send test.</li>
+                <li>Add <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> where the API (backend) runs, not the frontend:
+                  <ul style={{ margin: "2px 0", paddingLeft: 16 }}>
+                    <li><b>Local:</b> in PowerShell run <code>setx TELEGRAM_BOT_TOKEN &quot;…&quot;</code> and <code>setx TELEGRAM_CHAT_ID &quot;…&quot;</code>, close all terminals, then restart via the stop/start launchers.</li>
+                    <li><b>Online (Render):</b> API service → Environment → add both variables → Save (the service redeploys). Nothing is needed on Vercel.</li>
+                  </ul>
+                </li>
+                <li>Check that &quot;configured&quot; above shows telegram, then press Send test.</li>
               </ol>
             </details>
           </section>

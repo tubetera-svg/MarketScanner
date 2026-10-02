@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from . import database, equity_master, etf_list
+from .service import ist_today
 from .config import (
     IPO_MIN_ACTIVE_RATIO,
     IPO_MAX_AGE_DAYS,
@@ -719,7 +720,7 @@ def ipo_performance(
         if isinstance(reference_date, date)
         else date.fromisoformat(reference_date)
         if reference_date
-        else date.today()
+        else ist_today()
     )
     metadata = database.query_ipo_metadata(db_path=db_path)
     rows = database.query_ohlc_multi(SOURCE_NSE, [m["symbol"] for m in metadata],
@@ -779,7 +780,7 @@ def ipo_review(
     perf = ipo_performance(db_path=db_path, reference_date=reference_date)
     ref = (
         reference_date if isinstance(reference_date, date)
-        else date.fromisoformat(reference_date) if reference_date else date.today()
+        else date.fromisoformat(reference_date) if reference_date else ist_today()
     )
     window_start = min((i["listing_date"] for i in perf), default=None)
     master = equity_master.load_equity_master()
@@ -843,7 +844,7 @@ def run_ipo_backfill(
     Returns a per-symbol summary plus overall counts. ``days`` caps how far back
     to fetch for any single symbol (defence against an old/bad listing_date),
     and ``limits`` is accepted for signature compatibility (unused)."""
-    end = date.today()
+    end = ist_today()
     metadata = database.query_ipo_metadata(db_path=db_path)
     results = []
     ok = failed = rows = 0

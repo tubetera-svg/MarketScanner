@@ -38,7 +38,7 @@ from .config import (
     source_flag_name,
 )
 from .errors import FetchError, MarketDataError, NoDataError
-from .service import get_ohlc, resolve_session_source, sync_symbol_range
+from .service import get_ohlc, ist_today, market_today, resolve_session_source, sync_symbol_range
 
 log = logging.getLogger(__name__)
 
@@ -141,8 +141,9 @@ def _auto_sync():
     global _AUTO_SYNC
     if _AUTO_SYNC is None:
         from .auto_sync import DataAutoSync
+        from .automation_state import AutomationState
 
-        _AUTO_SYNC = DataAutoSync(_watchlist_entries)
+        _AUTO_SYNC = DataAutoSync(_watchlist_entries, AutomationState("data_auto_sync"))
     return _AUTO_SYNC
 
 
@@ -173,7 +174,7 @@ def sync_market_data(request: SyncRequest) -> dict:
     if not entries:
         raise HTTPException(status_code=404, detail="No symbols resolved for sync")
 
-    anchor = request.end_date or request.anchor_date or date.today()
+    anchor = request.end_date or request.anchor_date or ist_today()
     if request.start_date and request.start_date > anchor:
         raise HTTPException(status_code=400, detail="start_date must be on or before end_date")
     alias_map = load_symbol_aliases() if request.use_aliases else {}
@@ -692,8 +693,10 @@ def read_chart(
     if interval not in {"1d", "1w", "1M"}:
         raise HTTPException(status_code=503, detail=" ".join(notes) or "Intraday data unavailable.")
     try:
+        source = resolve_session_source(sym)
+        today = market_today(source, sym)
         result = get_ohlc(
-            resolve_session_source(sym), sym, date.today() - timedelta(days=5 * 365 + 10), date.today(),
+            source, sym, today - timedelta(days=5 * 365 + 10), today,
             auto_fetch=False,
         )
     except NoDataError as exc:

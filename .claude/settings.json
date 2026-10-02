@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(rg *)",
+      "Bash(python -m pytest tests/*)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/*)",
+      "PowerShell(git status *)",
+      "PowerShell(git diff *)",
+      "PowerShell(git log *)",
+      "PowerShell(git show *)",
+      "PowerShell(rg *)",
+      "PowerShell(python -m pytest tests/*)",
+      "PowerShell(.venv\\Scripts\\python.exe -m pytest tests/*)",
+      "PowerShell(Push-Location frontend; npx.cmd tsc --noEmit; Pop-Location)"
+    ],
+    "ask": [
+      "Read(./data/**)",
+      "Read(./backups/**)",
+      "Read(./strategy_outputs/**)"
+    ],
+    "deny": [
+      "Read(./frontend/node_modules/**)",
+      "Read(./frontend/.next/**)",
+      "Read(./.venv/**)",
+      "Read(./.kilo/node_modules/**)",
+      "Read(./**/__pycache__/**)"
+    ]
+  }
+}

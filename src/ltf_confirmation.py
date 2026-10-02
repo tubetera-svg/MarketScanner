@@ -24,6 +24,7 @@ share one code path. :class:`LtfSetupStore` persists setups across restarts
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, field
@@ -35,6 +36,7 @@ import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_PATH = os.path.join(ROOT, "data", "state", "ltf_setups.json")
+log = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
 NEW_YORK = ZoneInfo("America/New_York")
@@ -240,8 +242,8 @@ class LtfSetupStore:
         if store is not None:
             try:
                 store.write_text(self.path, json.dumps({key: asdict(value) for key, value in data.items()}))
-            except OSError:
-                pass
+            except OSError as exc:
+                log.warning("Could not save LTF setups to app_state (%s); changes since the last save are lost.", exc)
             return
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         tmp = f"{self.path}.tmp"
@@ -249,8 +251,8 @@ class LtfSetupStore:
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump({key: asdict(value) for key, value in data.items()}, handle)
             os.replace(tmp, self.path)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("Could not save LTF setups to %s (%s); changes since the last save are lost.", self.path, exc)
 
     def arm(self, setups: Iterable[LtfSetup], now: Optional[datetime] = None) -> List[LtfSetup]:
         """Add new setups (existing keys are left as they are); return the new ones."""

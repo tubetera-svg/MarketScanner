@@ -24,7 +24,7 @@ HAVING COUNT(*) < (julianday(MAX(date)) - julianday(MIN(date))) * 0.7;
 ### 2. Gap Detection (NSE)
 
 ```sql
--- NSE trading days missing (excl weekends + NSE_HOLIDAYS from ict_scanner.py:313-319)
+-- NSE trading days missing (excl weekends + NSE_HOLIDAYS in src/ict_scanner.py; dates below are 2026 — refresh from NSE_HOLIDAYS)
 WITH trading_days AS (
   SELECT date(d) as dt FROM (
     SELECT date('2026-01-01', '+' || (abs(random()) % 365) || ' days') as d
@@ -66,7 +66,7 @@ WHERE ABS(o1.close - o2.close)/o1.close > 0.001;
 ## Automated Check Script
 
 ```python
-# D:\Sid\MarketScanner\check_data_quality.py
+# scripts/debug/check_data_quality.py  (throwaway; never repo root — AGENTS.md §1)
 from market_data.database import connect, distinct_symbols, query_ohlc
 from datetime import date, timedelta
 
@@ -83,5 +83,5 @@ for sym in symbols[:10]:  # sample
 
 ## Pre-Backtest Gate
 
-Run before any backtest: `python check_data_quality.py --symbols <list> --start <date> --end <date>`
+Run before any backtest: `python scripts/debug/check_data_quality.py --symbols <list> --start <date> --end <date>`
 Fail if any symbol has >2% missing bars in range.

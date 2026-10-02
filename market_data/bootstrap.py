@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -46,14 +45,14 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     sys.path.insert(0, str(root))
     from market_data.config import backdate_lookback_days
-    from market_data.service import resolve_session_source, sync_symbol_range
+    from market_data.service import ist_today, resolve_session_source, sync_symbol_range
 
     entries = load_entries(root)
     if args.symbols.strip():
         wanted = {s.strip().upper() for s in args.symbols.split(",") if s.strip()}
         entries = [(sym, sess) for sym, sess in entries if sym.upper() in wanted]
 
-    anchor = args.as_of.strip() or date.today().isoformat()
+    anchor = args.as_of.strip() or ist_today().isoformat()
     days = args.days if args.days and args.days != 14 else backdate_lookback_days()
 
     ok = failed = 0

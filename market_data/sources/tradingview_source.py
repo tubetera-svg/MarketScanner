@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -125,7 +125,8 @@ def fetch_timeframe(
     # session that happened a few days ago. 24h FX/commodity markets print
     # ~96 15m / 24 1h / 6 4h bars per weekday, hence the separate gap rate.
     gap_bars_per_day = {"5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1, "1w": 0.2}[normalized_timeframe]
-    reach_days = max(0, (date.today() - start_date).days) + 1
+    # Bars are labelled by IST date (see below), so reach back from today in IST.
+    reach_days = max(0, (datetime.now(_IST).date() - start_date).days) + 1
     reach_bars = int(reach_days * gap_bars_per_day * 1.3) + 10
     n_bars = min(max(requested_bars, reach_bars, 30), 5000)
 

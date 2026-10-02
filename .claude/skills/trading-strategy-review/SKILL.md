@@ -17,20 +17,24 @@ Use this skill when reviewing or modifying any trading logic in `src/`, `api/str
 
 ### Key Locations to Audit
 
-| File | Lines | Risk |
-|------|-------|------|
-| `src/ict_scanner.py` | 657-702 | FVG detection — ensure `lookback` doesn't include current forming bar |
-| `src/ict_scanner.py` | 710-747 | Liquidity sweep — `candles[-1]` is current forming bar |
-| `src/ict_scanner.py` | 755-796 | Displacement — compares current candle to historical average |
-| `src/ict_scanner.py` | 1149-1181 | POI/FVG selection — only uses bias-matching FVG |
-| `src/silver_bullet.py` | 68-115 | AM Silver Bullet — excludes forming 15m candle (line 90) |
+| File | Symbol | Risk |
+|------|--------|------|
+| `src/ict_scanner.py` | `detect_bullish_fvg` / `detect_bearish_fvg` | FVG detection — ensure `lookback` doesn't include current forming bar |
+| `src/ict_scanner.py` | `detect_liquidity_sweep` | Liquidity sweep — `candles[-1]` is current forming bar |
+| `src/ict_scanner.py` | `detect_directional_displacement` | Displacement — compares current candle to historical average |
+| `src/ict_scanner.py` | POI/FVG selection in `AdaptiveScanner` | POI/FVG selection — only uses bias-matching FVG |
+| `src/silver_bullet.py` | `evaluate_am_silver_bullet` | AM Silver Bullet — excludes forming 15m candle |
+| `src/protected_swings.py`, `src/propulsion_blocks.py` | module entry points | Swing/pivot confirmation lag — signal stamped at confirmation bar |
+| `src/ltf_confirmation.py` | module entry points | LTF bars must be closed and not after the evaluated time |
+| `src/daily_context.py` | `ctx_*` columns | Display-only — must never gate a signal |
 
 ## Look-Ahead Checks
 
 - Daily/weekly bias must use **completed** prior session only
-- `is_daily_bar_ready()` (line 415) gates when today's bar is usable
+- `is_daily_bar_ready()` gates when today's bar is usable
 - Historical test `anchor_date` must resolve to previous working day
-- NSE bhavcopy only available after 17:00 IST (line 311)
+- NSE bhavcopy only available after 17:00 IST (`NSE_BHAVCOPY_READY`)
+- Full rule list: AGENTS.md §2a
 
 ## Live/Backtest Drift
 
@@ -45,6 +49,6 @@ Use this skill when reviewing or modifying any trading logic in `src/`, `api/str
 
 When asked to review strategy changes:
 1. Run `grep -n "candles\[-1\]" src/ict_scanner.py` — check forming-bar usage
-2. Verify `anchor_date` propagation in `historical_test()` (api/main.py:278-327)
-3. Confirm `is_daily_bar_ready()` called before sync (api/main.py:703)
-4. Check session detection consistency: `detect_session()` (ict_scanner.py:157) vs API categorization
+2. Verify `anchor_date` propagation in `run_scan()` (`api/strategy_bridge.py`) and `SilverBulletLiveScanner.test()` (`api/main.py`)
+3. Confirm `is_daily_bar_ready()` is called before sync (`rg -n is_daily_bar_ready api/`)
+4. Check session detection consistency: `detect_session()` vs API categorization

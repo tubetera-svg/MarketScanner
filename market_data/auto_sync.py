@@ -25,6 +25,7 @@ import threading
 from datetime import date, datetime
 from typing import Any, Callable, Optional
 
+from .automation_state import AutomationState
 from .config import backdate_lookback_days, load_symbol_aliases, source_enabled, source_flag_name
 from .service import is_crypto_symbol, is_nseix_symbol, latest_final_session, resolve_session_source, sync_symbol_range
 
@@ -38,7 +39,11 @@ MAX_ATTEMPTS_PER_SESSION = 8
 class DataAutoSync:
     DEFAULT_INTERVAL_HOURS = 0.25
 
-    def __init__(self, entries_loader: Callable[[], list[tuple[str, object]]]) -> None:
+    def __init__(
+        self,
+        entries_loader: Callable[[], list[tuple[str, object]]],
+        state: Optional[AutomationState] = None,
+    ) -> None:
         self._entries_loader = entries_loader
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -48,8 +53,13 @@ class DataAutoSync:
         self.last_run_at: Optional[str] = None
         self.last_error: Optional[str] = None
         self.run_count = 0
-        # source -> per-market state
-        self.markets: dict[str, dict[str, Any]] = {}
+        # source -> per-market state; with ``state`` it survives a restart, so a
+        # session already synced is not synced again.
+        self._state = state
+        saved = state.load().get("markets", {}) if state is not None else {}
+        self.markets: dict[str, dict[str, Any]] = {
+            market: dict(value) for market, value in saved.items() if isinstance(value, dict) and value.get("source")
+        }
 
     # ------------------------------------------------------------ lifecycle
     def start(self, lookback_days: Optional[int] = None, interval_hours: Optional[float] = None) -> dict[str, Any]:
@@ -169,6 +179,8 @@ class DataAutoSync:
             state["last_synced_session"] = target_iso
             state["pending_session"] = None
         log.info("Auto-sync %s -> %s", market, state["last_result"])
+        if self._state is not None:
+            self._state.save({"markets": self.markets})
         return {"target": target_iso, "ok": ok, "failed": failed, "have_target": have_target}
 
 

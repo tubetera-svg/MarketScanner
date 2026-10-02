@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, List, Optional, Sequence
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -157,6 +158,19 @@ def _source_for_symbol(symbol: str) -> str:
     return normalize_source(SOURCE_NSE)
 
 
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _market_today(symbol: str) -> date:
+    """Calendar date of the symbol's current daily bar, in that market's own zone.
+
+    Mirrors the day boundaries of ``market_data.service.latest_final_session``:
+    NSE / NSE IX use the IST date, crypto the UTC date, and other TradingView
+    markets (forex/commodities) the New York date. Never the host-local date.
+    """
+    return _get_md_service().market_today(_source_for_symbol(symbol), symbol, now=datetime.now(timezone.utc))
+
+
 # User-tunable strategy parameters (Settings page -> config/app_settings.json
 # "strategy" block, owned by api/app_settings.py). The first choice is the default.
 STRATEGY_SETTING_CHOICES: Dict[str, tuple[str, ...]] = {
@@ -191,7 +205,7 @@ def _expected_last_session(symbol: str, as_of_date: date) -> Optional[date]:
     """
     md = _get_md_service()
     source = _source_for_symbol(symbol)
-    if as_of_date >= date.today():
+    if as_of_date >= _market_today(symbol):
         return md.latest_final_session(source, symbol=symbol)
     prefix = str(symbol).upper().split(":", 1)[0] if ":" in str(symbol) else ""
     key = (source, prefix, as_of_date)
@@ -301,7 +315,7 @@ def _fetch_strategy_daily(
     """
     md = _get_md_service()
     source = _source_for_symbol(symbol)
-    today = date.today()
+    today = _market_today(symbol)
     start = as_of_date - timedelta(days=max(int(max_lookback_days), 1))
 
     rows: list[dict] = []
@@ -361,28 +375,29 @@ def _build_daily_map_for_symbols(
         return _SYMBOL_DAILY_CACHE[cache_key]
 
     out: Dict[str, pd.DataFrame] = {}
-    today = date.today()
     start = as_of_date - timedelta(days=max(int(max_lookback_days), 1))
-    hist_end = as_of_date if as_of_date < today else today - timedelta(days=1)
 
     md = _get_md_service()
     md.database.init_db()
 
-    # Group symbols by upstream source so the historical window can be fetched
-    # in one batched query per source instead of one round-trip per symbol.
-    by_source: Dict[str, list[str]] = {}
+    # Group symbols by upstream source and market date (IST / NY / UTC) so the
+    # historical window can be fetched in one batched query per group instead
+    # of one round-trip per symbol, ending where _fetch_strategy_daily expects.
+    by_source: Dict[tuple[str, date], list[str]] = {}
     for sym in symbols_upper:
-        by_source.setdefault(_source_for_symbol(sym), []).append(sym)
+        by_source.setdefault((_source_for_symbol(sym), _market_today(sym)), []).append(sym)
 
     hist_by_symbol: Dict[str, list[dict]] = {}
-    if hist_end >= start:
-        for source, syms in by_source.items():
-            try:
-                hist_by_symbol.update(
-                    md.database.query_ohlc_multi(source, syms, start, hist_end)
-                )
-            except Exception as exc:
-                log.warning("Batch OHLC read failed for %s: %s", source, exc)
+    for (source, today), syms in by_source.items():
+        hist_end = as_of_date if as_of_date < today else today - timedelta(days=1)
+        if hist_end < start:
+            continue
+        try:
+            hist_by_symbol.update(
+                md.database.query_ohlc_multi(source, syms, start, hist_end)
+            )
+        except Exception as exc:
+            log.warning("Batch OHLC read failed for %s: %s", source, exc)
 
     for sym in symbols_upper:
         _check_scan_cancel()
@@ -431,7 +446,10 @@ def _protected_swing_frame(
 
     from market_data.sources import tradingview_source
 
-    end = min(as_of_date or date.today(), date.today())
+    # Intraday TradingView bars are labelled by their IST date for every market
+    # (see tradingview_source.fetch_timeframe), so cap the window in IST.
+    today = _get_md_service().ist_today(now=datetime.now(timezone.utc))
+    end = min(as_of_date or today, today)
     rows = tradingview_source.fetch_timeframe(
         symbol=symbol,
         start_date=end - timedelta(days=30),
@@ -2310,7 +2328,7 @@ def _trim_in_progress_daily(daily: pd.DataFrame) -> pd.DataFrame:
         last_day = getattr(last_date, "date", lambda: last_date)()
         if (
             isinstance(last_day, date)
-            and last_day == date.today()
+            and last_day == datetime.now(_IST).date()
             and not ict_scanner.is_daily_bar_ready(ict_scanner.Session.NSE)
         ):
             return daily.iloc[:-1]

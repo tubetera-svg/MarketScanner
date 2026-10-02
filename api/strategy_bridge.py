@@ -10,12 +10,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+IST = ZoneInfo("Asia/Kolkata")
 ROOT = Path(__file__).resolve().parent.parent
 ALL_STRATEGY_PATH = ROOT / "src" / "all_strategy.py"
 FLAGS_PATH = ROOT / "config" / "strategy_flags.json"
@@ -198,7 +200,9 @@ def run_scan(
     if not cleaned_symbols:
         raise ValueError("No symbols selected — pick watchlist symbols first.")
 
-    requested_date = anchor_date if isinstance(anchor_date, date) else date.today()
+    # Default to the IST calendar date (not host-local), so a UTC host doesn't
+    # scan the previous day between 00:00 and 05:30 IST.
+    requested_date = anchor_date if isinstance(anchor_date, date) else datetime.now(IST).date()
     if any(is_crypto_symbol(sym) for sym in cleaned_symbols):
         # Crypto trades 24x7: weekends/NSE holidays are valid testing dates.
         resolved_date, reason = requested_date, None

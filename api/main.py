@@ -29,8 +29,9 @@ import price_alerts  # noqa: E402  (chart-popup price alerts, in-app delivery)
 import push  # noqa: E402  (Telegram / ntfy pushes shared by the automations)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
 from market_data import favorites  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
+from market_data.automation_state import AutomationState  # noqa: E402  (restart-safe "already done" markers)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
-from market_data.service import ensure_backdate_data  # noqa: E402
+from market_data.service import ensure_backdate_data, ist_today  # noqa: E402
 from market_data.liquidity_screener import screen_all_ipos  # noqa: E402
 
 
@@ -276,7 +277,7 @@ class SilverBulletLiveScanner:
     # closes at 11:00 (the historical test sees it too, via now=11:00).
     FINAL_SCAN_GRACE = timedelta(minutes=5)
 
-    def __init__(self) -> None:
+    def __init__(self, state: AutomationState | None = None) -> None:
         self.task: asyncio.Task[None] | None = None
         self.auto_task: asyncio.Task[None] | None = None
         self.symbols: list[str] | None = None
@@ -293,6 +294,20 @@ class SilverBulletLiveScanner:
         # Signal ids already pushed this New York date; outlives start()/stop() so a
         # re-armed scan does not re-send the morning's signals.
         self._pushed: tuple[str, set[str]] = ("", set())
+        # With ``state`` the manual stop and pushed ids also survive an API restart.
+        self._state = state
+        if state is not None:
+            saved = state.load()
+            self.manual_stop_date = saved.get("manual_stop_date") or None
+            self._pushed = (str(saved.get("pushed_date") or ""), set(saved.get("pushed_ids") or []))
+
+    def _save_state(self) -> None:
+        if self._state is not None:
+            self._state.save({
+                "manual_stop_date": self.manual_stop_date,
+                "pushed_date": self._pushed[0],
+                "pushed_ids": sorted(self._pushed[1]),
+            })
 
     def start_auto_schedule(self) -> None:
         if self.auto_task is None or self.auto_task.done():
@@ -416,9 +431,10 @@ class SilverBulletLiveScanner:
         self.symbols = None
         self.next_check_at = None
         self.scan_date = None
-        self.manual_stop_date = (
-            datetime.now(self.NEW_YORK).date().isoformat() if manual else None
-        )
+        manual_stop_date = datetime.now(self.NEW_YORK).date().isoformat() if manual else None
+        if manual_stop_date != self.manual_stop_date:
+            self.manual_stop_date = manual_stop_date
+            self._save_state()
         return self.status()
 
     async def _loop(self) -> None:
@@ -463,7 +479,9 @@ class SilverBulletLiveScanner:
         if self._pushed[0] != now.date().isoformat():
             self._pushed = (now.date().isoformat(), set())
         unsent = [s for s in fresh if s.get("id") not in self._pushed[1]]
-        self._pushed[1].update(s.get("id") for s in unsent)
+        if unsent:
+            self._pushed[1].update(s.get("id") for s in unsent)
+            self._save_state()
         await self.pusher.push(
             f"{s['symbol']} {s['direction']} @ {s['signal_time']}; entry {s['entry']:g}, SL {s['stop_loss']:g}, TP {s['target']:g}"
             for s in unsent
@@ -528,13 +546,27 @@ class IPOScanner:
       rights entitlements are never registered.
     """
 
-    def __init__(self, lookback_days: int = 7) -> None:
+    def __init__(self, lookback_days: int = 7, state: AutomationState | None = None) -> None:
         self.task: asyncio.Task[None] | None = None
         self.interval_minutes = 60
         self.lookback_days = max(1, int(lookback_days))
-        self.last_ran_at: str | None = None
         self.last_error: str | None = None
         self.run_count = 0
+        # With ``state`` the last successful scan survives a restart, so the loop
+        # waits out the rest of the interval instead of scanning again at once.
+        self._state = state
+        self.last_ran_at: str | None = (state.load().get("last_ran_at") or None) if state is not None else None
+
+    def _first_wait_seconds(self) -> float:
+        """Seconds left of the interval since the last successful scan (0 = run now)."""
+        if not self.last_ran_at:
+            return 0.0
+        try:
+            last = datetime.fromisoformat(self.last_ran_at)
+        except ValueError:
+            return 0.0
+        elapsed = (datetime.now(timezone.utc) - last.astimezone()).total_seconds()
+        return max(0.0, self.interval_minutes * 60 - elapsed)
 
     def start(self) -> dict[str, Any]:
         self.stop()
@@ -558,6 +590,9 @@ class IPOScanner:
         }
 
     async def _loop(self) -> None:
+        wait = self._first_wait_seconds()
+        if wait > 0:
+            await asyncio.sleep(wait)
         while True:
             try:
                 await asyncio.to_thread(self.run_once)
@@ -578,7 +613,7 @@ class IPOScanner:
         from market_data import ipo as ipo_service
         from market_data.config import db_path
 
-        today = date.today()
+        today = ist_today()
         end = today - timedelta(days=1)  # most recent completed trading day
         baseline = ipo_service.known_symbols_from_bhavcopy(end)
         if not baseline:
@@ -588,6 +623,8 @@ class IPOScanner:
         candidates = ipo_service.discover_new_ipos(start, today, known_symbols=baseline, db_path=db_path())
         registered = ipo_service.register_ipos(candidates, db_path=db_path()) if candidates else []
         self.last_ran_at = datetime.now().astimezone().isoformat()
+        if self._state is not None:
+            self._state.save({"last_ran_at": self.last_ran_at})
         self.run_count += 1
         self.last_error = None
         return {
@@ -603,7 +640,7 @@ class IPOScanner:
         return service
 
 
-ipo_scanner = IPOScanner()
+ipo_scanner = IPOScanner(state=AutomationState("ipo_scanner"))
 
 
 class LtfConfirmationWatcher:
@@ -623,12 +660,16 @@ class LtfConfirmationWatcher:
     invalidated, expired) are kept as alerts for the UI.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, state: AutomationState | None = None) -> None:
         self.task: asyncio.Task[None] | None = None
         self.interval_minutes = app_settings.DEFAULTS["automation"]["ltf_confirmation"]["interval_minutes"]
         self.last_check_at: str | None = None
         self.last_error: str | None = None
-        self.last_arm: dict[str, str] = {}
+        # market -> last armed session; with ``state`` it survives a restart, so an
+        # already armed session is not re-armed (the manual check still forces it).
+        self._state = state
+        saved = state.load().get("last_arm", {}) if state is not None else {}
+        self.last_arm: dict[str, str] = {str(k): str(v) for k, v in saved.items()} if isinstance(saved, dict) else {}
         self.alerts: list[dict[str, Any]] = []
         self.run_count = 0
         self._bars: dict[str, Any] = {}
@@ -726,6 +767,8 @@ class LtfConfirmationWatcher:
                 for setup in LtfSetupStore().arm(setups):
                     self._alert(setup, "armed")
                 self.last_arm[market] = session.isoformat()
+                if self._state is not None:
+                    self._state.save({"last_arm": self.last_arm})
             except Exception as exc:
                 errors.append(f"arm {market}: {exc}")
         return errors
@@ -750,7 +793,8 @@ class LtfConfirmationWatcher:
             start = min(date.fromisoformat(s.signal_date) for s in setups) + timedelta(days=1)
             # Open market: fetch every poll (the completed-bar filter makes
             # repeats harmless). Closed: once, to pick up the session's last bars.
-            if start > date.today():
+            today = ist_today()  # TV intraday bars are labelled in IST
+            if start > today:
                 need_fetch = False  # the session after the signal has not started yet
             elif market_open:
                 self._fetched_while_closed.discard(key)
@@ -760,7 +804,7 @@ class LtfConfirmationWatcher:
             if need_fetch:
                 try:
                     rows = await asyncio.to_thread(
-                        tradingview_source.fetch_timeframe, symbol, start, date.today(), timeframe,
+                        tradingview_source.fetch_timeframe, symbol, start, today, timeframe,
                         symbol.split(":", 1)[0] if ":" in symbol else "NSE",
                     )
                     self._bars[key] = bars_from_rows(rows)
@@ -778,12 +822,12 @@ class LtfConfirmationWatcher:
         return errors
 
 
-ltf_watcher = LtfConfirmationWatcher()
+ltf_watcher = LtfConfirmationWatcher(AutomationState("ltf_confirmation"))
 price_alert_watcher = price_alerts.PriceAlertWatcher()
 
 
 service = ScannerService()
-silver_bullet_scanner = SilverBulletLiveScanner()
+silver_bullet_scanner = SilverBulletLiveScanner(AutomationState("silver_bullet"))
 app = FastAPI(title="ICT Scanner API", version="1.0.0")
 
 
@@ -796,10 +840,7 @@ async def start_silver_bullet_auto_schedule() -> None:
     arms a scan immediately when New York wall time is inside the window, or
     sleeps until 10:00 New York otherwise.
     """
-    settings = app_settings.load_settings()
-    if settings["automation"]["silver_bullet_auto"]["enabled"]:
-        silver_bullet_scanner.start_auto_schedule()
-    apply_automation(settings, on_boot=True)
+    apply_automation(app_settings.load_settings(), on_boot=True)  # arms the scheduler when enabled
 
 
 @app.on_event("shutdown")

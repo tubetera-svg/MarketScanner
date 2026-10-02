@@ -14,15 +14,15 @@ Ensures `src/backtest/` replays strategies point-in-time identically to live `Ad
 | Data source | `TvDatafeedFetcher` / `OandaDataFetcher` | SQLite `ohlc_daily` + intraday | Same bars, same timestamps |
 | Session gating | `is_market_open()` / `is_fresh_trading_day()` | Same functions | Identical session logic |
 | Daily bar ready | `is_daily_bar_ready()` | Same function | NSE 17:00 IST gate |
-| Bias calculation | `ict_scanner.py:1116-1132` | Replay via `get_ohlc()` | Same PDH/PDL/PWH/PWL |
+| Bias calculation | bias block in `AdaptiveScanner` (`rg -n "PDH|PWH" src/ict_scanner.py`) | Replay via `get_ohlc()` | Same PDH/PDL/PWH/PWL |
 | FVG detection | `detect_bullish/bearish_fvg()` | Same functions | Same lookback, same bars |
 | Displacement | `detect_directional_displacement()` | Same function | Same body multiplier |
-| Entry/SL/TP | `ict_scanner.py:1195-1229` | Backtest replay | Same formulas |
+| Entry/SL/TP | entry/SL/TP block in `AdaptiveScanner` (`rg -n "stop_loss|tp1" src/ict_scanner.py`) | Backtest replay | Same formulas |
 | RR filter | `minimum_rr=2.0` | Config | Same threshold |
 
 ## Validation Steps
 
-1. **Run historical test** via API: `POST /api/historical-test` with `anchor_date`
+1. **Run historical test** via API: `POST /api/strategy-scan` with `anchor_date` (→ `run_scan()` in `api/strategy_bridge.py`)
 2. **Run backtest** via API: `POST /api/backtest` with same date range
 3. **Compare signals** for overlapping symbols/dates:
    - Entry price ±0.01%
@@ -36,7 +36,8 @@ Ensures `src/backtest/` replays strategies point-in-time identically to live `Ad
 - **Intraday bars**: Live uses 5m from TV/OANDA; backtest needs same resolution in SQLite
 - **Cache**: Live uses `OHLCCache` (JSON); backtest reads SQLite — verify sync
 - **Timezone**: Live uses `datetime.now(NY/IST/UTC)`; backtest uses `anchor_date` — verify session boundaries
-- **Forming bar exclusion**: Silver Bullet excludes current 15m (silver_bullet.py:90) — backtest must too
+- **Forming bar exclusion**: `evaluate_am_silver_bullet()` excludes the current 15m bar — backtest must too
+- **Fills/costs**: next-bar fills, SL-first on same-bar SL+TP, gap fills at open, costs/slippage (AGENTS.md §2a)
 
 ## Quick Test
 
@@ -44,7 +45,7 @@ Ensures `src/backtest/` replays strategies point-in-time identically to live `Ad
 # Compare one symbol on one date
 python -c "
 from api.main import service
-from backtest import BacktestConfig, run_backtest
+from src.backtest import BacktestConfig, run_backtest
 from datetime import date
 
 # Live historical test

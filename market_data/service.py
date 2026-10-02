@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 from . import database
 from .config import (
@@ -127,6 +128,31 @@ def is_nseix_symbol(symbol: object) -> bool:
     return ":" in value and value.split(":", 1)[0].strip() == "NSEIX"
 
 
+_IST = ZoneInfo("Asia/Kolkata")
+_NY = ZoneInfo("America/New_York")
+
+
+def market_today(source: str, symbol: Optional[str] = None, now: Optional[datetime] = None) -> date:
+    """Calendar date of the market's current daily bar, in that market's own zone.
+
+    Same day boundaries as :func:`latest_final_session`: NSE and NSE IX use the
+    IST date, crypto the UTC date, other TradingView markets (forex/commodities)
+    the New York date. Never the host-local date, so a UTC/US server behaves
+    like an IST one.
+    """
+    instant = now or datetime.now(timezone.utc)
+    if normalize_source(source) == SOURCE_NSE or is_nseix_symbol(symbol):
+        return instant.astimezone(_IST).date()
+    if is_crypto_symbol(symbol):
+        return instant.astimezone(timezone.utc).date()
+    return instant.astimezone(_NY).date()
+
+
+def ist_today(now: Optional[datetime] = None) -> date:
+    """Today's IST date (NSE calendar day), independent of the host timezone."""
+    return (now or datetime.now(timezone.utc)).astimezone(_IST).date()
+
+
 def expected_trading_dates(
     source: str, start: date, end: date, symbol: Optional[str] = None
 ) -> list[date]:
@@ -134,7 +160,7 @@ def expected_trading_dates(
 
     Crypto (``symbol`` CRYPTO:*) trades every day, including weekends.
     """
-    today = date.today()
+    today = market_today(source, symbol)
     end = min(end, today)
     if start > end:
         return []
@@ -492,7 +518,7 @@ def sync_symbol_range(
                     "Sync gated for %s (%s): daily bar not final yet, deferring to %s",
                     symbol, source_name, end,
                 )
-            elif final is not None and end == final and final >= date.today() - timedelta(days=1):
+            elif final is not None and end == final and final >= market_today(source_name, str(symbol)) - timedelta(days=1):
                 # The newest bar just became final. Make sure a "no data" marker
                 # stored before it was published does not permanently block it.
                 database.clear_no_data(
