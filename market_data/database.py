@@ -44,6 +44,12 @@ CREATE TABLE IF NOT EXISTS ohlc_daily (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (source, exchange, symbol, date)
 );
+
+CREATE TABLE IF NOT EXISTS app_state (
+    key        TEXT PRIMARY KEY,                 -- repo-relative path, e.g. config/watchlist.txt
+    value      TEXT NOT NULL,                    -- file contents (see state_store.py)
+    updated_at REAL NOT NULL                     -- epoch seconds of the last write
+);
 """
 
 _INDEXES = (

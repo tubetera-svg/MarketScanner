@@ -291,10 +291,15 @@ const INVENTORY_REPORTS: {
   },
 ];
 
-// ForexFactory high-impact news (GET /api/news/high-impact).
+// High-impact news + Crude/NatGas release times (GET /api/news/high-impact):
+// TradingView economic calendar, ForexFactory fallback.
 type NewsEvent = { title: string; currency: string; time_utc: string; forecast: string; previous: string };
-type NewsFeed = { events: NewsEvent[]; currencies: string[]; fetched_at: string | null; stale: boolean; error: string | null };
-const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
+type InventoryRelease = { report: string; time_utc: string };
+type NewsFeed = { events: NewsEvent[]; inventory: InventoryRelease[]; currencies: string[]; fetched_at: string | null; source: string | null; stale: boolean; error: string | null };
+const CALENDAR_SOURCES: Record<string, { name: string; url: string }> = {
+  tradingview: { name: "TradingView", url: "https://www.tradingview.com/economic-calendar/" },
+  forexfactory: { name: "ForexFactory", url: "https://www.forexfactory.com/calendar" },
+};
 
 // Milliseconds that `timeZone` is ahead of UTC for a given instant (accounts for DST).
 const tzOffsetMs = (instant: Date, timeZone: string): number => {
@@ -326,6 +331,20 @@ const nextReleaseInstantET = (now: Date, weekdayET: number, hourET: number, minu
     if (instant > now.getTime()) return new Date(instant);
   }
   return new Date(now.getTime() + 7 * 86400000);
+};
+
+// Next release strictly after `now` from the fetched calendar. When the calendar
+// has none (fetch failed, or the fallback feed ends before it), use the standard
+// weekly slot and flag it as calculated.
+const nextInventoryRelease = (now: Date, report: typeof INVENTORY_REPORTS[number], releases: InventoryRelease[]): { instant: Date; calculated: boolean } => {
+  const next = releases
+    .filter((release) => release.report === report.key)
+    .map((release) => Date.parse(release.time_utc))
+    .filter((ts) => ts > now.getTime())
+    .sort((a, b) => a - b)[0];
+  return next !== undefined
+    ? { instant: new Date(next), calculated: false }
+    : { instant: nextReleaseInstantET(now, report.weekdayET, report.hourET, report.minuteET), calculated: true };
 };
 
 // Compact chip time: countdown within 24h ("in 3h 12m"), else IST "Wed 20:00".
@@ -362,6 +381,8 @@ const setupLevels = (pairs: [string, number | null | undefined][]): ChartLevel[]
 export default function Home() {
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
+  // Testing date of a full-watchlist scan waiting on the confirm dialog (null = no dialog).
+  const [pendingScanDate, setPendingScanDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading watchlist...");
   const [watchScopes, setWatchScopes] = useState<WatchScope[]>(["Commodities"]);
@@ -719,7 +740,12 @@ export default function Home() {
     }
   };
 
-  const runStrategyScan = async (dateOverride = strategyAnchorDate) => {
+  const runStrategyScan = async (dateOverride = strategyAnchorDate, confirmed = false) => {
+    const allSelected = watchlist.length > 0 && watchlist.every((item) => selected.includes(item.symbol));
+    if (allSelected && !confirmed) {
+      setPendingScanDate(dateOverride);
+      return;
+    }
     setStrategyScanning(true);
     const enabledStrategies = strategies.filter((f) => f.enabled && f.runnable).length;
     setScanProgress(`Scanning ${selected.length} symbol${selected.length !== 1 ? "s" : ""} across ${enabledStrategies} strateg${enabledStrategies !== 1 ? "ies" : "y"}...`);
@@ -865,49 +891,14 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, []);
 
-  // Compute the next release instant for a report, preferring a cached value
-  // from localStorage when it is still valid for the current calendar day. The
-  // cache is keyed by report key and stores {iso, dayKey}; we trust it for the
-  // rest of the UTC day it was computed, then recompute the next day. This
-  // avoids re-running the timezone math on every page reload while keeping the
-  // result fresh (the value changes weekly anyway).
-  const cachedReleaseInstant = (report: typeof INVENTORY_REPORTS[number]): Date => {
-    if (typeof window === "undefined") return nextReleaseInstantET(new Date(), report.weekdayET, report.hourET, report.minuteET);
-    const now = new Date();
-    const todayKey = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}`;
-    try {
-      const raw = window.localStorage.getItem("inventoryReleaseCache");
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, { iso: string; dayKey: string }>;
-        const entry = parsed[report.key];
-        if (entry && entry.dayKey === todayKey) {
-          const ts = Date.parse(entry.iso);
-          if (!Number.isNaN(ts) && ts > now.getTime()) return new Date(ts);
-        }
-      }
-    } catch {
-      // ignore cache read errors (private mode, quota, malformed JSON)
-    }
-    const fresh = nextReleaseInstantET(now, report.weekdayET, report.hourET, report.minuteET);
-    try {
-      const existing = window.localStorage.getItem("inventoryReleaseCache");
-      const store: Record<string, { iso: string; dayKey: string }> = existing ? JSON.parse(existing) : {};
-      store[report.key] = { iso: fresh.toISOString(), dayKey: todayKey };
-      window.localStorage.setItem("inventoryReleaseCache", JSON.stringify(store));
-    } catch {
-      // ignore cache write errors
-    }
-    return fresh;
-  };
-
-  // ForexFactory high-impact ("red") news. The API caches the feed once per IST
-  // day; the refresh button forces a live fetch.
+  // High-impact news and Crude/NatGas release times. The API caches the
+  // calendar once per IST day; the refresh button forces a live fetch.
   const loadHighImpactNews = (refresh = false) => {
     setNewsLoading(true);
     fetch(`${API}/api/news/high-impact${refresh ? "?refresh=true" : ""}`)
       .then((response) => response.json())
       .then((data: NewsFeed) => setNewsFeed(data))
-      .catch(() => setNewsFeed((current) => current ? { ...current, stale: true, error: "API unreachable" } : null))
+      .catch(() => setNewsFeed((current) => ({ ...(current ?? { events: [], inventory: [], currencies: [], fetched_at: null, source: null }), stale: true, error: "API unreachable" })))
       .finally(() => setNewsLoading(false));
   };
   useEffect(() => { loadHighImpactNews(); }, []);
@@ -925,7 +916,7 @@ export default function Home() {
       const events = [
         ...(newsFeedRef.current?.events ?? []).map((event) => ({ key: `${event.currency}|${event.title}|${event.time_utc}`, at: Date.parse(event.time_utc) })),
         ...INVENTORY_REPORTS.map((report) => {
-          const at = nextReleaseInstantET(new Date(now), report.weekdayET, report.hourET, report.minuteET).getTime();
+          const at = nextInventoryRelease(new Date(now), report, newsFeedRef.current?.inventory ?? []).instant.getTime();
           return { key: `EIA|${report.key}|${at}`, at };
         }),
       ];
@@ -979,13 +970,18 @@ export default function Home() {
   }, [newsOpen]);
 
   const inventoryReports = useMemo(() => INVENTORY_REPORTS.map((report) => {
-    const instant = cachedReleaseInstant(report);
+    const { instant, calculated } = nextInventoryRelease(new Date(inventoryNow), report, newsFeed?.inventory ?? []);
+    // No icon while the first load is still pending (newsFeed null).
+    const warning = calculated && newsFeed
+      ? `Calculated standard time (${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][report.weekdayET]} 10:30 ET): ${newsFeed.stale ? `calendar not fetched (${newsFeed.error ?? "fetch failed"})` : "release not in the fetched calendar"}`
+      : null;
     const seconds = Math.max(0, Math.round((instant.getTime() - inventoryNow) / 1000));
     // Highlight when the release is within 24h so it grabs attention.
     const soon = seconds <= 24 * 3600;
     const sameDay = instant.toDateString() === new Date(inventoryNow).toDateString();
-    return { ...report, ist: formatIST(instant), time: formatChipTime(instant, inventoryNow), soon, sameDay };
-  }), [inventoryNow]); // eslint-disable-line react-hooks/exhaustive-deps
+    return { ...report, ist: formatIST(instant), time: formatChipTime(instant, inventoryNow), soon, sameDay, warning };
+  }), [inventoryNow, newsFeed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const calendarSource = CALENDAR_SOURCES[newsFeed?.source ?? ""] ?? CALENDAR_SOURCES.tradingview;
 
   useEffect(() => {
     Promise.all([
@@ -1328,14 +1324,16 @@ export default function Home() {
                   target="_blank"
                   rel="noreferrer"
                   className={`inventory-chip${report.soon ? " soon" : ""}`}
-                  title={`${report.label} — ${report.ist} IST`}
+                  title={`${report.label} — ${report.ist} IST${report.warning ? `
+⚠ ${report.warning}` : ""}`}
                 >
+                  {report.warning && <AlertTriangle size={10} className="inventory-warn" aria-label="Calculated time" />}
                   <span className="inventory-label">{report.short}</span>
                   <span className="inventory-ist">{report.time}</span>
                 </a>
               ))}
               {nextNews && (
-                <a href={FF_CALENDAR_URL} target="_blank" rel="noreferrer" className={`inventory-chip news${nextNews.soon ? " soon" : ""}`} title={nextNews.tooltip}>
+                <a href={calendarSource.url} target="_blank" rel="noreferrer" className={`inventory-chip news${nextNews.soon ? " soon" : ""}`} title={nextNews.tooltip}>
                   <span className="inventory-label news-label">{nextNews.label}</span>
                   <span className="inventory-ist">{nextNews.time}</span>
                 </a>
@@ -1358,7 +1356,7 @@ export default function Home() {
               <div className="news-popover" role="dialog" aria-label="High-impact news" style={{ top: newsOpen.top, right: newsOpen.right }} onMouseEnter={keepNewsOpen} onMouseLeave={closeNewsSoon} onFocus={keepNewsOpen} onBlur={closeNewsSoon}>
                 <div className="news-popover-head">
                   <span>High-impact · {newsFeed?.currencies.length ? newsFeed.currencies.join(", ") : "all currencies"}</span>
-                  <button type="button" className="news-refresh" onClick={() => loadHighImpactNews(true)} disabled={newsLoading} aria-label="Fetch live high-impact news" title="Fetch live from ForexFactory">
+                  <button type="button" className="news-refresh" onClick={() => loadHighImpactNews(true)} disabled={newsLoading} aria-label="Fetch live high-impact news" title="Fetch live (TradingView, ForexFactory fallback)">
                     <RefreshCw size={11} className={newsLoading ? "spin" : undefined} />
                   </button>
                 </div>
@@ -1378,7 +1376,11 @@ export default function Home() {
                 ))}
                 <div className="news-popover-foot">
                   <span>{newsFeed?.fetched_at ? `Fetched ${formatIST(new Date(newsFeed.fetched_at))} IST` : "Not fetched"}{newsFeed?.stale ? ` · stale (${newsFeed.error ?? "cached"})` : ""}</span>
-                  <a href={FF_CALENDAR_URL} target="_blank" rel="noreferrer">ForexFactory ↗</a>
+                  <span className="news-links">
+                    {Object.values(CALENDAR_SOURCES).map((source) => (
+                      <a key={source.name} href={source.url} target="_blank" rel="noreferrer">{source.name} ↗</a>
+                    ))}
+                  </span>
                 </div>
               </div>
             , document.body)}
@@ -1722,6 +1724,36 @@ Unticking M/W/D bias skips its calculation; unticking all three skips all extra 
           )
         )}
 </details>
+        {pendingScanDate !== null && (
+          <div
+            className="chart-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => event.target === event.currentTarget && setPendingScanDate(null)}
+            onKeyDown={(event) => { if (event.key === "Escape") setPendingScanDate(null); }}
+          >
+            <section className="chart-modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-scan-title" aria-describedby="confirm-scan-body">
+              <div className="chart-modal-header">
+                <strong id="confirm-scan-title">Scan entire watchlist?</strong>
+                <button className="chart-modal-close" type="button" aria-label="Cancel" onClick={() => setPendingScanDate(null)}>×</button>
+              </div>
+              <p id="confirm-scan-body" className="confirm-modal-body">
+                All {watchlist.length} watchlist symbols are selected. Scanning them all can take a while — you can stop it with Stop (Alt+S).
+              </p>
+              <div className="confirm-modal-actions">
+                <button className="button-secondary" type="button" onClick={() => setPendingScanDate(null)}>Cancel</button>
+                <button
+                  className="button-primary"
+                  type="button"
+                  autoFocus
+                  onClick={() => { const date = pendingScanDate; setPendingScanDate(null); runStrategyScan(date, true); }}
+                >
+                  <RefreshCw size={14} />
+                  Run scan
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
         {chart && (
           <TradingViewChartModal
             key={chart.symbol}

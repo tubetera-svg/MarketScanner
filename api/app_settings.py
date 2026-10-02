@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from market_data import state_store
+
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = ROOT / "config" / "app_settings.json"
 
@@ -32,13 +34,14 @@ STRATEGY_CHOICES: dict[str, tuple[str, ...]] = {
 
 DEFAULTS: dict[str, Any] = {
     "automation": {
-        "silver_bullet_auto": {"enabled": True},
+        # push (here and below): also send alerts to Telegram/ntfy (api/push.py, env vars).
+        "silver_bullet_auto": {"enabled": True, "push": False},
         "ipo_scanner": {"enabled": False, "interval_minutes": 60, "lookback_days": 7},
         "data_auto_sync": {"enabled": False, "lookback_days": 14, "interval_hours": 0.25},
-        "ltf_confirmation": {"enabled": False, "interval_minutes": 2},
+        "ltf_confirmation": {"enabled": False, "interval_minutes": 2, "push": False},
         # Price alerts from the chart popup (api/price_alerts.py).
         # near_pct: check every 5 min while price is within this % of a level
-        # (0 = off); push: also send fired alerts to Telegram/ntfy (env vars).
+        # (0 = off).
         "price_alerts": {"enabled": True, "interval_minutes": 15, "near_pct": 0.5, "push": False},
     },
     "strategy": {key: choices[0] for key, choices in STRATEGY_CHOICES.items()},
@@ -59,14 +62,15 @@ DEFAULTS: dict[str, Any] = {
     },
     # Browser alert sounds (frontend/components/alertSound.ts). Quiet hours are
     # IST 'HH:MM' and may wrap midnight; news_event.lead_minutes = how long
-    # before a high-impact news / EIA release its sound plays.
+    # before a high-impact news / EIA release its sound plays; news_event.repeat =
+    # how many times that sound plays back to back.
     "sounds": {
         "enabled": True,
         "volume": 70,
         "ltf": {"enabled": True, "sound": "chime"},
         "silver_bullet": {"enabled": True, "sound": "ping"},
         "price_alert": {"enabled": True, "sound": "doorbell"},
-        "news_event": {"enabled": False, "sound": "bell", "lead_minutes": 5},
+        "news_event": {"enabled": False, "sound": "bell", "lead_minutes": 5, "repeat": 3},
         "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:00"},
     },
 }
@@ -139,6 +143,7 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
     sounds = settings["sounds"]
     sounds["volume"] = max(0, min(100, int(sounds["volume"])))
     sounds["news_event"]["lead_minutes"] = max(1, min(60, int(sounds["news_event"]["lead_minutes"])))
+    sounds["news_event"]["repeat"] = max(1, min(3, int(sounds["news_event"]["repeat"])))
     for kind in SOUND_KINDS:
         if sounds[kind]["sound"] not in SOUND_CHOICES:
             sounds[kind]["sound"] = DEFAULTS["sounds"][kind]["sound"]
@@ -161,7 +166,7 @@ def _normalize_hhmm(value: Any) -> str | None:
 
 def load_settings() -> dict[str, Any]:
     try:
-        raw = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(state_store.read_text(SETTINGS_PATH))
     except (OSError, ValueError):
         raw = {}
     return _clamp(_merge(DEFAULTS, raw))
@@ -170,5 +175,5 @@ def load_settings() -> dict[str, Any]:
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     """Merge ``patch`` into the stored settings, persist, and return the result."""
     merged = _clamp(_merge(load_settings(), patch))
-    SETTINGS_PATH.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    state_store.write_text(SETTINGS_PATH, json.dumps(merged, indent=2, sort_keys=True) + "\n")
     return merged

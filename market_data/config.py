@@ -105,11 +105,13 @@ def load_symbol_aliases() -> dict[str, list[str]]:
     Keys and aliases are normalised to upper-case. Missing/unreadable files
     return an empty mapping (alias fallback is then a no-op).
     """
+    from . import state_store  # lazy: state_store imports database, which imports this module
+
     path = SYMBOL_ALIASES_PATH
-    if not path.exists():
+    if not state_store.handles(path) and not path.exists():
         return {}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(state_store.read_text(path))
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("Could not read symbol aliases %s: %s", path, exc)
         return {}
@@ -143,7 +145,9 @@ def save_symbol_aliases(aliases: dict[str, list[str]]) -> None:
         norm_vals = [str(item).strip().upper() for item in items if str(item).strip()]
         if norm_vals:
             cleaned[norm_key] = norm_vals
-    SYMBOL_ALIASES_PATH.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
+    from . import state_store  # lazy: see load_symbol_aliases
+
+    state_store.write_text(SYMBOL_ALIASES_PATH, json.dumps(cleaned, indent=2))
 
 
 # --- IPO Liquidity Screener thresholds ---

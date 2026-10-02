@@ -34,6 +34,8 @@ def test_sound_numbers_are_clamped():
     assert sounds["news_event"]["lead_minutes"] == 1
     assert _normalized({"volume": -5, "news_event": {"lead_minutes": 500}})["volume"] == 0
     assert _normalized({"news_event": {"lead_minutes": 500}})["news_event"]["lead_minutes"] == 60
+    assert _normalized({"news_event": {"repeat": 0}})["news_event"]["repeat"] == 1
+    assert _normalized({"news_event": {"repeat": 50}})["news_event"]["repeat"] == 3
 
 
 def test_quiet_hours_times_are_normalized():

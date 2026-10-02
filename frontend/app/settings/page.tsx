@@ -15,10 +15,10 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 type Strategy = { name: string; label: string; group: string; enabled: boolean; runnable: boolean; description?: string | null };
 type Automation = {
-  silver_bullet_auto: { enabled: boolean };
+  silver_bullet_auto: { enabled: boolean; push: boolean };
   ipo_scanner: { enabled: boolean; interval_minutes: number; lookback_days: number };
   data_auto_sync: { enabled: boolean; lookback_days: number; interval_hours: number };
-  ltf_confirmation: { enabled: boolean; interval_minutes: number };
+  ltf_confirmation: { enabled: boolean; interval_minutes: number; push: boolean };
   price_alerts: { enabled: boolean; interval_minutes: number; near_pct: number; push: boolean };
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
@@ -47,10 +47,10 @@ type Payload = {
   news_currencies: string[];
   sound_choices: string[];
   status: {
-    silver_bullet: { auto_armed: boolean };
+    silver_bullet: { auto_armed: boolean; last_push_error?: string | null };
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
     data_auto_sync: { running: boolean; last_run_at: string | null; last_error: string | null };
-    ltf_confirmation: { running: boolean; last_check_at: string | null; last_error: string | null };
+    ltf_confirmation: { running: boolean; last_check_at: string | null; last_error: string | null; last_push_error?: string | null };
     price_alerts: { running: boolean; last_check_at: string | null; last_error: string | null; push_channels?: string[]; last_push_error?: string | null };
   };
 };
@@ -212,6 +212,9 @@ export default function SettingsPage() {
             <Row title="Silver Bullet auto-schedule" hint={`Arms the AM window scan (10:00 New York) — ${status.silver_bullet.auto_armed ? "armed" : "off"}`}>
               <Switch label="Silver Bullet auto-schedule" on={auto.silver_bullet_auto.enabled} onChange={(v) => patchAuto("silver_bullet_auto", { enabled: v })} />
             </Row>
+            <Row title="Silver Bullet: push" hint={`Send new live signals (10:00–11:00 New York) to Telegram/ntfy — same channels as price-alert push${status.silver_bullet.last_push_error ? ` · last send failed: ${status.silver_bullet.last_push_error}` : ""}`}>
+              <Switch label="Silver Bullet push" on={auto.silver_bullet_auto.push} onChange={(v) => patchAuto("silver_bullet_auto", { push: v })} />
+            </Row>
             <Row title="IPO scanner" hint={`Scans a trailing window once the NSE daily bar is ready — ${stateNote(status.ipo_scanner.running, status.ipo_scanner.last_ran_at, status.ipo_scanner.last_error)}`}>
               <NumberField value={auto.ipo_scanner.interval_minutes} min={1} max={1440} unit="min" onCommit={(v) => patchAuto("ipo_scanner", { interval_minutes: v })} />
               <NumberField value={auto.ipo_scanner.lookback_days} min={1} max={90} unit="days" onCommit={(v) => patchAuto("ipo_scanner", { lookback_days: v })} />
@@ -221,10 +224,6 @@ export default function SettingsPage() {
               <NumberField value={auto.data_auto_sync.interval_hours} min={0.25} max={24} step={0.25} unit="h interval" onCommit={(v) => patchAuto("data_auto_sync", { interval_hours: v })} />
               <NumberField value={auto.data_auto_sync.lookback_days} min={1} max={120} unit="days" onCommit={(v) => patchAuto("data_auto_sync", { lookback_days: v })} />
               <Switch label="Market-data auto-sync" on={auto.data_auto_sync.enabled} onChange={(v) => patchAuto("data_auto_sync", { enabled: v })} />
-            </Row>
-            <Row title="Intraday confirmation watcher" hint={`Arms daily setups after each market's close, then waits for an intraday CISD in the next session — ${stateNote(status.ltf_confirmation.running, status.ltf_confirmation.last_check_at, status.ltf_confirmation.last_error)}`}>
-              <NumberField value={auto.ltf_confirmation.interval_minutes} min={1} max={60} unit="min" onCommit={(v) => patchAuto("ltf_confirmation", { interval_minutes: v })} />
-              <Switch label="Intraday confirmation watcher" on={auto.ltf_confirmation.enabled} onChange={(v) => patchAuto("ltf_confirmation", { enabled: v })} />
             </Row>
             <Row title="Price alerts" hint={`How often chart-popup price alerts are checked (completed 5m bars, open markets only; 5 min minimum) — ${stateNote(status.price_alerts.running, status.price_alerts.last_check_at, status.price_alerts.last_error)}`}>
               <NumberField value={auto.price_alerts.interval_minutes} min={5} max={240} unit="min" onCommit={(v) => patchAuto("price_alerts", { interval_minutes: v })} />
@@ -256,14 +255,35 @@ export default function SettingsPage() {
               </button>
               <Switch label="Price alert push" on={auto.price_alerts.push} onChange={(v) => patchAuto("price_alerts", { push: v })} />
             </Row>
+            <details style={{ fontSize: 11, color: "var(--muted)", padding: "10px 0" }}>
+              <summary style={{ cursor: "pointer", fontWeight: 600 }}>How to set up Telegram</summary>
+              <ol style={{ margin: "6px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
+                <li>In Telegram, message @BotFather → <code>/newbot</code> → copy the bot token.</li>
+                <li>Open your new bot, tap Start and send it any message.</li>
+                <li>Visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> and copy <code>chat.id</code> (empty result = message the bot again; or ask @userinfobot for your ID).</li>
+                <li>On the API machine run <code>setx TELEGRAM_BOT_TOKEN &quot;…&quot;</code> and <code>setx TELEGRAM_CHAT_ID &quot;…&quot;</code>.</li>
+                <li>Restart the scanner (stop/start launchers), then check that &quot;configured&quot; shows telegram and press Send test.</li>
+              </ol>
+            </details>
           </section>
 
           <section className="panel" style={{ padding: 16 }}>
-            <div className="panel-heading"><span>Strategy parameters</span><small>applies to the next scan</small></div>
+            <div className="panel-heading"><span>Intraday confirmations</span><small>watcher · timeframe</small></div>
+            <Row title="Intraday confirmation watcher" hint={`Arms daily setups after each market's close, then waits for an intraday CISD in the next session — ${stateNote(status.ltf_confirmation.running, status.ltf_confirmation.last_check_at, status.ltf_confirmation.last_error)}`}>
+              <NumberField value={auto.ltf_confirmation.interval_minutes} min={1} max={60} unit="min" onCommit={(v) => patchAuto("ltf_confirmation", { interval_minutes: v })} />
+              <Switch label="Intraday confirmation watcher" on={auto.ltf_confirmation.enabled} onChange={(v) => patchAuto("ltf_confirmation", { enabled: v })} />
+            </Row>
+            <Row title="Intraday confirmations: push" hint={`Send setups that trigger (same events as the scanner-page sound) to Telegram/ntfy — same channels as price-alert push${status.ltf_confirmation.last_push_error ? ` · last send failed: ${status.ltf_confirmation.last_push_error}` : ""}`}>
+              <Switch label="Intraday confirmation push" on={auto.ltf_confirmation.push} onChange={(v) => patchAuto("ltf_confirmation", { push: v })} />
+            </Row>
             <Row title="Intraday confirmation timeframe" hint="Bars the watcher uses to confirm a daily setup with a change in the state of delivery (CISD)">
               <Choice label="Intraday confirmation timeframe" value={data.settings.strategy.ltf_timeframe} options={data.strategy_choices.ltf_timeframe}
                 onChange={(v) => save({ strategy: { ltf_timeframe: v } })} />
             </Row>
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Strategy parameters</span><small>applies to the next scan</small></div>
             <Row title="Propulsion block mean threshold" hint="Midpoint of the propulsion candle that a close must not cross (sets the invalidation and stop)">
               <Choice label="Propulsion block mean threshold" value={data.settings.strategy.propulsion_mean_threshold} options={data.strategy_choices.propulsion_mean_threshold}
                 onChange={(v) => save({ strategy: { propulsion_mean_threshold: v } })} />
@@ -310,11 +330,15 @@ export default function SettingsPage() {
                     <NumberField value={data.settings.sounds.news_event.lead_minutes} min={1} max={60} unit="min before"
                       onCommit={(v) => save({ sounds: { news_event: { lead_minutes: v } } })} />
                   )}
+                  {kind === "news_event" && (
+                    <NumberField value={data.settings.sounds.news_event.repeat} min={1} max={3} unit="× play"
+                      onCommit={(v) => save({ sounds: { news_event: { repeat: v } } })} />
+                  )}
                   <select aria-label={`${title} sound`} value={choice.sound} onChange={(e) => save({ sounds: { [kind]: { sound: e.target.value } } })}
                     style={{ height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace", background: "var(--bg, transparent)", color: "inherit" }}>
                     {data.sound_choices.map((id) => <option key={id} value={id}>{soundLabel(id)}</option>)}
                   </select>
-                  <button type="button" className="chart-tool-btn" title="Play this sound" onClick={() => previewSound(choice.sound, data.settings.sounds.volume, kind)}>▶ Test</button>
+                  <button type="button" className="chart-tool-btn" title="Play this sound" onClick={() => previewSound(choice.sound, data.settings.sounds.volume, kind, data.settings.sounds)}>▶ Test</button>
                   <Switch label={`${title} sound`} on={choice.enabled} onChange={(v) => save({ sounds: { [kind]: { enabled: v } } })} />
                 </Row>
               );

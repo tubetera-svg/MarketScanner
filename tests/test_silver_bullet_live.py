@@ -47,8 +47,9 @@ def _patched(monkeypatch, scanner: SilverBulletLiveScanner, *times: datetime) ->
     """Freeze the scanner clock and stub the TradingView-backed scan."""
     scans: list[tuple[date, datetime]] = []
 
-    async def fake_scan(scan_date: date, now: datetime) -> None:
+    async def fake_scan(scan_date: date, now: datetime) -> list:
         scans.append((scan_date, now))
+        return []
 
     real_sleep = asyncio.sleep
 

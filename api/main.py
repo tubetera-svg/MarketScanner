@@ -24,8 +24,9 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
 
 import app_settings  # noqa: E402  (persisted automation / show-hide settings)
 import fno_membership  # noqa: E402  (NSE F&O list cache + watchlist F&O re-check)
-import news_calendar  # noqa: E402  (ForexFactory high-impact news, fetched once per IST day)
+import news_calendar  # noqa: E402  (TradingView/ForexFactory news + EIA inventory times, fetched once per IST day)
 import price_alerts  # noqa: E402  (chart-popup price alerts, in-app delivery)
+import push  # noqa: E402  (Telegram / ntfy pushes shared by the automations)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
 from market_data import favorites  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
@@ -288,6 +289,10 @@ class SilverBulletLiveScanner:
         # New York date of an explicit user stop, so the in-window fallback does
         # not re-arm a scan the user just stopped (cleared by any start/test).
         self.manual_stop_date: str | None = None
+        self.pusher = push.Pusher("Silver Bullet")
+        # Signal ids already pushed this New York date; outlives start()/stop() so a
+        # re-armed scan does not re-send the morning's signals.
+        self._pushed: tuple[str, set[str]] = ("", set())
 
     def start_auto_schedule(self) -> None:
         if self.auto_task is None or self.auto_task.done():
@@ -454,10 +459,19 @@ class SilverBulletLiveScanner:
         if now.hour < self.AM_WINDOW_START_HOUR or now >= window_end + self.FINAL_SCAN_GRACE:
             self.last_error = None
             return now
-        await self._scan(now.date(), now)
+        fresh = await self._scan(now.date(), now)
+        if self._pushed[0] != now.date().isoformat():
+            self._pushed = (now.date().isoformat(), set())
+        unsent = [s for s in fresh if s.get("id") not in self._pushed[1]]
+        self._pushed[1].update(s.get("id") for s in unsent)
+        await self.pusher.push(
+            f"{s['symbol']} {s['direction']} @ {s['signal_time']}; entry {s['entry']:g}, SL {s['stop_loss']:g}, TP {s['target']:g}"
+            for s in unsent
+        )
         return now
 
-    async def _scan(self, scan_date: date, now: datetime) -> None:
+    async def _scan(self, scan_date: date, now: datetime) -> list[dict[str, Any]]:
+        """Scan the symbols for ``scan_date``; returns the signals not seen before."""
         from market_data.sources import tradingview_source
         from silver_bullet import evaluate_am_silver_bullet
 
@@ -485,10 +499,11 @@ class SilverBulletLiveScanner:
             except Exception as exc:
                 failures.append(f"{symbol}: {exc}")
         known = {str(item.get("id")) for item in self.signals}
-        self.signals = [*self.signals, *(item for item in fresh if item["id"] not in known)]
-        self.signals = self.signals[-100:]
+        fresh = [item for item in fresh if item["id"] not in known]
+        self.signals = [*self.signals, *fresh][-100:]
         self.last_error = "; ".join(failures) if failures else None
         self.run_count += 1
+        return fresh
 
 
 class IPOScanner:
@@ -618,6 +633,7 @@ class LtfConfirmationWatcher:
         self.run_count = 0
         self._bars: dict[str, Any] = {}
         self._fetched_while_closed: set[str] = set()
+        self.pusher = push.Pusher("LTF confirmation")
 
     @staticmethod
     def _timeframe() -> str:
@@ -669,10 +685,16 @@ class LtfConfirmationWatcher:
     async def check(self, force_arm: bool = False) -> dict[str, Any]:
         """Arm any newly final sessions, then replay intraday bars for armed setups."""
         self.last_check_at = datetime.now(timezone.utc).isoformat()
+        alerts_before = len(self.alerts)
         errors = await self._arm_due(force_arm)
         errors += await self._confirm()
         self.last_error = "; ".join(errors) if errors else None
         self.run_count += 1
+        # Same events the scanner page plays its LTF sound for.
+        await self.pusher.push(
+            f"{a['symbol']} {a['strategy']} {a['direction']} triggered; entry {a['entry']}, SL {a['sl']}, TP {a['target']}"
+            for a in self.alerts[alerts_before:] if a["state"] == "triggered"
+        )
         return self.status()
 
     def _alert(self, setup: Any, state: str) -> None:
@@ -1038,6 +1060,7 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
     auto = settings["automation"]
 
     sb = auto["silver_bullet_auto"]
+    silver_bullet_scanner.pusher.enabled = sb["push"]
     if sb["enabled"]:
         silver_bullet_scanner.start_auto_schedule()
     elif silver_bullet_scanner.auto_task is not None:
@@ -1066,6 +1089,7 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
         syncer.stop()
 
     ltf = auto["ltf_confirmation"]
+    ltf_watcher.pusher.enabled = ltf["push"]
     ltf_running = ltf_watcher.task is not None and not ltf_watcher.task.done()
     if ltf["enabled"] and (not ltf_running or ltf_watcher.interval_minutes != ltf["interval_minutes"]):
         ltf_watcher.start(ltf["interval_minutes"])
@@ -1074,7 +1098,7 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
 
     alerts = auto["price_alerts"]
     price_alert_watcher.near_pct = alerts["near_pct"]
-    price_alert_watcher.push_enabled = alerts["push"]
+    price_alert_watcher.pusher.enabled = alerts["push"]
     if alerts["enabled"] and (not price_alert_watcher.running or price_alert_watcher.interval_minutes != alerts["interval_minutes"]):
         price_alert_watcher.start(alerts["interval_minutes"])
     elif not alerts["enabled"] and price_alert_watcher.running:
@@ -1088,20 +1112,24 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "strategies": strategies,
         "weekly_profiles_master_enabled": master,
         "status": {
-            "silver_bullet": {"auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done()},
+            "silver_bullet": {
+                "auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done(),
+                "last_push_error": silver_bullet_scanner.pusher.last_error,
+            },
             "ipo_scanner": ipo_scanner.status(),
             "data_auto_sync": _auto_sync().status(),
             "ltf_confirmation": {
                 "running": ltf_watcher.task is not None and not ltf_watcher.task.done(),
                 "last_check_at": ltf_watcher.last_check_at,
                 "last_error": ltf_watcher.last_error,
+                "last_push_error": ltf_watcher.pusher.last_error,
             },
             "price_alerts": {
                 "running": price_alert_watcher.running,
                 "last_check_at": price_alert_watcher.last_check_at,
                 "last_error": price_alert_watcher.last_error,
-                "push_channels": price_alerts.push_channels(),
-                "last_push_error": price_alert_watcher.last_push_error,
+                "push_channels": push.channels(),
+                "last_push_error": price_alert_watcher.pusher.last_error,
             },
         },
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
@@ -1126,7 +1154,7 @@ async def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/news/high-impact")
 def get_high_impact_news(refresh: bool = False) -> dict[str, Any]:
-    """ForexFactory red-folder events this week (cached per IST day; refresh=true fetches live)."""
+    """High-impact events + Crude/NatGas release times (TradingView, ForexFactory fallback; cached per IST day)."""
     currencies = app_settings.load_settings()["news"]["currencies"]
     return news_calendar.get_events(currencies, refresh=refresh)
 
@@ -1166,10 +1194,10 @@ def bulk_price_alerts(body: dict[str, Any]) -> dict[str, int]:
 @app.post("/api/price-alerts/test-push")
 async def test_price_alert_push() -> dict[str, Any]:
     """Send a test message to the configured push channels (env vars)."""
-    channels = price_alerts.push_channels()
+    channels = push.channels()
     if not channels:
         raise HTTPException(status_code=400, detail="No push channel configured: set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and/or NTFY_TOPIC")
-    errors = await asyncio.to_thread(price_alerts.push_message, "Test message from Market Scanner price alerts.", "Price alert test")
+    errors = await asyncio.to_thread(push.send, "Test message from Market Scanner.", "Push test")
     return {"channels": channels, "errors": errors}
 
 

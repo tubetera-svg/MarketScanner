@@ -305,7 +305,7 @@ def test_push_sends_fired_events_when_enabled(monkeypatch):
     label = (now - timedelta(minutes=10)).astimezone(IST).strftime("%Y-%m-%dT%H:%M")
     fetch = lambda symbol, interval, n: [{"date": label, "open": 99, "high": 101, "low": 99, "close": 100.5, "volume": 0}]  # noqa: E731
     watcher = pa.PriceAlertWatcher(fetch=fetch, is_open=lambda s: True, push=lambda text: sent.append(text) or [])
-    watcher.push_enabled = True
+    watcher.pusher.enabled = True
     status = asyncio.run(watcher.check())
     assert status["push_channels"] == ["ntfy"]
     assert sent and sent[0].startswith("NSE:INFY crossed 100") and "pdh" in sent[0]

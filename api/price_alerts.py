@@ -32,15 +32,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import threading
-import urllib.parse
-import urllib.request
 import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
+
+import push as push_notify
+from market_data import state_store
 
 ROOT = Path(__file__).resolve().parent.parent
 STORE_PATH = ROOT / "data" / "state" / "price_alerts.json"
@@ -171,13 +171,16 @@ def side_of(alert: dict[str, Any], price: float) -> str:
 
 def _read(path: Path) -> list[dict[str, Any]]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(state_store.read_text(path))
     except (OSError, ValueError):
         return []
     return data if isinstance(data, list) else []
 
 
 def _write(path: Path, rows: list[dict[str, Any]]) -> None:
+    if state_store.handles(path):
+        state_store.write_text(path, json.dumps(rows, indent=2))
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -531,37 +534,7 @@ def _pending_outcomes(event: dict[str, Any]) -> bool:
     return len(event.get("outcomes") or {}) < len(OUTCOMES)
 
 
-# ---------------------------------------------------------------- push
-
-def push_channels() -> list[str]:
-    channels = []
-    if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
-        channels.append("telegram")
-    if os.environ.get("NTFY_TOPIC"):
-        channels.append("ntfy")
-    return channels
-
-
-def push_message(text: str, title: str = "Price alert") -> list[str]:
-    """Send ``text`` to every configured channel; returns error strings."""
-    errors: list[str] = []
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if token and chat:
-        body = urllib.parse.urlencode({"chat_id": chat, "text": f"{title}\n{text}"}).encode()
-        try:
-            urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=body, timeout=10).close()
-        except Exception as exc:  # network / bad token: report, never raise
-            errors.append(f"telegram: {exc}")
-    topic = os.environ.get("NTFY_TOPIC")
-    if topic:
-        server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
-        request = urllib.request.Request(f"{server}/{topic}", data=text.encode("utf-8"), headers={"Title": title})
-        try:
-            urllib.request.urlopen(request, timeout=10).close()
-        except Exception as exc:
-            errors.append(f"ntfy: {exc}")
-    return errors
-
+# ---------------------------------------------------------------- push text
 
 CONDITION_TEXT = {
     "crosses_above": "crossed above", "crosses_below": "crossed below", "crosses": "crossed",
@@ -611,14 +584,12 @@ class PriceAlertWatcher:
         self.task: asyncio.Task[None] | None = None
         self.interval_minutes = 15
         self.near_pct = 0.5
-        self.push_enabled = False
         self.last_check_at: str | None = None
         self.last_error: str | None = None
-        self.last_push_error: str | None = None
         self._polled: dict[str, datetime] = {}
         self._fetch = fetch
         self._is_open = is_open
-        self._push = push or (lambda text: push_message(text))
+        self.pusher = push_notify.Pusher("Price alert", push)
 
     def start(self, interval_minutes: int | None = None) -> None:
         self.stop()
@@ -646,9 +617,7 @@ class PriceAlertWatcher:
             "running": self.running,
             "interval_minutes": self.interval_minutes,
             "near_pct": self.near_pct,
-            "push_enabled": self.push_enabled,
-            "push_channels": push_channels(),
-            "last_push_error": self.last_push_error,
+            **self.pusher.status(),
             "last_check_at": self.last_check_at,
             "last_error": self.last_error,
             "alerts": alerts,
@@ -735,10 +704,6 @@ class PriceAlertWatcher:
             if fired or history_changed:
                 _write(HISTORY_PATH, (history + fired)[-HISTORY_LIMIT:])
 
-        if fired and self.push_enabled and push_channels():
-            push_errors: list[str] = []
-            for event in fired:
-                push_errors += await asyncio.to_thread(self._push, event_text(event))
-            self.last_push_error = "; ".join(push_errors) or None
+        await self.pusher.push(event_text(event) for event in fired)
         self.last_error = "; ".join(errors) if errors else None
         return self.status()

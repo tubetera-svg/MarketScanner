@@ -87,7 +87,9 @@ QUICK CONFIG GUIDE — where to change common settings
 
 from __future__ import annotations
 
+import io
 import os
+import sys
 import json
 import time
 import logging
@@ -249,8 +251,24 @@ def _resolve_config_path(filename: str) -> str:
     return os.path.normpath(os.path.join(script_dir, filename))
 
 
+def _state_store_for(path: str):
+    """market_data.state_store when APP_STATE_STORE=db and it stores ``path``, else None (plain file)."""
+    if os.environ.get("APP_STATE_STORE", "").strip().lower() != "db":
+        return None
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.append(root)
+    from market_data import state_store
+
+    return state_store if state_store.handles(path) else None
+
+
 def _atomic_write_text(path: str, text: str) -> None:
     """Write via temp file + os.replace so readers never see a partial file."""
+    store = _state_store_for(path)
+    if store is not None:
+        store.write_text(path, text)
+        return
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8", newline="") as file:
         file.write(text)
@@ -314,10 +332,15 @@ def save_watchlist_categories(
     }
     path = _resolve_config_path(filename)
     text = json.dumps(dict(sorted(cleaned.items())), indent=2) + "\n"
+    store = _state_store_for(path)
     try:
-        with open(path, "rb") as file:
-            if b"\r\n" in file.read(4096):
-                text = text.replace("\n", "\r\n")  # keep the file's existing line endings
+        if store is not None:
+            if "\r\n" in store.read_text(path)[:4096]:
+                text = text.replace("\n", "\r\n")
+        else:
+            with open(path, "rb") as file:
+                if b"\r\n" in file.read(4096):
+                    text = text.replace("\n", "\r\n")  # keep the file's existing line endings
     except OSError:
         pass
     _atomic_write_text(path, text)
@@ -329,9 +352,13 @@ def remove_symbol_from_json_cache(path: str, symbol: str) -> bool:
     Returns True when the key existed and the file was rewritten.
     """
     key = symbol.strip().upper()
+    store = _state_store_for(path)
     try:
-        with open(path, "r", encoding="utf-8") as file:
-            data = json.load(file)
+        if store is not None:
+            data = json.loads(store.read_text(path))
+        else:
+            with open(path, "r", encoding="utf-8") as file:
+                data = json.load(file)
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return False
     if not isinstance(data, dict) or key not in data:
@@ -363,9 +390,13 @@ def modify_watchlist_file(
     file if missing. Returns True when the file changed. Hold watchlist_file_lock.
     """
     path = _resolve_config_path(filename)
+    store = _state_store_for(path)
     try:
-        with open(path, "r", encoding="utf-8", newline="") as file:
-            lines = file.read().splitlines(keepends=True)
+        if store is not None:
+            lines = store.read_text(path).splitlines(keepends=True)
+        else:
+            with open(path, "r", encoding="utf-8", newline="") as file:
+                lines = file.read().splitlines(keepends=True)
     except FileNotFoundError:
         lines = []
     newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
@@ -401,9 +432,13 @@ def modify_watchlist_file(
 def load_watchlist_categories(filename: str = WATCHLIST_CATEGORIES_DEFAULT) -> dict[str, dict[str, str]]:
     """Load persisted watchlist classifications, including legacy scope strings."""
     path = _resolve_config_path(filename)
+    store = _state_store_for(path)
     try:
-        with open(path, "r", encoding="utf-8") as file:
-            data = json.load(file)
+        if store is not None:
+            data = json.loads(store.read_text(path))
+        else:
+            with open(path, "r", encoding="utf-8") as file:
+                data = json.load(file)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     if not isinstance(data, dict):
@@ -634,16 +669,20 @@ def daily_bar_cutoff(market: str) -> dtime:
     a restart. Missing/invalid values fall back to the default.
     """
     path = _app_settings_path()
+    store = _state_store_for(path)
     try:
-        key = (path, os.path.getmtime(path))
+        key = (path, store.updated_at(path) if store is not None else os.path.getmtime(path))
     except OSError:
         key = (path, None)
     if key != _CUTOFF_CACHE["key"]:
         values: dict = {}
         if key[1] is not None:
             try:
-                with open(path, "r", encoding="utf-8") as file:
-                    raw = json.load(file).get("data_cutoffs", {})
+                if store is not None:
+                    raw = json.loads(store.read_text(path)).get("data_cutoffs", {})
+                else:
+                    with open(path, "r", encoding="utf-8") as file:
+                        raw = json.load(file).get("data_cutoffs", {})
                 values = raw if isinstance(raw, dict) else {}
             except (OSError, ValueError, AttributeError):
                 values = {}
@@ -1193,7 +1232,16 @@ class OHLCCache:
         self._load()
 
     def _load(self):
-        if os.path.exists(self.path):
+        store = _state_store_for(self.path)
+        if store is not None:
+            try:
+                self._data = json.loads(store.read_text(self.path))
+            except FileNotFoundError:
+                pass
+            except (OSError, json.JSONDecodeError) as e:
+                log.warning(f"Could not read OHLC cache ({e}); starting fresh.")
+                self._data = {}
+        elif os.path.exists(self.path):
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
                     self._data = json.load(f)
@@ -1203,6 +1251,10 @@ class OHLCCache:
 
     def _save(self):
         try:
+            store = _state_store_for(self.path)
+            if store is not None:
+                store.write_text(self.path, json.dumps(self._data))
+                return
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             tmp_path = f"{self.path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -1947,10 +1999,16 @@ class StockTracker:
 def load_watchlist(filename: str = "watchlist.txt", allow_empty: bool = False) -> list[tuple[str, Session]]:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(script_dir, filename)
-    if not os.path.exists(path):
+    store = _state_store_for(path)
+    if store is not None:
+        try:
+            text = store.read_text(path)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Watchlist not found in app_state or on disk: {path}") from None
+    elif not os.path.exists(path):
         raise FileNotFoundError(f"Watchlist file not found: {path}\n\n" f"Create '{filename}' next to this script.")
     entries = []
-    with open(path, "r", encoding="utf-8") as f:
+    with io.StringIO(text) if store is not None else open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -2022,11 +2080,16 @@ class TrackerStateCache:
         )
 
     def load(self) -> dict:
-        if not os.path.exists(self.path):
+        store = _state_store_for(self.path)
+        if store is None and not os.path.exists(self.path):
             return {}
         try:
+            if store is not None:
+                return json.loads(store.read_text(self.path))
             with open(self.path, "r", encoding="utf-8") as f:
                 return json.load(f)
+        except FileNotFoundError:
+            return {}
         except (OSError, json.JSONDecodeError) as e:
             log.warning(f"Could not read tracker state cache ({e}); starting fresh.")
             return {}
@@ -2041,6 +2104,10 @@ class TrackerStateCache:
                 "last_daily_analysis": t.last_daily_analysis.isoformat() if t.last_daily_analysis else None,
             }
         try:
+            store = _state_store_for(self.path)
+            if store is not None:
+                store.write_text(self.path, json.dumps(payload))
+                return
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             tmp_path = f"{self.path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:

@@ -12,6 +12,8 @@ import os
 import threading
 from pathlib import Path
 
+from . import state_store
+
 ROOT = Path(__file__).resolve().parent.parent
 FAVORITES_PATH = ROOT / "config" / "favorites.json"
 
@@ -27,7 +29,7 @@ def _normalize(symbol: str) -> str:
 
 def _read() -> list[str]:
     try:
-        raw = json.loads(FAVORITES_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(state_store.read_text(FAVORITES_PATH))
     except (OSError, ValueError):
         return []
     symbols = raw.get("symbols", []) if isinstance(raw, dict) else []
@@ -40,6 +42,9 @@ def _read() -> list[str]:
 
 
 def _write(symbols: list[str]) -> None:
+    if state_store.handles(FAVORITES_PATH):
+        state_store.write_text(FAVORITES_PATH, json.dumps({"symbols": symbols}, indent=2) + "\n")
+        return
     FAVORITES_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = FAVORITES_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({"symbols": symbols}, indent=2) + "\n", encoding="utf-8")

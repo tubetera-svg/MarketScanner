@@ -11,17 +11,19 @@
       "lookback_days": 7
     },
     "ltf_confirmation": {
-      "enabled": false,
-      "interval_minutes": 45
+      "enabled": true,
+      "interval_minutes": 54,
+      "push": true
     },
     "price_alerts": {
       "enabled": true,
       "interval_minutes": 9,
       "near_pct": 0.5,
-      "push": false
+      "push": true
     },
     "silver_bullet_auto": {
-      "enabled": true
+      "enabled": true,
+      "push": true
     }
   },
   "data_cutoffs": {
@@ -42,6 +44,7 @@
     "news_event": {
       "enabled": true,
       "lead_minutes": 9,
+      "repeat": 2,
       "sound": "vibes"
     },
     "price_alert": {

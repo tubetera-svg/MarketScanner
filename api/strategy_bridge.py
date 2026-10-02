@@ -24,6 +24,7 @@ INFO_PATH = ROOT / "config" / "strategy_info.txt"
 
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
+from market_data import state_store  # noqa: E402
 from market_data.service import is_crypto_symbol  # noqa: E402
 
 CORE_STRATEGIES = [
@@ -70,7 +71,7 @@ def load_module() -> Any:
 
 def _read_overrides() -> dict[str, bool]:
     try:
-        data = json.loads(FLAGS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(state_store.read_text(FLAGS_PATH))
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):
@@ -79,7 +80,7 @@ def _read_overrides() -> dict[str, bool]:
 
 
 def _write_overrides(overrides: dict[str, bool]) -> None:
-    FLAGS_PATH.write_text(json.dumps(overrides, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    state_store.write_text(FLAGS_PATH, json.dumps(overrides, indent=2, sort_keys=True) + "\n")
 
 
 def _load_strategy_descriptions() -> dict[str, str]:

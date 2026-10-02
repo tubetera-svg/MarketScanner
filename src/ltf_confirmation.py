@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
@@ -199,6 +200,17 @@ def evaluate_ltf(
             "note": "zone reached; awaiting CISD" if reached_at else "awaiting a trade into the zone"}
 
 
+def _state_store_for(path: str):
+    """market_data.state_store when APP_STATE_STORE=db and it stores ``path``, else None (plain file)."""
+    if os.environ.get("APP_STATE_STORE", "").strip().lower() != "db":
+        return None
+    if ROOT not in sys.path:
+        sys.path.append(ROOT)
+    from market_data import state_store
+
+    return state_store if state_store.handles(path) else None
+
+
 class LtfSetupStore:
     """Persisted armed/resolved LTF setups keyed by :func:`setup_key`."""
 
@@ -206,9 +218,13 @@ class LtfSetupStore:
         self.path = path or DEFAULT_PATH
 
     def load(self) -> Dict[str, LtfSetup]:
+        store = _state_store_for(self.path)
         try:
-            with open(self.path, "r", encoding="utf-8") as handle:
-                raw = json.load(handle)
+            if store is not None:
+                raw = json.loads(store.read_text(self.path))
+            else:
+                with open(self.path, "r", encoding="utf-8") as handle:
+                    raw = json.load(handle)
         except (OSError, json.JSONDecodeError):
             return {}
         out: Dict[str, LtfSetup] = {}
@@ -220,6 +236,13 @@ class LtfSetupStore:
         return out
 
     def save(self, data: Dict[str, LtfSetup]) -> None:
+        store = _state_store_for(self.path)
+        if store is not None:
+            try:
+                store.write_text(self.path, json.dumps({key: asdict(value) for key, value in data.items()}))
+            except OSError:
+                pass
+            return
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         tmp = f"{self.path}.tmp"
         try:

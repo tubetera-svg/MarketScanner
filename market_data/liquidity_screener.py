@@ -27,6 +27,7 @@ from .config import (
     FREE_FLOAT_MIN_PCT,
     LIQUIDITY_LOOKBACK_DAYS,
 )
+from . import state_store
 from .service import get_ohlc
 
 log = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ IPO_SCOPE = "IPO"
 
 def _load_categories() -> dict[str, dict[str, str]]:
     try:
-        return json.loads(CATEGORIES_PATH.read_text(encoding="utf-8"))
+        return json.loads(state_store.read_text(CATEGORIES_PATH))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
 
