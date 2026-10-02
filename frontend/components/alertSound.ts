@@ -3,7 +3,7 @@
 // alert plays, volume and quiet hours come from the "sounds" block of
 // /api/settings (api/app_settings.py); a temporary mute is per browser.
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { fetchAppSettings } from "./appSettings";
 
 export type AlertSoundKind = "ltf" | "silver_bullet" | "price_alert" | "news_event";
 type SoundChoice = { enabled: boolean; sound: string };
@@ -146,9 +146,8 @@ export const subscribeSoundSettings = (listener: () => void) => {
 };
 
 const refreshSoundSettings = () => {
-  fetch(`${API}/api/settings`, { cache: "no-store" })
-    .then((response) => response.json())
-    .then((data: { settings?: { sounds?: SoundSettings } }) => setSoundSettings(data.settings?.sounds))
+  fetchAppSettings<{ settings?: { sounds?: SoundSettings } }>()
+    .then((data) => setSoundSettings(data.settings?.sounds))
     .catch(() => {});
 };
 
@@ -198,25 +197,36 @@ export const unlockAudio = () => {
 
 // Several alerts in the same moment play one sound, not a stack of them.
 const COOLDOWN_MS = 3000;
-let lastPlayedAt = 0;
+let quietUntil = 0;
+
+// News events repeat their sound so a release is hard to miss.
+const REPEATS: Partial<Record<AlertSoundKind, number>> = { news_event: 3 };
+const REPEAT_GAP_S = 0.4;
+const soundLength = (notes: Note[]) => Math.max(0, ...notes.map((note) => note.at + note.dur));
+const repeatNotes = (notes: Note[], times: number): Note[] => {
+  const step = soundLength(notes) + REPEAT_GAP_S;
+  return Array.from({ length: times }, (_, i) => notes.map((note) => ({ ...note, at: note.at + i * step }))).flat();
+};
 
 export const playAlertSound = (kind: AlertSoundKind) => {
   try {
     const choice = settings[kind];
     if (!settings.enabled || !choice.enabled || getMutedUntil() || inQuietHours(settings.quiet_hours)) return;
     const now = Date.now();
-    if (now - lastPlayedAt < COOLDOWN_MS) return;
-    lastPlayedAt = now;
-    playNotes((SOUNDS[choice.sound] ?? SOUNDS[DEFAULT_SETTINGS[kind].sound]).notes, settings.volume);
+    if (now < quietUntil) return;
+    const notes = repeatNotes((SOUNDS[choice.sound] ?? SOUNDS[DEFAULT_SETTINGS[kind].sound]).notes, REPEATS[kind] ?? 1);
+    quietUntil = now + Math.max(COOLDOWN_MS, soundLength(notes) * 1000);
+    playNotes(notes, settings.volume);
   } catch {
     // Audio is best-effort; never break scanning over it.
   }
 };
 
 // Settings-page Test button: ignores mute, quiet hours and the on/off switches.
-export const previewSound = (id: string, volume: number) => {
+// Pass the alert kind to hear it as the alert plays it (e.g. news repeats).
+export const previewSound = (id: string, volume: number, kind?: AlertSoundKind) => {
   try {
-    if (SOUNDS[id]) playNotes(SOUNDS[id].notes, volume);
+    if (SOUNDS[id]) playNotes(repeatNotes(SOUNDS[id].notes, (kind && REPEATS[kind]) ?? 1), volume);
   } catch {
     // best-effort
   }

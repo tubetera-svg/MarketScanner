@@ -150,35 +150,6 @@ def test_resolve_refresh_bypasses_cache(tmp, monkeypatch):
     assert calls == ["ABC"]
 
 
-# ------------------------------------------------------------------ batch
-def test_resolve_batch_uses_cache_and_respects_limit(tmp, monkeypatch):
-    # Pre-cache one symbol.
-    database.upsert_tv_symbol(
-        {"symbol": "NSE:CACHED", "tv_symbol": "NSE:CACHED", "exchange": "NSE"},
-        db_path=tmp,
-    )
-    calls = []
-
-    def fake_search(base):
-        calls.append(base)
-        return [f"NSE:{base}"]
-
-    monkeypatch.setattr(tv, "_search", fake_search)
-    monkeypatch.setattr(tv, "LOOKUP_DELAY", 0)  # keep the test fast
-
-    out = tv.resolve_tv_symbols(
-        ["NSE:CACHED", "NSE:AAA", "NSE:BBB", "NSE:CCC"], limit=2, db_path=tmp
-    )
-    assert out["NSE:CACHED"]["cached"] is True
-    assert calls == ["AAA", "BBB"]  # limit caps live lookups
-    assert "NSE:CCC" not in out  # deferred to the next call
-
-
-def test_resolve_batch_empty():
-    assert tv.resolve_tv_symbols([]) == {}
-    assert tv.resolve_tv_symbols(["  "]) == {}
-
-
 # ------------------------------------------------------------------ storage
 def test_tv_symbol_cache_roundtrip(tmp):
     assert database.upsert_tv_symbol(

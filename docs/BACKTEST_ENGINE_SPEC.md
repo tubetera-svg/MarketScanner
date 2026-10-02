@@ -33,7 +33,7 @@ paper-trading, parameter optimization / walk-forward.
 | Concern | Existing code | Reuse |
 |---|---|---|
 | Strategy registry | `src/all_strategy.py:1663` `strategy_registry()` | Drives which strategies run |
-| Per-strategy runners | `run_weekly_vs_daily` (`:517`), `run_inside_bar_daily_sweep` (`:575`), `run_ema5_sweep` (`:677`), `run_weekly_profile` (`:1494`) | Called once per historical date with a `daily_map` truncated to that date |
+| Per-strategy runners | `run_inside_bar_daily_sweep` (`:575`), `run_ema5_sweep` (`:677`), `run_weekly_profile` (`:1494`) | Called once per historical date with a `daily_map` truncated to that date |
 | Runner signature | `(symbols, as_of_date, verbose, print_values, daily_map=None)` → `StrategyExecution` | The `daily_map` arg is the backtest integration seam |
 | Point-in-time guard | `_trim_in_progress_daily` (`:1468`) only trims when `date.today()` is the last bar → no-op during historical replay (as_of_date ≠ today) | Safe to ignore in backtest |
 | Result shape | `StrategyExecution(name, results, bullish, bearish)` (`:64`); weekly profiles also populate `entry/sl/target/rr/direction` (`:1517-1584`) | Source of signal + trade levels |
@@ -50,7 +50,7 @@ paper-trading, parameter optimization / walk-forward.
 
 From `strategy_registry()` (`src/all_strategy.py:1663`) + `WEEKLY_PROFILE_FLAGS`:
 
-- Core (no built-in SL/target): `weekly_vs_daily_sweep` (420d), `inside_bar_pattern_daily_sweep` (160d), `ema5_sweep` (40d).
+- Core (no built-in SL/target): `inside_bar_pattern_daily_sweep` (160d), `ema5_sweep` (40d).
 - Weekly profiles (carry `entry/sl/target/rr`): `classic_expansion_sweep`, `midweek_reversal_sweep`, `consolidation_reversal_sweep`, `intraweek_reversal_sweep`, `thursday_counter_sweep`, `tgif_setup_sweep` (all 60d).
 
 The per-strategy required lookback is already centralized in `run_strategies`'s
@@ -221,10 +221,8 @@ These must be honored; the engine design already mitigates most, but surface the
    acts when `date.today()` is the last row; during replay `as_of_date != today`, so
    it is a no-op — the engine must NOT call it and must NOT pass `date.today()` as the
    anchor. Confirmed safe.
-3. **Weekly resample mid-week** `run_weekly_vs_daily` resamples `W-FRI`
-   (`all_strategy.py:288`). At a Wed anchor the current weekly bucket contains only
-   Mon–Wed data (resample is inclusive up to the slice end), so no future-week days
-   leak in. Correct point-in-time.
+3. **Weekly resample mid-week** — N/A since 2026-10-01: `weekly_vs_daily_sweep`, the
+   only runner that resampled `W-FRI`, was removed.
 4. **Forex/commodity "live" track mode** `_track_mode_for` (`all_strategy.py:1324`)
    returns `"live"` for non-NSE, meaning the live scanner keeps an in-progress bar.
    In backtest we always truncate to D, so we simulate *closed* daily bars only —

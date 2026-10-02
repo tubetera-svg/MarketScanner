@@ -20,10 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import urllib.parse
 import urllib.request
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional
 
 from . import database
 
@@ -44,8 +43,6 @@ PREFERRED_EXCHANGES = ("NSE", "BSE")
 # (OANDA, CAPITALCOM, FOREXCOM, CRYPTO, NSEIX, MCX, ...) already maps 1:1 to a
 # TradingView exchange, so those symbols are passed straight through untouched.
 INDIAN_EQUITY_EXCHANGES = {"NSE", "BSE"}
-# Politeness delay between live lookups (seconds) so bulk resolution is gentle.
-LOOKUP_DELAY = 0.4
 
 
 def strip_exchange(symbol: str) -> str:
@@ -160,37 +157,3 @@ def resolve_tv_symbol(
     )
     return {"symbol": key, "tv_symbol": tv_symbol, "exchange": exchange,
             "cached": False}
-
-
-def resolve_tv_symbols(
-    symbols: Sequence[str],
-    *,
-    refresh: bool = False,
-    limit: int = 50,
-    db_path: Optional[str] = None,
-) -> dict[str, dict]:
-    """Batch resolve, hitting the network only for uncached symbols.
-
-    ``limit`` caps how many live lookups one call performs, so a page rendering
-    1,500 rows cannot trigger a 1,500-request burst; unresolved symbols are
-    simply retried on the next call.
-    """
-    keys = [str(s).strip().upper() for s in symbols if str(s).strip()]
-    if not keys:
-        return {}
-
-    out: dict[str, dict] = {}
-    if not refresh:
-        for key, cached in database.query_tv_symbol(keys, db_path=db_path).items():
-            out[key] = {**cached, "cached": True}
-
-    pending = [key for key in keys if key not in out]
-    if refresh:
-        pending = keys
-    for index, key in enumerate(pending[:limit]):
-        if index:
-            time.sleep(LOOKUP_DELAY)
-        resolved = resolve_tv_symbol(key, refresh=True, db_path=db_path)
-        resolved["cached"] = False
-        out[key] = resolved
-    return out

@@ -49,7 +49,6 @@ type PerformanceItem = {
 };
 
 type ReviewItem = PerformanceItem & { verdict: "KEEP" | "DISCARD"; reasons: string[] };
-type Signal = PerformanceItem["signal"];
 
 type LiquidityScreenResult = {
   symbol: string;

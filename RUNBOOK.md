@@ -117,9 +117,9 @@ iframe; remount per symbol via `key` to reset the controls.
   `exchange`, `resolved_at`). Negative results are cached too, so a missing
   symbol is not re-queried on every page view. Network/WAF failures are *not*
   cached, so they retry later.
-- Endpoint: `GET /api/market-data/tv-symbol?symbol=NSE:ACHYUT` (or
-  `?symbols=A,B,C`, plus optional `refresh=true` and `limit=1..200`). `limit`
-  caps live lookups per call, so rendering 1,500 rows cannot trigger a burst.
+- Used server-side by price alerts (`api/price_alerts.py`) via
+  `market_data.tv_symbol.resolve_tv_symbol`. The old
+  `GET /api/market-data/tv-symbol` endpoint was removed 2026-10-01 (no caller).
 
 ## One-click Windows launch
 
@@ -220,3 +220,6 @@ Double-click `scripts/stop_market_scanner.bat` to close both service windows.
 - 2026-10-01 - Scanner page: the single "Extra info" checkbox is now three (ADR, Wick, M/W/D bias), each with a hover tooltip explaining how to read it; choices are remembered per browser. The server computes extra info only when at least one is on; each checkbox then shows/hides its part without a re-run. Candle type / streak / EQ show with ADR or Wick.
 - 2026-10-01 - Unticking M/W/D bias now tells the server (include_bias=false on /api/strategy-scan; run_strategies(include_bias=...)): bias is not calculated and the 130-day history bump is skipped, so scans load only what the selected strategies need. ADR/Wick are still calculated whenever any extra-info box is on.
 - 2026-10-01 - Events strip: the News popover now opens on hover or keyboard focus instead of click, and closes 200ms after the pointer leaves both the pill and the popover (Esc also closes it). The popover is rendered into <body> through a portal, because .section-nav's backdrop-filter re-anchored position:fixed and placed it about 120px too low. The nav aside is now a single row centred with the section buttons, and the Ctrl+K hint hides below 1200px. Display-only.
+- 2026-10-01 - Fewer redundant loads: market_data.database.init_db now applies the schema once per DB file per process (re-runs if the file is gone) instead of on every get_ohlc call; the frontend shares one GET /api/price-alerts poller (components/priceAlertFeed.ts, 15s, used by nav badge, notifier, Alerts list and chart panel) and one GET /api/settings request per page load (components/appSettings.ts); the scanner page's events countdown re-renders once per minute instead of every second. Dead code removed (unused helpers/imports, resolveTvSymbol/tradingViewWidgetUrl). No strategy/signal changes.
+- 2026-10-01 - Removed unused API routes: POST /api/market-data/auto-sync/start|stop (auto-sync is switched only via PUT /api/settings, so it can no longer drift from the saved setting) and GET /api/market-data/tv-symbol (no caller; market_data.tv_symbol.resolve_tv_symbols and its tests removed, single-symbol resolve used by price alerts kept).
+- 2026-10-01 - Removed strategy `weekly_vs_daily_sweep` (CLI/backtest only, never in the UI): runner, its helpers (CandleSet, _build_candles_from_daily, _extract_weekly_daily_points, _weekly_pattern_1/2), registry and lookback entries, and docs/BACKTEST_ENGINE_SPEC.md references. main.py / backtests no longer produce it.

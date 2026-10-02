@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import pytest
 from market_data import etf_list
 
 SAMPLE_ETF_CSV = """SYMBOL,SECURITY NAME,SERIES,DATE OF LISTING,PAID UP VALUE

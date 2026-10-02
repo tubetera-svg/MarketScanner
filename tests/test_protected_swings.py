@@ -12,7 +12,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 for p in (str(ROOT), str(ROOT / "src")):

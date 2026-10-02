@@ -5,6 +5,7 @@ import { Zap } from "lucide-react";
 import TradingViewChartModal, { type ChartTarget } from "./TradingViewChartModal";
 import { describeAlert, type PriceAlertEvent, type PriceAlertStatus } from "./PriceAlertPanel";
 import { playAlertSound } from "./alertSound";
+import { subscribePriceAlerts } from "./priceAlertFeed";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -19,34 +20,25 @@ export default function PriceAlertNotifier() {
   const announced = useRef<Set<string>>(new Set());
   const seeded = useRef(false);
 
-  useEffect(() => {
-    const poll = () => {
-      fetch(`${API}/api/price-alerts`, { cache: "no-store" })
-        .then((response) => response.json())
-        .then((data: PriceAlertStatus) => {
-          // The first poll only records past events, so a page load is silent.
-          const fresh = data.events.filter((event) => !announced.current.has(event.id));
-          fresh.forEach((event) => announced.current.add(event.id));
-          const wasSeeded = seeded.current;
-          seeded.current = true;
-          if (!wasSeeded || !fresh.length) return;
-          playAlertSound("price_alert");
-          setToasts((current) => [...current, ...fresh].slice(-5));
-          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            for (const event of fresh) {
-              new Notification(`${event.symbol} ${describeAlert(event)}`, {
-                body: `At ${event.price ?? "-"}${event.note ? ` · ${event.note}` : ""}`,
-                tag: event.id,
-              });
-            }
-          }
-        })
-        .catch(() => {});
-    };
-    poll();
-    const id = window.setInterval(poll, 15000);
-    return () => window.clearInterval(id);
-  }, []);
+  useEffect(() => subscribePriceAlerts((data: PriceAlertStatus | null) => {
+    if (!data) return;
+    // The first poll only records past events, so a page load is silent.
+    const fresh = data.events.filter((event) => !announced.current.has(event.id));
+    fresh.forEach((event) => announced.current.add(event.id));
+    const wasSeeded = seeded.current;
+    seeded.current = true;
+    if (!wasSeeded || !fresh.length) return;
+    playAlertSound("price_alert");
+    setToasts((current) => [...current, ...fresh].slice(-5));
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      for (const event of fresh) {
+        new Notification(`${event.symbol} ${describeAlert(event)}`, {
+          body: `At ${event.price ?? "-"}${event.note ? ` · ${event.note}` : ""}`,
+          tag: event.id,
+        });
+      }
+    }
+  }), []);
 
   const dismiss = (id: string) => setToasts((current) => current.filter((item) => item.id !== id));
 

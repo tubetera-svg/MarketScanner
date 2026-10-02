@@ -31,36 +31,6 @@ export type ChartTarget = {
 
 export type ChartLevel = { label: string; price: number; price2?: number | null };
 
-/**
- * Resolve an app symbol (e.g. NSE:ACHYUT) to the TradingView symbol that
- * actually exists (NSE preferred, BSE fallback — many SME IPOs are BSE-only).
- * Returns null when TradingView has no NSE/BSE listing for it.
- */
-export type TvResolution = {
-  /** TradingView symbol, or null when TradingView carries no NSE/BSE listing. */
-  tvSymbol: string | null;
-  /** True when the lookup itself failed (offline/WAF), not "genuinely absent". */
-  failed: boolean;
-};
-
-export const resolveTvSymbol = async (symbol: string): Promise<TvResolution> => {
-  try {
-    const response = await fetch(
-      `${API}/api/market-data/tv-symbol?symbol=${encodeURIComponent(symbol)}`,
-      { cache: "no-store" },
-    );
-    if (!response.ok) return { tvSymbol: null, failed: true };
-    const payload = await response.json();
-    const items = payload?.items ?? {};
-    // Backend keys are normalized to uppercase; match case-insensitively.
-    const item = items[symbol] ?? items[String(symbol).toUpperCase()];
-    if (!item) return { tvSymbol: null, failed: true };
-    return { tvSymbol: item.tv_symbol ?? null, failed: Boolean(item.error) };
-  } catch {
-    return { tvSymbol: null, failed: true };
-  }
-};
-
 /** TradingView chart URL for an already-resolved symbol. */
 export const tvChartUrl = (symbol: string) =>
   `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
@@ -72,42 +42,6 @@ const symbolFromLink = (link: string | null | undefined, fallback: string) => {
   } catch {
     return fallback;
   }
-};
-
-/** Build a TradingView widgetembed URL. Shared across the app. */
-export const tradingViewWidgetUrl = (
-  link: string | null | undefined,
-  symbol: string,
-  timeframe = "D",
-  indicators: string[] = [],
-) => {
-  const chartSymbol = symbolFromLink(link, symbol);
-  const params = new URLSearchParams({
-    symbol: chartSymbol,
-    interval: timeframe,
-    hidesidetoolbar: "0",
-    symboledit: "1",
-    saveimage: "1",
-    toolbarbg: "#f1f3f6",
-    studies: JSON.stringify(indicators),
-    overrides: JSON.stringify({
-      "mainSeriesProperties.candleStyle.upColor": "#16a34a",
-      "mainSeriesProperties.candleStyle.downColor": "#000000",
-      "mainSeriesProperties.candleStyle.borderUpColor": "#16a34a",
-      "mainSeriesProperties.candleStyle.borderDownColor": "#000000",
-      "mainSeriesProperties.candleStyle.wickUpColor": "#16a34a",
-      "mainSeriesProperties.candleStyle.wickDownColor": "#000000",
-    }),
-    theme: "light",
-    style: "1",
-    timezone: "Etc/UTC",
-    withdateranges: "1",
-    hideideas: "1",
-    hide_side_toolbar: "0",
-    hide_volume: "1",
-    locale: "en",
-  });
-  return `https://www.tradingview.com/widgetembed/?${params.toString()}`;
 };
 
 type Interval = "5m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1M";

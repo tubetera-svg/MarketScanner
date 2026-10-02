@@ -30,7 +30,7 @@ frame already truncated to ``as_of_date`` (the backtest engine slices the
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -363,15 +363,6 @@ def invalidate_close(
 # ---------------------------------------------------------------------------
 # 4. Candidate builders + lifecycle resolution
 # ---------------------------------------------------------------------------
-def _series_extremes(daily: pd.DataFrame, run: List[int], for_low: bool) -> float:
-    o, h, l, c = _ohlc_arrays(daily)
-    if not run:
-        return np.nan
-    if for_low:
-        return float(np.nanmax(h[run]))  # protection level for a protected low = series HIGH
-    return float(np.nanmin(l[run]))      # protection level for a protected high = series LOW
-
-
 def _build_sweep_candidate(
     daily: pd.DataFrame,
     swing: SwingPoint,

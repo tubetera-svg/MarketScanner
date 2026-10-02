@@ -3,34 +3,25 @@
 import { useEffect, useState } from "react";
 import { Activity, Bell, Database, History, Rocket, Settings } from "lucide-react";
 import SoundToggle from "./SoundToggle";
+import { fetchAppSettings } from "./appSettings";
+import { subscribePriceAlerts } from "./priceAlertFeed";
 
 type NavigationProps = {
   active: "/" | "/alerts" | "/watchlist" | "/ipo" | "/backtest" | "/settings";
 };
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
-
 export default function Navigation({ active }: NavigationProps) {
   const [hidden, setHidden] = useState<string[]>([]);
   useEffect(() => {
-    fetch(`${API}/api/settings`, { cache: "no-store" })
-      .then((response) => response.json())
+    fetchAppSettings<{ settings?: { ui?: { hidden_pages?: string[] } } }>()
       .then((data: { settings?: { ui?: { hidden_pages?: string[] } } }) => setHidden(data.settings?.ui?.hidden_pages ?? []))
       .catch(() => {});
   }, []);
   // Price alerts triggered in the current daily bar (per-market cut-off) for the Alerts link badge.
   const [triggeredAlerts, setTriggeredAlerts] = useState(0);
-  useEffect(() => {
-    const load = () => {
-      fetch(`${API}/api/price-alerts`, { cache: "no-store" })
-        .then((response) => response.json())
-        .then((data: { triggered_session_count?: number }) => setTriggeredAlerts(data.triggered_session_count ?? 0))
-        .catch(() => {});
-    };
-    load();
-    const id = window.setInterval(load, 30000);
-    return () => window.clearInterval(id);
-  }, []);
+  useEffect(() => subscribePriceAlerts((data) => {
+    if (data) setTriggeredAlerts(data.triggered_session_count ?? 0);
+  }), []);
   return (
     <>
       <a className={`top-link${active === "/" ? " active" : ""}`} href="/" aria-current={active === "/" ? "page" : undefined}><Activity size={13} /> Scanner</a>

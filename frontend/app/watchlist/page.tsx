@@ -6,7 +6,7 @@
 // trigger NSE/TradingView requests.
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, ArrowLeft, Database, Download, Pencil, RefreshCw, Rocket, Save, SearchX, Trash2, X } from "lucide-react";
+import { Database, Download, Pencil, RefreshCw, Save, SearchX, Trash2, X } from "lucide-react";
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
 import { FavoriteStar, useFavorites } from "../../components/Favorites";
@@ -53,7 +53,6 @@ type MetaPayload = {
   rows_per_source: { source: string; rows: number }[];
 };
 
-type WatchlistPayload = { symbols: string[] };
 type WatchlistClassification = {
   asset_class?: string;
   exchange?: string;
@@ -117,7 +116,6 @@ export default function WatchlistPage() {
   const [meta, setMeta] = useState<MetaPayload | null>(null);
   const [filters, setFilters] = useState(defaultFilters);
   const [pageSize, setPageSize] = useState(250);
-  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -205,7 +203,6 @@ export default function WatchlistPage() {
 
   const markStale = () => {
     setDirty(true);
-    setOffset(0);
   };
 
   const updateFilter = (key: keyof typeof defaultFilters, value: string) => {
@@ -219,7 +216,6 @@ export default function WatchlistPage() {
   const updateGridFilter = (key: keyof GridFilters, value: string) => {
     const next = { ...grid, [key]: value };
     setGrid(next);
-    setOffset(0);
     if (records) {
       void loadRecords(0, next);
     } else {
@@ -229,7 +225,6 @@ export default function WatchlistPage() {
 
   const clearGridFilters = () => {
     setGrid(emptyGridFilters);
-    setOffset(0);
     if (records) {
       void loadRecords(0, emptyGridFilters);
     } else {

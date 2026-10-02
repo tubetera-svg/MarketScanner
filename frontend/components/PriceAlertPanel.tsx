@@ -11,6 +11,7 @@ import {
   type PriceAlertEvent,
   type PriceAlertStatus,
 } from "./priceAlertShared";
+import { refreshPriceAlerts, subscribePriceAlerts } from "./priceAlertFeed";
 
 export * from "./priceAlertShared";
 
@@ -57,18 +58,12 @@ export default function PriceAlertPanel({
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    fetch(`${API}/api/price-alerts`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data: PriceAlertStatus) => setStatus(data))
-      .catch(() => setError("Couldn't load alerts"));
-  }, []);
+  const load = useCallback(() => { void refreshPriceAlerts(); }, []);
 
-  useEffect(() => {
-    load();
-    const id = window.setInterval(load, 30000);
-    return () => window.clearInterval(id);
-  }, [load]);
+  useEffect(() => subscribePriceAlerts((data, failed) => {
+    if (data) setStatus(data);
+    if (failed) setError("Couldn't load alerts");
+  }), []);
 
   useEffect(() => {
     if (refreshKey) load();

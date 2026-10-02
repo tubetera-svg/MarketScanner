@@ -13,6 +13,7 @@ import {
 } from "./priceAlertShared";
 import PriceAlertForm, { type AlertPayload } from "./PriceAlertForm";
 import { saveAlert } from "./PriceAlertPanel";
+import { refreshPriceAlerts, subscribePriceAlerts } from "./priceAlertFeed";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -70,22 +71,15 @@ export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [notifyPermission, setNotifyPermission] = useState<NotificationPermission | "unsupported">("unsupported");
 
-  const load = useCallback(() => {
-    fetch(`${API}/api/price-alerts`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data: PriceAlertStatus) => {
-        setStatus(data);
-        setLoadError(false);
-      })
-      .catch(() => setLoadError(true));
-  }, []);
+  const load = useCallback(() => { void refreshPriceAlerts(); }, []);
 
   useEffect(() => {
-    load();
     if (typeof Notification !== "undefined") setNotifyPermission(Notification.permission);
-    const id = window.setInterval(load, 15000);
-    return () => window.clearInterval(id);
-  }, [load]);
+    return subscribePriceAlerts((data, failed) => {
+      if (data) setStatus(data);
+      setLoadError(failed);
+    });
+  }, []);
 
   const request = async (url: string, init: RequestInit) => {
     setBusy(true);

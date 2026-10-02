@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Area,
   AreaChart,
@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, ArrowDownRight, ArrowUpRight, Database, Play, Rocket, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, Play, TrendingDown, TrendingUp } from "lucide-react";
 import Navigation from "../../components/Navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";

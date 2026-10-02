@@ -26,6 +26,8 @@ from .config import db_path as resolve_db_path, SOURCE_NSE
 log = logging.getLogger(__name__)
 
 _WRITE_LOCK = threading.Lock()
+# DB files whose schema init_db has already applied in this process.
+_INITIALIZED: set[str] = set()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ohlc_daily (
@@ -91,9 +93,14 @@ def connect(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Optional[Path | str] = None) -> None:
-    """Create the schema if needed. Idempotent and safe to call often."""
+    """Create the schema if needed. Idempotent and safe to call often: after the
+    first run per DB file it is a no-op (re-runs if the file was removed)."""
+    path = Path(db_path) if db_path else resolve_db_path()
+    key = str(path.resolve())
+    if key in _INITIALIZED and path.exists():
+        return
     with _WRITE_LOCK:
-        conn = connect(db_path)
+        conn = connect(path)
         try:
             conn.executescript(_SCHEMA)
             for statement in _INDEXES:
@@ -101,6 +108,7 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
             conn.commit()
         finally:
             conn.close()
+        _INITIALIZED.add(key)
 
 
 def upsert_ohlc(rows: Iterable[dict], db_path: Optional[Path | str] = None) -> int:

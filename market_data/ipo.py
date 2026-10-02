@@ -73,7 +73,6 @@ from .config import (
     IPO_MIN_AVG_DAILY_VALUE_CR,
     LIQUID_AVG_DAILY_VALUE_CR,
     LIQUID_MAX_ZERO_DAYS,
-    LIQUIDITY_LOOKBACK_DAYS,
     SOURCE_NSE,
     source_enabled,
 )

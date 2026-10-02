@@ -4,7 +4,7 @@ Exposed paths:
     GET  /ohlc            ?source=NSE&symbol=RELIANCE&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
     GET  /api/ohlc        (alias, consistent with other /api endpoints)
     POST /api/market-data/sync   (optional bulk backfill trigger)
-    GET  /api/market-data/auto-sync, POST .../auto-sync/start|stop  (per-market daily auto-sync)
+    GET  /api/market-data/auto-sync  (per-market daily auto-sync status; on/off via PUT /api/settings)
     GET  /api/market-data/records   ?scope=watchlist|all&source=&exchange=&q=&start_date=&end_date=&sort=asc|desc&limit=&offset=&symbols=NSE:A,OANDA:B
     GET  /api/market-data/meta      ?scope=watchlist|all
     GET  /api/market-data/watchlist (static symbol list powering the picker UI)
@@ -137,11 +137,6 @@ class DeleteRecordsRequest(BaseModel):
     )
 
 
-class AutoSyncStartRequest(BaseModel):
-    lookback_days: Optional[int] = Field(default=None, ge=1, le=120)
-    interval_hours: Optional[float] = Field(default=None, ge=0.25, le=24)
-
-
 def _auto_sync():
     global _AUTO_SYNC
     if _AUTO_SYNC is None:
@@ -158,16 +153,6 @@ _AUTO_SYNC = None
 def auto_sync_status() -> dict:
     """Per-market auto-sync state (NSE after bhavcopy, forex after 17:00 NY)."""
     return _auto_sync().status()
-
-
-@router.post("/api/market-data/auto-sync/start")
-def auto_sync_start(request: AutoSyncStartRequest) -> dict:
-    return _auto_sync().start(request.lookback_days, request.interval_hours)
-
-
-@router.post("/api/market-data/auto-sync/stop")
-def auto_sync_stop() -> dict:
-    return _auto_sync().stop()
 
 
 @router.post("/api/market-data/sync")
@@ -731,39 +716,6 @@ def read_chart(
         "rows": rows,
         "cached": False,
     }
-
-
-@router.get("/api/market-data/tv-symbol")
-def read_tv_symbol(
-    symbol: Optional[str] = Query(default=None, description="Single app symbol, e.g. NSE:ACHYUT."),
-    symbols: Optional[str] = Query(default=None, description="Comma-separated app symbols."),
-    refresh: bool = Query(default=False, description="Ignore the cache and re-resolve."),
-    limit: int = Query(default=50, ge=1, le=200, description="Max live lookups per call."),
-) -> dict:
-    """Resolve app symbols to TradingView symbols (NSE preferred, BSE fallback).
-
-    Cache-first: only uncached symbols hit TradingView, so repeated page views
-    make no upstream calls. Returns a mapping keyed by app symbol.
-    """
-    requested: list[str] = []
-    if symbols:
-        requested.extend(part.strip() for part in symbols.split(",") if part.strip())
-    if symbol:
-        requested.append(symbol.strip())
-    requested = list(dict.fromkeys(requested))
-    if not requested:
-        raise HTTPException(status_code=400, detail="Provide symbol or symbols")
-
-    try:
-        from . import tv_symbol as tv_service
-
-        resolved = tv_service.resolve_tv_symbols(
-            requested, refresh=refresh, limit=limit
-        )
-        return {"items": resolved, "count": len(resolved)}
-    except Exception as exc:  # unexpected – log full traceback
-        log.exception("Unhandled TradingView symbol resolution error")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/api/market-data/ipo/backfill")

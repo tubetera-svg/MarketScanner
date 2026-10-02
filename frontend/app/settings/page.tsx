@@ -9,6 +9,7 @@ import Navigation from "../../components/Navigation";
 
 import { useCallback, useEffect, useState } from "react";
 import { previewSound, setSoundSettings, soundLabel, type AlertSoundKind, type SoundSettings } from "../../components/alertSound";
+import { fetchAppSettings } from "../../components/appSettings";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -148,9 +149,7 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`${API}/api/settings`, { cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      apply(await response.json(), "Loaded");
+      apply(await fetchAppSettings<Payload>(), "Loaded");
     } catch (error) {
       setMessage(`Could not load settings: ${error instanceof Error ? error.message : error}`);
     }
@@ -315,7 +314,7 @@ export default function SettingsPage() {
                     style={{ height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace", background: "var(--bg, transparent)", color: "inherit" }}>
                     {data.sound_choices.map((id) => <option key={id} value={id}>{soundLabel(id)}</option>)}
                   </select>
-                  <button type="button" className="chart-tool-btn" title="Play this sound" onClick={() => previewSound(choice.sound, data.settings.sounds.volume)}>▶ Test</button>
+                  <button type="button" className="chart-tool-btn" title="Play this sound" onClick={() => previewSound(choice.sound, data.settings.sounds.volume, kind)}>▶ Test</button>
                   <Switch label={`${title} sound`} on={choice.enabled} onChange={(v) => save({ sounds: { [kind]: { enabled: v } } })} />
                 </Row>
               );

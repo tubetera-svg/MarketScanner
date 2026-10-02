@@ -9,13 +9,11 @@ from typing import Callable, Dict, List, Optional, Sequence
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-import numpy as np
 import pandas as pd
 from protected_swings import (
     PROTECTED_SWINGS_LOOKBACK_DAYS as _PS_LOOKBACK,
     STATE_ANTICIPATED,
     STATE_CONFIRMED,
-    STATE_INVALIDATED,
     STATE_NONE,
     ProtectedSwingAnalysis,
     _collect_prior_run,
@@ -33,12 +31,6 @@ from propulsion_blocks import (
 )
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class CandleSet:
-    weekly: pd.DataFrame
-    daily: pd.DataFrame
 
 
 _BHAVCOPY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
@@ -492,77 +484,6 @@ def _set_ltf_setup(
     results.at[idx, "ltf_valid_until"] = valid_until.isoformat()
 
 
-def _build_candles_from_daily(daily: pd.DataFrame) -> Optional[CandleSet]:
-    if daily.empty:
-        return None
-
-    weekly = (
-        daily.resample("W-FRI")
-        .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
-        .dropna(subset=["Open", "High", "Low", "Close"])
-    )
-
-    if len(weekly) < 3 or len(daily) < 3:
-        return None
-
-    return CandleSet(weekly=weekly, daily=daily)
-
-
-def _fetch_candles_weekly_daily(symbol: str, as_of_date: date, max_lookback_days: int = 420) -> Optional[CandleSet]:
-    daily = _fetch_daily_from_bhavcopy(symbol=symbol, as_of_date=as_of_date, max_lookback_days=max_lookback_days)
-    return _build_candles_from_daily(daily)
-
-
-def _extract_weekly_daily_points(candles: CandleSet) -> Dict[str, float]:
-    w = candles.weekly
-    d = candles.daily
-    w_curr = w.iloc[-1]
-    w1 = w.iloc[-2]
-    w2 = w.iloc[-3]
-    d1 = d.iloc[-1]
-    d2 = d.iloc[-2]
-
-    return {
-        "w1_high": float(w1["High"]),
-        "w1_low": float(w1["Low"]),
-        "w1_close": float(w1["Close"]),
-        "w2_high": float(w2["High"]),
-        "w2_low": float(w2["Low"]),
-        "weekly_high": float(w_curr["High"]),
-        "weekly_low": float(w_curr["Low"]),
-        "d1_high": float(d1["High"]),
-        "d1_low": float(d1["Low"]),
-        "d1_close": float(d1["Close"]),
-        "d2_high": float(d2["High"]),
-        "d2_low": float(d2["Low"]),
-        "d2_close": float(d2["Close"]),
-    }
-
-
-def _weekly_pattern_1(values: Dict[str, float]) -> bool:
-    return (
-        values["w1_high"] > values["w2_high"]
-        and values["w1_close"] < values["w2_high"]
-        and values["w1_low"] > values["w2_low"]
-        and values["weekly_low"] > values["w1_low"]
-        and values["d1_low"] < values["d2_low"]
-        and values["d1_close"] > values["d2_low"]
-        and values["d1_high"] < values["d2_high"]
-    )
-
-
-def _weekly_pattern_2(values: Dict[str, float]) -> bool:
-    return (
-        values["w1_low"] < values["w2_low"]
-        and values["w1_close"] > values["w2_low"]
-        and values["w1_high"] < values["w2_high"]
-        and values["weekly_high"] < values["w1_high"]
-        and values["d1_high"] > values["d2_high"]
-        and values["d1_close"] < values["d2_close"]
-        and values["d1_low"] > values["d2_low"]
-    )
-
-
 def _inside_bar_points(daily: pd.DataFrame) -> Dict[str, float]:
     curr = daily.iloc[-1]
     d1 = daily.iloc[-2]
@@ -671,68 +592,6 @@ def _extract_signal_frames(results: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
         frame["tradingview_link"] = frame["symbol"].apply(_build_tradingview_link)
 
     return bullish, bearish
-
-
-def run_weekly_vs_daily(
-    symbols: Sequence[str],
-    as_of_date: date,
-    verbose: bool = False,
-    print_values: bool = False,
-    daily_map: Optional[Dict[str, pd.DataFrame]] = None,
-) -> StrategyExecution:
-    results = pd.DataFrame(
-        {
-            "symbol": list(symbols),
-            "bearish_match": False,
-            "bullish_match": False,
-            "final_signal": False,
-            "status": "pending",
-        }
-    )
-
-    for idx, symbol in enumerate(symbols):
-        symbol_upper = str(symbol).upper()
-        if daily_map is None:
-            daily = _fetch_daily_from_bhavcopy(symbol=symbol_upper, as_of_date=as_of_date, max_lookback_days=420)
-        else:
-            daily = daily_map.get(symbol_upper, pd.DataFrame(columns=["Open", "High", "Low", "Close"]))
-
-        if _is_stale(symbol_upper, daily, as_of_date):
-            results.at[idx, "status"] = "stale"
-            continue
-
-        candles = _build_candles_from_daily(daily)
-        if candles is None:
-            results.at[idx, "status"] = "no_data"
-            if verbose:
-                print(f"{symbol_upper}: SKIPPED (no_data)")
-            continue
-
-        values = _extract_weekly_daily_points(candles)
-
-        if print_values:
-            print(f"\n{symbol_upper} extracted values:")
-            for key in sorted(values.keys()):
-                print(f"  {key}: {values[key]:.2f}")
-
-        bullish = _weekly_pattern_1(values)
-        bearish = _weekly_pattern_2(values)
-        
-        results.at[idx, "bullish_match"] = bullish
-        results.at[idx, "bearish_match"] = bearish
-        results.at[idx, "final_signal"] = bullish or bearish
-        results.at[idx, "status"] = "complete"
-
-        if verbose:
-            print(f"{symbol_upper}: bullish={bullish}, bearish={bearish}, final_signal={bullish or bearish}")
-
-    bullish_frame, bearish_frame = _extract_signal_frames(results)
-    return StrategyExecution(
-        name="weekly_vs_daily_sweep",
-        results=results,
-        bullish=bullish_frame,
-        bearish=bearish_frame,
-    )
 
 
 def run_inside_bar_daily_sweep(
@@ -2653,10 +2512,6 @@ _WEEKLY_PROFILE_RUNNERS: Dict[str, Callable[..., StrategyExecution]] = {
 
 def strategy_registry() -> Dict[str, StrategySpec]:
     registry = {
-        "weekly_vs_daily_sweep": StrategySpec(
-            name="weekly_vs_daily_sweep",
-            runner=run_weekly_vs_daily,
-        ),
         "inside_bar_pattern_daily_sweep": StrategySpec(
             name="inside_bar_pattern_daily_sweep",
             runner=run_inside_bar_daily_sweep,
@@ -2755,7 +2610,6 @@ def run_strategies(
             raise ValueError(f"Unknown strategy '{name}'. Valid: {valid}")
 
     lookback_by_strategy = {
-        "weekly_vs_daily_sweep": 420,
         "inside_bar_pattern_daily_sweep": 160,
         "ema5_sweep": 40,
         "daily_bias_invalidation": 600,

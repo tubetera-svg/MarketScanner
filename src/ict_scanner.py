@@ -875,11 +875,6 @@ def candle_body(candle: Candle) -> float:
     return abs(c - o)
 
 
-def candle_range(candle: Candle) -> float:
-    o, h, l, c = candle
-    return h - l
-
-
 def candle_bullish(candle: Candle) -> bool:
     return candle[3] > candle[0]
 

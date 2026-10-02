@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import TradingViewChartModal, { type ChartLevel, type ChartTarget } from "../components/TradingViewChartModal";
 import { useStatusFlash } from "../components/useStatusFlash";
 import { getSoundSettings, playAlertSound } from "../components/alertSound";
+import { fetchAppSettings } from "../components/appSettings";
 import Navigation from "../components/Navigation";
 import { FavoriteStar, useFavorites } from "../components/Favorites";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
@@ -807,7 +808,7 @@ export default function Home() {
   useEffect(() => {
     Promise.all([
       fetch(`${API}/api/strategies`, { cache: "no-store" }).then((response) => response.json()),
-      fetch(`${API}/api/settings`, { cache: "no-store" }).then((response) => response.json()).catch(() => null),
+      fetchAppSettings<{ settings?: { ui?: { hidden_strategies?: string[] } } }>().catch(() => null),
     ])
       .then(([data, cfg]: [StrategiesPayload, { settings?: { ui?: { hidden_strategies?: string[] } } } | null]) => {
         const hidden = new Set(cfg?.settings?.ui?.hidden_strategies ?? []);
@@ -816,9 +817,15 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  // Tick every second so the commodity inventory-report countdown stays live.
+  // Countdown chips show whole minutes, so only publish a new "now" when the
+  // wall-clock minute changes; returning the previous value skips the re-render.
   useEffect(() => {
-    const id = window.setInterval(() => setInventoryNow(Date.now()), 1000);
+    const id = window.setInterval(() => {
+      setInventoryNow((prev) => {
+        const now = Date.now();
+        return Math.floor(now / 60000) === Math.floor(prev / 60000) ? prev : now;
+      });
+    }, 1000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -935,14 +942,14 @@ export default function Home() {
     return () => document.removeEventListener("keydown", onKey);
   }, [newsOpen]);
 
-  const inventoryReports = INVENTORY_REPORTS.map((report) => {
+  const inventoryReports = useMemo(() => INVENTORY_REPORTS.map((report) => {
     const instant = cachedReleaseInstant(report);
     const seconds = Math.max(0, Math.round((instant.getTime() - inventoryNow) / 1000));
     // Highlight when the release is within 24h so it grabs attention.
     const soon = seconds <= 24 * 3600;
     const sameDay = instant.toDateString() === new Date(inventoryNow).toDateString();
     return { ...report, ist: formatIST(instant), time: formatChipTime(instant, inventoryNow), soon, sameDay };
-  });
+  }), [inventoryNow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     Promise.all([
