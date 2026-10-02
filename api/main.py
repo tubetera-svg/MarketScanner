@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import json
 import logging
+import os
 import sys
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -790,7 +791,9 @@ async def stop_silver_bullet_auto_schedule() -> None:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    # CORS_ORIGINS: comma-separated extra origins for hosted frontends (e.g. Vercel).
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]
+    + [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
