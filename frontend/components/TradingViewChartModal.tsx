@@ -15,6 +15,7 @@ import OhlcChart, {
   type Overlays,
 } from "./OhlcChart";
 import PriceAlertPanel, { describeAlert, type AlertCondition, type PriceAlert, type PriceAlertEvent } from "./PriceAlertPanel";
+import { apiFetch, isAdmin, useAuth } from "./auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -171,6 +172,8 @@ export default function TradingViewChartModal({
   chart: ChartTarget | null;
   onClose: () => void;
 }) {
+  // Price alerts are shared and push to the admin's phone: read-only guests get the chart only.
+  const admin = isAdmin(useAuth());
   const symbol = chart?.symbol ?? null;
   const sourceLink = chart?.sourceLink ?? null;
   const preset = chart?.tvSymbol ?? null;
@@ -227,7 +230,7 @@ export default function TradingViewChartModal({
     let live = true;
     setData((current) => (current.key === key && current.bars.length ? current : { ...EMPTY_STATE, key }));
     const params = new URLSearchParams({ symbol, interval, bars: String(BARS_FOR[interval]) });
-    fetch(`${API}/api/market-data/chart?${params.toString()}`, { cache: "no-store" })
+    apiFetch(`${API}/api/market-data/chart?${params.toString()}`, { cache: "no-store" })
       .then(async (response) => {
         const payload = await response.json().catch(() => null);
         if (!live) return;
@@ -442,7 +445,7 @@ export default function TradingViewChartModal({
       })),
     };
     try {
-      const response = await fetch(`${API}/api/price-alerts/batch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const response = await apiFetch(`${API}/api/price-alerts/batch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const payload = await response.json().catch(() => null);
       flash(response.ok ? `Added ${levels.length} alert${levels.length === 1 ? "" : "s"}` : typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`);
     } catch {
@@ -456,7 +459,7 @@ export default function TradingViewChartModal({
   // cross side on a level change, so a move past the price never fires by itself.
   const moveAlert = (id: string, edge: "level" | "level2", price: number) => {
     setSymbolAlerts((current) => current.map((alert) => (alert.id === id ? { ...alert, [edge]: price } : alert)));
-    fetch(`${API}/api/price-alerts/${id}`, {
+    apiFetch(`${API}/api/price-alerts/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ [edge]: price }),
@@ -506,14 +509,14 @@ export default function TradingViewChartModal({
           </div>
           <div className="chart-modal-actions">
             {alertNote ? <span className="chart-alert-flash" role="status">{alertNote}</span> : null}
-            {setupLevels.length ? (
+            {admin && setupLevels.length ? (
               <button type="button" className="chart-tool-btn" onClick={() => void createAlerts(setupLevels)} title={`Create alerts at the scanner setup's levels: ${setupLevels.map((level) => level.label).join(", ")}`}>
                 Watch setup ({setupLevels.length})
               </button>
             ) : null}
-            <button type="button" className={`chart-tool-btn${alertsOpen ? " active" : ""}`} onClick={() => setAlertsOpen((value) => !value)} title="Price alerts for this symbol (Alt+click the chart to pick a level)">
+            {admin && <button type="button" className={`chart-tool-btn${alertsOpen ? " active" : ""}`} onClick={() => setAlertsOpen((value) => !value)} title="Price alerts for this symbol (Alt+click the chart to pick a level)">
               Alert{symbolAlerts.some((alert) => alert.status === "active") ? ` (${symbolAlerts.filter((alert) => alert.status === "active").length})` : ""}
-            </button>
+            </button>}
             <button type="button" className="chart-tool-btn" onClick={copySymbol} title="Copy symbol">
               {copied ? "Copied" : "Copy"}
             </button>
@@ -577,9 +580,9 @@ export default function TradingViewChartModal({
             </div>
 
             {/* Stays mounted while collapsed so alert lines still draw on the chart. */}
-            <div hidden={!alertsOpen}>
+            {admin && <div hidden={!alertsOpen}>
               <PriceAlertPanel symbol={chart.symbol} lastPrice={stats?.last.close ?? null} tick={tick} pickedLevel={pickedLevel} onAlertsChange={(alerts, events) => { setSymbolAlerts(alerts); setSymbolEvents(events); }} refreshKey={alertsRefresh} />
-            </div>
+            </div>}
 
             {stats && data.status === "ready" ? (
               <div className="chart-stats">
@@ -630,10 +633,10 @@ export default function TradingViewChartModal({
                   resetKey={`${data.key}|${resetNonce}`}
                   levels={!intraday && stats ? { high: stats.high, low: stats.low } : null}
                   alertLines={alertLines}
-                  onAltClick={pickLevel}
-                  onAlertMove={moveAlert}
-                  onZoneDraw={(low, high) => pickLevel(low, high)}
-                  onContextMenu={(price, x, y) => setMenu({ price, x, y })}
+                  onAltClick={admin ? pickLevel : undefined}
+                  onAlertMove={admin ? moveAlert : undefined}
+                  onZoneDraw={admin ? (low, high) => pickLevel(low, high) : undefined}
+                  onContextMenu={admin ? (price, x, y) => setMenu({ price, x, y }) : undefined}
                   guideLines={guideLines}
                   markers={markers}
                   tick={tick}

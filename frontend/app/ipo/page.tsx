@@ -12,6 +12,8 @@ import { IST, daysBetween, formatTime, marketToday, useDisplayTimezone } from ".
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { RefreshCw, Rocket, SearchX, ScanLine, SlidersHorizontal, Trash2, Wrench } from "lucide-react";
+import { apiFetch, isAdmin, useAuth } from "../../components/auth";
+import PageGate from "../../components/PageGate";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -120,7 +122,8 @@ const FRESHNESS_DAYS: Record<Exclude<Freshness, "all">, number> = {
   "2y": 730,
 };
 
-export default function IPOPage() {
+function IPOPageContent() {
+  const admin = isAdmin(useAuth()); // IPO scan / review / delete are admin-only
   const displayTz = useDisplayTimezone();
   const [items, setItems] = useState<PerformanceItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -266,7 +269,7 @@ export default function IPOPage() {
   const loadPerformance = useCallback(async (silent = false): Promise<void> => {
     if (!silent) setLoading(true);
     try {
-      const response = await fetch(`${API}/api/market-data/ipo/performance`, { cache: "no-store" });
+      const response = await apiFetch(`${API}/api/market-data/ipo/performance`, { cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       setItems(payload.items ?? []);
@@ -285,11 +288,11 @@ export default function IPOPage() {
     setSelected(new Set());
     try {
       const [reviewRes, screenRes] = await Promise.allSettled([
-        fetch(`${API}/api/market-data/ipo/review`, { cache: "no-store" }).then(async (r) => {
+        apiFetch(`${API}/api/market-data/ipo/review`, { cache: "no-store" }).then(async (r) => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
         }),
-        fetch(`${API}/api/ipo-liquidity/screen`, {
+        apiFetch(`${API}/api/ipo-liquidity/screen`, {
           method: "POST",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
@@ -335,7 +338,7 @@ export default function IPOPage() {
     if (!window.confirm(`Permanently delete ${symbols.length} IPO(s) from the watchlist, categories and price history?\n\n${preview}`)) return;
     setDeleting(true);
     try {
-      const response = await fetch(`${API}/api/market-data/ipo`, {
+      const response = await apiFetch(`${API}/api/market-data/ipo`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbols }),
@@ -365,7 +368,7 @@ export default function IPOPage() {
 
   const loadStatus = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch(`${API}/api/ipo-scan`, { cache: "no-store" });
+      const response = await apiFetch(`${API}/api/ipo-scan`, { cache: "no-store" });
       if (!response.ok) return;
       setStatus(await response.json());
     } catch {
@@ -387,7 +390,7 @@ export default function IPOPage() {
   const scanNow = async (): Promise<void> => {
     setScanning(true);
     try {
-      const response = await fetch(`${API}/api/ipo-scan/run-once`, { method: "POST", cache: "no-store" });
+      const response = await apiFetch(`${API}/api/ipo-scan/run-once`, { method: "POST", cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       if (payload.skipped) {
@@ -442,9 +445,9 @@ export default function IPOPage() {
         <summary><Wrench size={13} /> Maintenance · IPO detection{status?.running ? " · scanner running" : ""}</summary>
         <section className="auto-scan">
         <span className="auto-title"><Rocket size={14} /> Automation</span>
-        <button className="test-button" type="button" onClick={() => void scanNow()} disabled={scanning} title="Run IPO detection once now (bhavcopy scan over the Settings lookback window). Recurring scans: Settings → IPO scanner.">
+        {admin && <button className="test-button" type="button" onClick={() => void scanNow()} disabled={scanning} title="Run IPO detection once now (bhavcopy scan over the Settings lookback window). Recurring scans: Settings → IPO scanner.">
           <ScanLine size={13} className={scanning ? "spin" : undefined} /> {scanning ? "Scanning…" : "Scan now"}
-        </button>
+        </button>}
         <small className="auto-meta">
           {status?.running ? `RUNNING · every ${status.interval_minutes ?? 60} min` : "Auto-scan off"}
           {" · "}<Link href="/settings">schedule in Settings</Link>
@@ -532,9 +535,9 @@ export default function IPOPage() {
         {anyFilter && (
           <button className="test-button ipo-ghost" type="button" onClick={clearFilters} title="Reset all filters to defaults">Reset</button>
         )}
-        <button className="test-button ipo-ghost" type="button" onClick={() => void loadReview()} disabled={screening || deleting} title="Check tracked IPOs for deletion: list review (non-EQ, stale, not liquid, official NSE listing date predates first bhavcopy appearance) plus liquidity screen (median 60-day value, zero-trade and circuit-locked days, market presence). Shows one merged table; nothing is deleted until you select rows and confirm.">
+        {admin && <button className="test-button ipo-ghost" type="button" onClick={() => void loadReview()} disabled={screening || deleting} title="Check tracked IPOs for deletion: list review (non-EQ, stale, not liquid, official NSE listing date predates first bhavcopy appearance) plus liquidity screen (median 60-day value, zero-trade and circuit-locked days, market presence). Shows one merged table; nothing is deleted until you select rows and confirm.">
           <SearchX size={14} className={screening ? "spin" : undefined} /> {screening ? "Reviewing…" : "Review list"}
-        </button>
+        </button>}
       </section>
 
       {review && (() => {
@@ -716,4 +719,8 @@ export default function IPOPage() {
       <footer>Read-only view of IPO metadata + daily OHLC in data/market_data.db. Backfill is a separate long-running action exposed by the API.</footer>
     </main>
   );
+}
+
+export default function IPOPage() {
+  return <PageGate page="ipo" active="/ipo" title="IPO"><IPOPageContent /></PageGate>;
 }

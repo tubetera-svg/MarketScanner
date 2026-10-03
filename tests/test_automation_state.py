@@ -96,6 +96,82 @@ def test_ltf_watcher_does_not_rearm_session_after_restart(state_path, monkeypatc
     assert collected == [session, session]
 
 
+@pytest.fixture
+def ltf_env(state_path, tmp_path, monkeypatch):
+    """LTF watcher on Saturday 2026-10-03 (IST) with a temp setup store and a stub TradingView fetch."""
+    import ict_scanner
+    import ltf_confirmation
+    from market_data import service as md_service
+    from market_data.sources import tradingview_source
+
+    import api.main as main
+
+    saturday = date(2026, 10, 3)
+    monkeypatch.setattr(ltf_confirmation, "DEFAULT_PATH", str(tmp_path / "ltf_setups.json"))
+    monkeypatch.setattr(main.LtfConfirmationWatcher, "_timeframe", staticmethod(lambda: "1h"))
+    monkeypatch.setattr(main, "ist_today", lambda: saturday)
+    monkeypatch.setattr(md_service, "market_today", lambda source, symbol=None: saturday)
+    env = SimpleNamespace(main=main, market_open=False, fetches=[], rows=[])
+    monkeypatch.setattr(ict_scanner, "is_market_open", lambda session, now=None: env.market_open)
+
+    def fake_fetch(symbol, start, end, timeframe, exchange):
+        env.fetches.append((symbol, start))
+        return env.rows
+
+    monkeypatch.setattr(tradingview_source, "fetch_timeframe", fake_fetch)
+
+    def arm(signal_date, symbol="NSE:ABB"):
+        setup = ltf_confirmation.LtfSetup(
+            key=ltf_confirmation.setup_key(symbol, "protected_swings", signal_date, 1), symbol=symbol,
+            strategy="protected_swings", direction=1, zone_low=95.0, zone_high=100.0, invalidation=90.0,
+            signal_date=signal_date, valid_until="2099-12-31", note="strategy note",
+        )
+        ltf_confirmation.LtfSetupStore().arm([setup])
+        return setup.key
+
+    env.arm = arm
+    env.watcher = lambda: main.LtfConfirmationWatcher(AutomationState("ltf_confirmation", state_path))
+    env.store = lambda: ltf_confirmation.LtfSetupStore().load()
+    return env
+
+
+def test_ltf_watcher_skips_fetch_when_no_session_since_signal(ltf_env):
+    ltf_env.arm("2026-10-01")  # Thursday; Fri 2 Oct is an NSE holiday, 3 Oct a Saturday
+    asyncio.run(ltf_env.watcher()._confirm())
+    assert ltf_env.fetches == []
+
+
+def test_ltf_watcher_closed_fetch_survives_restart(ltf_env, state_path):
+    # Wed 30 Sep 10:15 IST bar trades into the zone; no CISD yet.
+    ltf_env.rows = [{"date": "2026-09-30T04:45:00+00:00", "open": 101, "high": 102, "low": 99, "close": 98}]
+    key = ltf_env.arm("2026-09-29")
+    asyncio.run(ltf_env.watcher()._confirm())
+    assert len(ltf_env.fetches) == 1
+    assert ltf_env.store()[key].note == "zone reached; awaiting CISD"
+    saved = AutomationState("ltf_confirmation", state_path).load()["closed_fetch"]
+    assert saved == {"NSE:ABB|1h": {"through": "2026-10-01", "from": "2026-09-30"}}
+
+    asyncio.run(ltf_env.watcher()._confirm())  # restart while closed: no refetch, note kept
+    assert len(ltf_env.fetches) == 1
+    assert ltf_env.store()[key].note == "zone reached; awaiting CISD"
+
+    ltf_env.arm("2026-09-28")  # later-armed setup with an earlier start needs its own fetch
+    asyncio.run(ltf_env.watcher()._confirm())
+    assert ltf_env.fetches[-1] == ("NSE:ABB", date(2026, 9, 29))
+
+
+def test_ltf_watcher_open_market_clears_marker_and_prunes_inactive(ltf_env, state_path):
+    ltf_env.arm("2026-09-29")
+    AutomationState("ltf_confirmation", state_path).save({"closed_fetch": {
+        "NSE:ABB|1h": {"through": "2026-10-01", "from": "2026-09-30"},
+        "NSE:OLD|1h": {"through": "2026-09-01", "from": "2026-08-28"},  # no armed setup any more
+    }})
+    ltf_env.market_open = True
+    asyncio.run(ltf_env.watcher()._confirm())
+    assert len(ltf_env.fetches) == 1
+    assert AutomationState("ltf_confirmation", state_path).load()["closed_fetch"] == {}
+
+
 def test_silver_bullet_keeps_pushed_ids_and_manual_stop_across_restart(state_path, monkeypatch):
     from api.main import SilverBulletLiveScanner
 

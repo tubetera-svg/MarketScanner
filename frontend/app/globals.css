@@ -158,7 +158,7 @@ button, input { font: inherit; }
 .main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .controls { flex: 0 0 280px; padding: var(--gap-md); }
-.panel-heading { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 10px; font-weight: 600; font-size: 13px; }
+.panel-heading { display: flex; flex-wrap: wrap; gap: 2px 12px; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 10px; font-weight: 600; font-size: 13px; }
 .panel-heading-actions { align-items: center; display: flex; gap: 8px; }
 .panel-heading small { color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
 .add-toggle { align-items: center; background: transparent; border: 1px solid var(--line); color: var(--ink); cursor: pointer; display: flex; height: 24px; justify-content: center; padding: 0; width: 24px; border-radius: 4px; }
@@ -658,6 +658,8 @@ th.sortable:hover {
 .pa-table th { padding: 8px 12px; background: #fafbf9; }
 .pa-table td { padding: 10px 12px; font-size: 12px; vertical-align: middle; white-space: normal; }
 .pa-table td.num, .pa-table td.pa-actions, .pa-table td.pa-check { white-space: nowrap; }
+/* Read-only guests: no selection or row actions. */
+.pa-table.readonly .pa-check, .pa-table.readonly .pa-actions { display: none; }
 .pa-table th.num, .pa-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pa-table tbody tr { transition: background .12s ease; }
 .pa-table tbody tr:hover { background: #fafbf9; }
@@ -869,6 +871,21 @@ a.chart-link.symbol-link:hover {
 .info-tooltip.rich .info-li.nested { opacity: 0.85; padding-left: 26px; }
 .info-tooltip.rich .info-li.nested::before { left: 16px; }
 .info-tooltip.rich code { background: rgba(255, 255, 255, 0.14); border-radius: 3px; font: 10px 'DM Mono', monospace; padding: 1px 4px; }
+.info-tooltip.rich .info-summary { font-weight: 600; }
+/* Inline (in-flow) info panel: tap-friendly alternative to the floating tooltip (Settings strategy list). */
+.info-btn { align-items: center; background: transparent; border: 0; border-radius: 50%; color: var(--muted); cursor: pointer; display: inline-flex; height: 22px; justify-content: center; padding: 0; width: 22px; flex: none; }
+.info-btn:hover, .info-btn[aria-expanded="true"] { background: var(--teal-soft); color: var(--teal-ink); }
+.info-panel { background: var(--soft); border-radius: 4px; font: 11px/1.5 'Space Grotesk', sans-serif; margin: 2px 0 6px; padding: 8px 10px; }
+.info-panel .info-summary { font-size: 12px; margin: 0 0 4px; }
+.info-panel details { color: var(--muted); }
+.info-panel summary { cursor: pointer; font-weight: 600; }
+.info-panel .info-details { margin-top: 6px; max-height: 260px; overflow-y: auto; }
+.info-panel p { margin: 0 0 6px; }
+.info-panel .info-li { margin: 0 0 4px; padding-left: 12px; position: relative; }
+.info-panel .info-li::before { color: var(--teal); content: "•"; left: 2px; position: absolute; }
+.info-panel .info-li.nested { padding-left: 26px; }
+.info-panel .info-li.nested::before { left: 16px; }
+.info-panel code { background: var(--panel); border-radius: 3px; font: 10px 'DM Mono', monospace; padding: 1px 4px; overflow-wrap: anywhere; }
 
 /* IPO page */
 .ipo-metrics { grid-template-columns: repeat(5, 1fr); }

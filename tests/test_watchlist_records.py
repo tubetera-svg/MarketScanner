@@ -31,7 +31,7 @@ def client():
 
     from api import main as api_main
 
-    return TestClient(api_main.app)
+    return TestClient(api_main.app, client=("127.0.0.1", 50000))
 
 
 @pytest.fixture()

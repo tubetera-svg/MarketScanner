@@ -46,9 +46,10 @@ def strip_symbol_prefix(symbol: str) -> str:
 
 
 def expected_trading_dates(start_date: date, end_date: date) -> list[date]:
-    """Weekdays minus the NSE holiday calendar from all_strategy."""
-    mod = _load_all_strategy()
-    holidays = set(getattr(mod, "NSE_HOLIDAYS", set()))
+    """Weekdays minus the NSE holiday calendar (market_data.nse_holidays)."""
+    from ..nse_holidays import holiday_dates
+
+    holidays = holiday_dates()
     days = []
     current = start_date
     while current <= end_date:

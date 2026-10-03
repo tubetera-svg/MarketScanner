@@ -9,7 +9,10 @@ import { fetchAppSettings } from "../components/appSettings";
 import { IST, NEW_YORK, addDays, calendarDateIn, formatDayDateTime, formatInZone, formatTime, marketToday, useDisplayTimezone, weekdayOf, zoneLabel, zoneOffsetMs } from "../components/time";
 import Navigation from "../components/Navigation";
 import { FavoriteStar, useFavorites } from "../components/Favorites";
+import { renderInfoBody } from "../components/InfoBody";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
+import { apiFetch, isAdmin, useAuth } from "../components/auth";
+import PageGate from "../components/PageGate";
 
 type WatchSymbol = { symbol: string; session: string; asset_class?: string; scope?: string; index?: string; f_and_o?: string };
 type WatchScope = "All" | "Nifty indexes" | "Nifty 50" | "Nifty Bank" | "Nifty IT" | "Nifty Auto" | "Nifty Pharma" | "F&O" | "Crypto" | "Commodities" | "Forex" | string;
@@ -121,20 +124,6 @@ type StrategyRow = {
 type StrategyGroup = { strategy: string; label: string; total: number; bull_count: number; bear_count: number; bullish: StrategyRow[]; bearish: StrategyRow[]; has_live_data: boolean };
 type StrategiesPayload = { strategies?: StrategyFlag[]; weekly_profiles_master_enabled?: boolean };
 
-// Renders strategy_info.txt markdown (bullets, nested bullets, `code`) as readable tooltip content.
-const renderInline = (text: string): ReactNode[] =>
-  text.split(/(`[^`]+`)/g).filter(Boolean).map((part, index) =>
-    part.startsWith("`") && part.endsWith("`") && part.length > 2 ? <code key={index}>{part.slice(1, -1)}</code> : part.replace(/\*\*/g, ""),
-  );
-const renderInfoBody = (text: string): ReactNode => (
-  <>
-    {text.split(String.fromCharCode(10)).filter((line) => line.trim()).map((line, index) => {
-      const bullet = /^(\s*)[-*]\s+(.*)$/.exec(line);
-      if (!bullet) return <p key={index}>{renderInline(line.trim())}</p>;
-      return <div key={index} className={`info-li${bullet[1].length >= 2 ? " nested" : ""}`}>{renderInline(bullet[2])}</div>;
-    })}
-  </>
-);
 const nyIsWeekend = () => [0, 6].includes(weekdayOf(marketToday(NEW_YORK)));
 // Scan/sync dates are NSE trading dates: today in IST, whatever the browser zone.
 const localDate = (offsetDays = 0) => addDays(marketToday(IST), offsetDays);
@@ -344,8 +333,12 @@ const setupLevels = (pairs: [string, number | null | undefined][]): ChartLevel[]
   });
 };
 
-export default function Home() {
+function HomeContent() {
   const displayTz = useDisplayTimezone();
+  // Read-only guests (api/auth.py): admin-only actions show a message instead; the API refuses them anyway.
+  const authState = useAuth();
+  const admin = isAdmin(authState);
+  const guestAccess = admin ? null : authState?.access ?? null;
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   // Testing date of a full-watchlist scan waiting on the confirm dialog (null = no dialog).
@@ -521,7 +514,14 @@ export default function Home() {
     });
   };
 
+  const adminOnly = (): boolean => {
+    if (admin) return false;
+    setMessage("Read-only view: sign in as admin (🔒) to change this.");
+    return true;
+  };
+
   const syncData = async () => {
+    if (adminOnly()) return;
     if (syncStartDate && anchorDate && syncStartDate > anchorDate) {
       setMessage("Sync start date must be on or before the end date");
       return;
@@ -534,7 +534,7 @@ export default function Home() {
       for (let batchStart = 0; batchStart < selected.length; batchStart += SYNC_BATCH_SIZE) {
         const symbols = selected.slice(batchStart, batchStart + SYNC_BATCH_SIZE);
         setMessage(`Synchronizing market data... ${Math.min(batchStart + symbols.length, selected.length)}/${selected.length}`);
-        const response = await fetch(`${API}/api/market-data/sync`, {
+        const response = await apiFetch(`${API}/api/market-data/sync`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -579,7 +579,7 @@ export default function Home() {
     : "Auto-sync status unavailable";
 
   const refreshAutoSync = async () => {
-    const response = await fetch(`${API}/api/market-data/auto-sync`, { cache: "no-store" });
+    const response = await apiFetch(`${API}/api/market-data/auto-sync`, { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load auto-sync status");
     const data: AutoSyncStatus = await response.json();
     setAutoSync(data);
@@ -587,10 +587,11 @@ export default function Home() {
   };
 
   const toggleAutoSync = async () => {
+    if (adminOnly()) return;
     const enable = !autoSync?.running;
     try {
       // Persisted in app settings so it re-arms on API boot without a page open.
-      const response = await fetch(`${API}/api/settings`, {
+      const response = await apiFetch(`${API}/api/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ automation: { data_auto_sync: { enabled: enable } } }),
@@ -605,11 +606,12 @@ export default function Home() {
   };
 
   const startSilverBullet = async () => {
+    if (adminOnly()) return;
     if (silverBulletLoading) return;
     setSilverBulletLoading(true);
     try {
       const commodities = selected.filter((symbol) => isCommodity(symbol));
-      const response = await fetch(`${API}/api/silver-bullet/start`, {
+      const response = await apiFetch(`${API}/api/silver-bullet/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbols: commodities }),
@@ -626,8 +628,9 @@ export default function Home() {
   };
 
   const stopSilverBullet = async () => {
+    if (adminOnly()) return;
     try {
-      const response = await fetch(`${API}/api/silver-bullet/stop`, { method: "POST" });
+      const response = await apiFetch(`${API}/api/silver-bullet/stop`, { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Could not stop Silver Bullet scanner");
       setSilverBullet(data);
@@ -638,11 +641,12 @@ export default function Home() {
   };
 
   const testSilverBullet = async (dateOverride = strategyAnchorDate) => {
+    if (!admin) return; // also runs automatically on date changes: skip quietly for guests
     if (silverBulletLoading) return;
     setSilverBulletLoading(true);
     try {
       const commodities = selected.filter((symbol) => isCommodity(symbol));
-      const response = await fetch(`${API}/api/silver-bullet/test`, {
+      const response = await apiFetch(`${API}/api/silver-bullet/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ anchor_date: dateOverride, symbols: commodities }),
@@ -669,10 +673,11 @@ export default function Home() {
   };
 
   const toggleStrategy = async (flag: StrategyFlag) => {
+    if (adminOnly()) return;
     const nextEnabled = !flag.enabled;
     setStrategies((current) => current.map((item) => (item.name === flag.name ? { ...item, enabled: nextEnabled } : item)));
     try {
-      const response = await fetch(`${API}/api/strategies/${flag.name}`, {
+      const response = await apiFetch(`${API}/api/strategies/${flag.name}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: nextEnabled }),
@@ -688,11 +693,12 @@ export default function Home() {
   };
 
   const setGroupStrategies = async (group: string, on: boolean) => {
+    if (adminOnly()) return;
     const names = strategies.filter((f) => f.group === group).map((f) => f.name);
     setStrategies((current) => current.map((item) => (names.includes(item.name) ? { ...item, enabled: on } : item)));
     try {
       for (const name of names) {
-        const response = await fetch(`${API}/api/strategies/${name}`, {
+        const response = await apiFetch(`${API}/api/strategies/${name}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ enabled: on }),
@@ -708,6 +714,10 @@ export default function Home() {
   };
 
   const runStrategyScan = async (dateOverride = strategyAnchorDate, confirmed = false) => {
+    if (guestAccess && selected.length > guestAccess.guest_max_symbols) {
+      setMessage(`Guests can scan up to ${guestAccess.guest_max_symbols} symbols at a time (${selected.length} selected) - narrow the selection, e.g. with a group filter.`);
+      return;
+    }
     const allSelected = watchlist.length > 0 && watchlist.every((item) => selected.includes(item.symbol));
     if (allSelected && !confirmed) {
       setPendingScanDate(dateOverride);
@@ -718,7 +728,7 @@ export default function Home() {
     setScanProgress(`Scanning ${selected.length} symbol${selected.length !== 1 ? "s" : ""} across ${enabledStrategies} strateg${enabledStrategies !== 1 ? "ies" : "y"}...`);
     setMessage("Running strategy profiles...");
     try {
-      const response = await fetch(`${API}/api/strategy-scan`, {
+      const response = await apiFetch(`${API}/api/strategy-scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbols: selected, anchor_date: dateOverride, timeframe: protectedSwingTimeframe, include_context: includeExtraInfo, include_bias: extraInfo.bias }),
@@ -750,7 +760,7 @@ export default function Home() {
   const stopStrategyScan = async () => {
     setScanProgress("Stopping...");
     try {
-      await fetch(`${API}/api/strategy-scan/cancel`, { method: "POST" });
+      await apiFetch(`${API}/api/strategy-scan/cancel`, { method: "POST" });
     } catch {
       setMessage("Could not reach API to stop the scan");
     }
@@ -765,7 +775,7 @@ export default function Home() {
       event.returnValue = "";
     };
     const cancelOnLeave = () => {
-      fetch(`${API}/api/strategy-scan/cancel`, { method: "POST", keepalive: true }).catch(() => undefined);
+      apiFetch(`${API}/api/strategy-scan/cancel`, { method: "POST", keepalive: true }).catch(() => undefined);
     };
     window.addEventListener("beforeunload", warn);
     window.addEventListener("pagehide", cancelOnLeave);
@@ -832,7 +842,7 @@ export default function Home() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/api/strategies`, { cache: "no-store" }).then((response) => response.json()),
+      apiFetch(`${API}/api/strategies`, { cache: "no-store" }).then((response) => response.json()),
       fetchAppSettings<{ settings?: { ui?: { hidden_strategies?: string[] } } }>().catch(() => null),
     ])
       .then(([data, cfg]: [StrategiesPayload, { settings?: { ui?: { hidden_strategies?: string[] } } } | null]) => {
@@ -858,7 +868,7 @@ export default function Home() {
   // calendar once per IST day; the refresh button forces a live fetch.
   const loadHighImpactNews = (refresh = false) => {
     setNewsLoading(true);
-    fetch(`${API}/api/news/high-impact${refresh ? "?refresh=true" : ""}`)
+    apiFetch(`${API}/api/news/high-impact${refresh ? "?refresh=true" : ""}`)
       .then((response) => response.json())
       .then((data: NewsFeed) => setNewsFeed(data))
       .catch(() => setNewsFeed((current) => ({ ...(current ?? { events: [], inventory: [], currencies: [], fetched_at: null, source: null }), stale: true, error: "API unreachable" })))
@@ -948,7 +958,7 @@ export default function Home() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/api/watchlist`).then((response) => response.json()),
+      apiFetch(`${API}/api/watchlist`).then((response) => response.json()),
     ]).then(([watchData]) => {
       const symbols = watchData.symbols ?? [];
       setWatchlist(symbols);
@@ -969,7 +979,7 @@ export default function Home() {
 
   useEffect(() => {
     const loadMarkets = () => {
-      fetch(`${API}/api/markets`, { cache: "no-store" }).then((response) => response.json()).then(setMarkets).catch(() => {});
+      apiFetch(`${API}/api/markets`, { cache: "no-store" }).then((response) => response.json()).then(setMarkets).catch(() => {});
     };
     loadMarkets();
     const id = window.setInterval(loadMarkets, 60000);
@@ -981,7 +991,7 @@ export default function Home() {
   // this tab noticing: polling only while `running` hid alerts until a reload.
   useEffect(() => {
     const poll = () => {
-      fetch(`${API}/api/silver-bullet`, { cache: "no-store" })
+      apiFetch(`${API}/api/silver-bullet`, { cache: "no-store" })
         .then((response) => response.json())
         .then((data: SilverBulletStatus) => setSilverBullet(data))
         .catch(() => {});
@@ -995,7 +1005,7 @@ export default function Home() {
   // triggers. Runs server-side (Settings -> Intraday confirmation watcher).
   useEffect(() => {
     const poll = () => {
-      fetch(`${API}/api/ltf-confirmation`, { cache: "no-store" })
+      apiFetch(`${API}/api/ltf-confirmation`, { cache: "no-store" })
         .then((response) => response.json())
         .then((data: LtfStatus) => setLtf(data))
         .catch(() => {});
@@ -1069,9 +1079,10 @@ export default function Home() {
   );
 
   const checkLtfNow = async () => {
+    if (adminOnly()) return;
     setLtfChecking(true);
     try {
-      const response = await fetch(`${API}/api/ltf-confirmation/check`, { method: "POST" });
+      const response = await apiFetch(`${API}/api/ltf-confirmation/check`, { method: "POST" });
       if (response.ok) setLtf(await response.json());
     } catch {
       // status poll will retry
@@ -1087,10 +1098,11 @@ export default function Home() {
   }, [silverBullet?.signals]);
 
   const addToWatchlist = async (event: React.FormEvent<HTMLFormElement>) => {
+    if (adminOnly()) { event.preventDefault(); return; }
     event.preventDefault();
     setWatchlistMessage("");
     try {
-      const response = await fetch(`${API}/api/watchlist`, {
+      const response = await apiFetch(`${API}/api/watchlist`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: newSymbol }),
@@ -1352,11 +1364,11 @@ export default function Home() {
 
       <div className="workspace">
         <aside className="controls panel">
-          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small title={hiddenSelectedCount ? `${hiddenSelectedCount} selected symbol(s) are hidden by the current search` : undefined}>{selected.length}/{watchlist.length}{hiddenSelectedCount ? ` (${hiddenSelectedCount} hidden)` : ""}</small><button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button></div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage.startsWith("Added") ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => { setWatchScopes(["All"]); setSelected(watchlist.map((item) => item.symbol)); }}>All</button>{(["Favorites","IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Equity","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => { const newScopes = watchScopes.includes(opt) ? watchScopes.filter((s) => s !== opt) : [...watchScopes.filter((s) => s !== "All"), opt]; setWatchScopes(newScopes); const newFiltered = watchlist.filter((item) => matchesScopes_check(item, newScopes, favorites) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase())); setSelected(newFiltered.map((item) => item.symbol)); }}>{opt === "Favorites" ? "★ Favorites" : opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span className="check-symbol">{item.symbol}<FavoriteStar symbol={item.symbol} active={isFavorite(item.symbol)} onToggle={() => void toggleFavorite(item.symbol)} /></span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : item.symbol.toUpperCase().startsWith("NSEIX:") ? "NSEIX" : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
+          <div className="panel-heading"><span>Watchlist</span><div className="panel-heading-actions"><small title={hiddenSelectedCount ? `${hiddenSelectedCount} selected symbol(s) are hidden by the current search` : undefined}>{selected.length}/{watchlist.length}{hiddenSelectedCount ? ` (${hiddenSelectedCount} hidden)` : ""}</small>{admin && <button className="add-toggle" type="button" aria-label="Add symbol to watchlist" title="Add symbol to watchlist" aria-expanded={showAddSymbol} onClick={() => { setShowAddSymbol((current) => !current); setWatchlistMessage(""); }}><Plus size={15} /></button>}</div></div>{showAddSymbol && <form className="add-watchlist" onSubmit={addToWatchlist}><input autoFocus aria-label="Add symbol to watchlist" placeholder="Add symbol, e.g. NSE:INFY" value={newSymbol} onChange={(event) => setNewSymbol(event.target.value)} /><button type="submit">Add</button>{watchlistMessage && <small className={watchlistMessage.startsWith("Added") ? "add-success" : "add-error"}>{watchlistMessage}</small>}</form>}<div className="watch-filter"><div className="watch-pills" role="group" aria-label="Filter watchlist"><button type="button" className={`watch-pill${watchScopes.includes("All") ? " active" : ""}`} onClick={() => { setWatchScopes(["All"]); setSelected(watchlist.map((item) => item.symbol)); }}>All</button>{(["Favorites","IPO","Nifty indexes","Nifty 50","Nifty Bank","Nifty IT","Nifty Auto","Nifty Pharma","F&O","Equity","Crypto","Commodities","Forex"] as WatchScope[]).map((opt) => (<button key={opt} type="button" className={`watch-pill${watchScopes.includes(opt) ? " active" : ""}`} onClick={() => { const newScopes = watchScopes.includes(opt) ? watchScopes.filter((s) => s !== opt) : [...watchScopes.filter((s) => s !== "All"), opt]; setWatchScopes(newScopes); const newFiltered = watchlist.filter((item) => matchesScopes_check(item, newScopes, favorites) && item.symbol.toLowerCase().includes(watchQuery.toLowerCase())); setSelected(newFiltered.map((item) => item.symbol)); }}>{opt === "Favorites" ? "★ Favorites" : opt}</button>))}</div><input aria-label="Search watchlist" placeholder="Search symbol" value={watchQuery} onChange={(event) => setWatchQuery(event.target.value)} /></div><div className="check-list">{filteredWatchlist.map((item) => <label key={item.symbol} className="check-row"><input type="checkbox" value={item.symbol} checked={selected.includes(item.symbol)} onChange={() => setSelected((current) => current.includes(item.symbol) ? current.filter((symbol) => symbol !== item.symbol) : [...current, item.symbol])} /><span className="check-symbol">{item.symbol}<FavoriteStar symbol={item.symbol} active={isFavorite(item.symbol)} onToggle={() => void toggleFavorite(item.symbol)} /></span><small>{item.session === "crypto_24_7" ? "CRYPTO" : item.session === "forex_24_5" ? (isCommodity(item.symbol) ? "CMDTY" : "FX") : item.symbol.toUpperCase().startsWith("NSEIX:") ? "NSEIX" : "NSE"}</small>{item.scope ? <span className="scope-tag">{item.scope}</span> : null}</label>)}{filteredWatchlist.length === 0 && <p className="filter-empty">No symbols in this filter.</p>}</div></aside>
         <main className="main-content">
 <section className="scan-controls" style={{ justifyContent: "space-between" }} id="scan" ref={(el) => { sectionRefs.current.scan = el; }}>
         <section className="auto-scan">
-        <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} max={anchorDate || localDate()} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} min={syncStartDate || undefined} max={localDate()} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0 || (!!syncStartDate && syncStartDate > anchorDate)}>Sync</button><button className={`test-button ${autoSync?.running ? "" : "button-secondary"}`} onClick={toggleAutoSync} aria-pressed={!!autoSync?.running} title={autoSyncTitle}>{autoSync?.syncing ? "Auto: syncing…" : autoSync?.running ? "Auto: on" : "Auto: off"}</button></section>
+        {admin && <section className="date-test"><label htmlFor="sync-start-date">Sync range</label><input id="sync-start-date" aria-label="Sync start date" type="date" value={syncStartDate} max={anchorDate || localDate()} onChange={(event) => setSyncStartDate(event.target.value)} /><span aria-hidden="true">to</span><input id="anchor-date" aria-label="Sync end date" type="date" value={anchorDate} min={syncStartDate || undefined} max={localDate()} onChange={(event) => setAnchorDate(event.target.value)} /><button className="test-button button-secondary" onClick={syncData} disabled={loading || selected.length === 0 || (!!syncStartDate && syncStartDate > anchorDate)}>Sync</button><button className={`test-button ${autoSync?.running ? "" : "button-secondary"}`} onClick={toggleAutoSync} aria-pressed={!!autoSync?.running} title={autoSyncTitle}>{autoSync?.syncing ? "Auto: syncing…" : autoSync?.running ? "Auto: on" : "Auto: off"}</button></section>}
       </section>
               <section className="auto-scan" aria-label="AM Silver Bullet live scanner">
                 <span className="auto-title info-title"><Timer size={14} /> AM Silver Bullet
@@ -1375,19 +1387,19 @@ export default function Home() {
                 </span>
                 {silverBullet?.running ? (
                   <>
-                    <button className="test-button stop button-secondary" type="button" onClick={stopSilverBullet}><Square size={12} /> Stop live scan</button>
+                    {admin && <button className="test-button stop button-secondary" type="button" onClick={stopSilverBullet}><Square size={12} /> Stop live scan</button>}
                     <span className="auto-live"><span className="pulse" />{silverBullet.signals.length ? `${silverBullet.signals.length} alert(s)` : "WATCHING 10:00—11:00 NY"}</span>
                   </>
                 ) : (
                   <>
-                    <button className="test-button button-primary" type="button" onClick={startSilverBullet} disabled={silverBulletLoading}>
+                    {admin && <button className="test-button button-primary" type="button" onClick={startSilverBullet} disabled={silverBulletLoading}>
                       {silverBulletLoading ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
                       {silverBulletLoading ? "Loading—" : "Start live scan"}
-                    </button>
-                    <button className="test-button button-secondary" type="button" onClick={() => testSilverBullet()} disabled={silverBulletLoading}>
+                    </button>}
+                    {admin && <button className="test-button button-secondary" type="button" onClick={() => testSilverBullet()} disabled={silverBulletLoading}>
                       {silverBulletLoading ? <RefreshCw size={12} className="spin" /> : <CheckCircle2 size={12} />}
                       {silverBulletLoading ? "Loading—" : `Test ${strategyAnchorDate}`}
-                    </button>
+                    </button>}
                   </>
                 )}
                 {!silverBullet?.running && nyIsWeekend() && <small className="auto-meta silver-bullet-note">Weekend — commodities scan resumes Monday 10:00 NY</small>}
@@ -1442,9 +1454,9 @@ export default function Home() {
                     {ltf.running ? `watching ${ltf.armed_count} armed · ${ltf.timeframe} CISD` : "watcher off (Settings)"}
                     {ltf.last_check_at ? ` · checked ${formatTime(ltf.last_check_at, displayTz)}` : ""}
                   </small>
-                  <button className="test-button button-secondary" type="button" onClick={checkLtfNow} disabled={ltfChecking}>
+                  {admin && <button className="test-button button-secondary" type="button" onClick={checkLtfNow} disabled={ltfChecking}>
                     {ltfChecking ? <RefreshCw size={12} className="spin" /> : <RefreshCw size={12} />} Check now
-                  </button>
+                  </button>}
                 </div>
                 {ltf.last_error && <p className="date-note" title={ltf.last_error}>Last check had errors: {ltf.last_error.slice(0, 140)}</p>}
                 {ltfGroups.live.length > 0 && (
@@ -1550,10 +1562,10 @@ export default function Home() {
                 <div className="strategy-group-head">
                   <span className="filter-label">{groupName}</span>
                   <span className="strategy-group-count">{count}/{groupFlags.length}</span>
-                  <button className="toggle-text" title={allOn ? `Turn all ${groupName} OFF` : `Turn all ${groupName} ON`} onClick={() => setGroupStrategies(groupName, !allOn)}>
+                  {admin && <button className="toggle-text" title={allOn ? `Turn all ${groupName} OFF` : `Turn all ${groupName} ON`} onClick={() => setGroupStrategies(groupName, !allOn)}>
                     {allOn ? "Clear" : "Select all"}
                     {partial && <span className="day-marker" style={{ marginLeft: 4 }}>—</span>}
-                  </button>
+                  </button>}
                 </div>
                 <div className="filters strategy-chips">
                   {groupFlags.map((flag) => {
@@ -1599,7 +1611,7 @@ export default function Home() {
           >
             <ArrowLeft size={14} />
           </button>
-          <input id="strategy-date" type="date" value={strategyAnchorDate} max={localDate()} onChange={(event) => handleStrategyDateChange(event.target.value)} />
+          <input id="strategy-date" type="date" value={strategyAnchorDate} max={localDate()} disabled={!!guestAccess && !guestAccess.guest_past_dates} title={guestAccess && !guestAccess.guest_past_dates ? "Past-date scans are admin only" : undefined} onChange={(event) => handleStrategyDateChange(event.target.value)} />
           <button
             className="date-arrow"
             type="button"
@@ -1788,5 +1800,6 @@ Unticking M/W/D bias skips its calculation; unticking all three skips all extra 
   );
 }
 
-
-
+export default function Home() {
+  return <PageGate page="scanner" active="/" title="Scanner"><HomeContent /></PageGate>;
+}

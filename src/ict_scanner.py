@@ -523,13 +523,11 @@ NSE_CLOSE = dtime(15, 30)
 # treat the day's final daily bar as available for sync/analysis from this time.
 NSE_BHAVCOPY_READY = dtime(17, 0)
 
-NSE_HOLIDAYS = {
-    date(2026, 1, 26), date(2026, 3, 3), date(2026, 3, 26),
-    date(2026, 3, 31), date(2026, 4, 3), date(2026, 4, 14),
-    date(2026, 5, 1), date(2026, 5, 27), date(2026, 6, 26),
-    date(2026, 9, 14), date(2026, 10, 2), date(2026, 10, 20),
-    date(2026, 11, 9), date(2026, 11, 24), date(2026, 12, 25),
-}
+if os.path.dirname(os.path.dirname(os.path.abspath(__file__))) not in sys.path:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Live NSE (CM segment) holiday calendar shared with all_strategy and market_data;
+# NSE sessions only — never GIFT Nifty, forex, commodities or crypto.
+from market_data.nse_holidays import NSE_HOLIDAYS  # noqa: E402
 
 
 def resolve_previous_working_date(requested_date: date) -> tuple[date, date, Optional[str]]:
@@ -544,7 +542,9 @@ def resolve_previous_working_date(requested_date: date) -> tuple[date, date, Opt
 
 def is_nse_market_open(now: Optional[datetime] = None) -> bool:
     now = now or datetime.now(IST)
-    if now.weekday() >= 5:
+    if now.tzinfo is not None:
+        now = now.astimezone(IST)  # naive values are IST wall time (time contract)
+    if now.weekday() >= 5 or now.date() in NSE_HOLIDAYS:
         return False
     return NSE_OPEN <= now.time() <= NSE_CLOSE
 

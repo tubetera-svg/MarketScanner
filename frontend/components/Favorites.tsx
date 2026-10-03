@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { Star } from "lucide-react";
+import { apiFetch, isAdmin, useAuth } from "./auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -16,7 +17,7 @@ export function useFavorites() {
   // Re-read after a delete / rename: the server drops or moves those stars.
   const reload = useCallback(async () => {
     try {
-      const response = await fetch(`${API}/api/favorites`, { cache: "no-store" });
+      const response = await apiFetch(`${API}/api/favorites`, { cache: "no-store" });
       const payload = response.ok ? await response.json() : null;
       if (payload?.symbols) setFavorites(new Set(payload.symbols as string[]));
     } catch {
@@ -38,7 +39,7 @@ export function useFavorites() {
     };
     setFavorites((current) => flip(current, adding));
     try {
-      const response = await fetch(`${API}/api/favorites`, {
+      const response = await apiFetch(`${API}/api/favorites`, {
         method: adding ? "POST" : "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: key }),
@@ -55,6 +56,9 @@ export function useFavorites() {
 }
 
 export function FavoriteStar({ active, onToggle, symbol }: { active: boolean; onToggle: () => void; symbol: string }) {
+  // Favorites are shared: read-only guests see the admin's stars but cannot change them.
+  const admin = isAdmin(useAuth());
+  if (!admin) return active ? <span className="fav-star active" title="Favorite"><Star size={13} fill="currentColor" /></span> : null;
   const handle = (event: MouseEvent<HTMLButtonElement>) => {
     // Rows are often labels / clickable; don't let the star also toggle them.
     event.preventDefault();

@@ -6,6 +6,7 @@ import TradingViewChartModal, { type ChartTarget } from "./TradingViewChartModal
 import { describeAlert, type PriceAlertEvent, type PriceAlertStatus } from "./PriceAlertPanel";
 import { playAlertSound } from "./alertSound";
 import { subscribePriceAlerts } from "./priceAlertFeed";
+import { apiFetch, isAdmin, useAuth } from "./auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -15,6 +16,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
  * browser allows it. Alerts are evaluated server-side (api/price_alerts.py).
  */
 export default function PriceAlertNotifier() {
+  const admin = isAdmin(useAuth()); // guests get the toast and chart link, not Re-arm/Snooze
   const [toasts, setToasts] = useState<PriceAlertEvent[]>([]);
   const [chart, setChart] = useState<ChartTarget | null>(null);
   const announced = useRef<Set<string>>(new Set());
@@ -45,7 +47,7 @@ export default function PriceAlertNotifier() {
   // Toast actions: snooze a repeating alert, re-arm a one-shot one.
   const act = (event: PriceAlertEvent, body: Record<string, unknown>) => {
     dismiss(event.id);
-    fetch(`${API}/api/price-alerts/${event.alert_id}`, {
+    apiFetch(`${API}/api/price-alerts/${event.alert_id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -68,7 +70,7 @@ export default function PriceAlertNotifier() {
                 </button>
                 <div className="price-alert-toast-actions">
                   <button type="button" onClick={() => { setChart({ symbol: event.symbol, sourceLink: null, interval: "5m" }); dismiss(event.id); }}>Chart</button>
-                  {event.trigger === "once" ? (
+                  {!admin ? null : event.trigger === "once" ? (
                     <button type="button" onClick={() => act(event, { status: "active" })} title="Watch this level again">Re-arm</button>
                   ) : (
                     <button type="button" onClick={() => act(event, { snooze_minutes: 30 })} title="Mute this alert for 30 minutes">Snooze 30m</button>

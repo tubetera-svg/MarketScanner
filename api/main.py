@@ -9,11 +9,13 @@ import sys
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,12 +25,13 @@ for _extra_path in (str(ROOT), str(ROOT / "api"), str(ROOT / "src")):
         sys.path.insert(0, _extra_path)
 
 import app_settings  # noqa: E402  (persisted automation / show-hide settings)
+import auth  # noqa: E402  (admin sign-in, read-only guest role)
 import fno_membership  # noqa: E402  (NSE F&O list cache + watchlist F&O re-check)
 import news_calendar  # noqa: E402  (TradingView/ForexFactory news + EIA inventory times, fetched once per IST day)
 import price_alerts  # noqa: E402  (chart-popup price alerts, in-app delivery)
 import push  # noqa: E402  (Telegram / ntfy pushes shared by the automations)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
-from market_data import favorites  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
+from market_data import favorites, nse_holidays  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
 from market_data.automation_state import AutomationState  # noqa: E402  (restart-safe "already done" markers)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data, ist_today  # noqa: E402
@@ -671,11 +674,22 @@ class LtfConfirmationWatcher:
         self._state = state
         saved = state.load().get("last_arm", {}) if state is not None else {}
         self.last_arm: dict[str, str] = {str(k): str(v) for k, v in saved.items()} if isinstance(saved, dict) else {}
+        # "symbol|timeframe" -> {"through": last session fetched, "from": fetch start}
+        # for the one fetch made while the market is closed; persisted so a restart
+        # does not refetch every armed symbol. Bars themselves stay in memory only.
+        saved_closed = state.load().get("closed_fetch", {}) if state is not None else {}
+        self._closed_fetch: dict[str, dict[str, str]] = (
+            {str(k): dict(v) for k, v in saved_closed.items() if isinstance(v, dict)}
+            if isinstance(saved_closed, dict) else {}
+        )
         self.alerts: list[dict[str, Any]] = []
         self.run_count = 0
         self._bars: dict[str, Any] = {}
-        self._fetched_while_closed: set[str] = set()
         self.pusher = push.Pusher("LTF confirmation")
+
+    def _save_state(self) -> None:
+        if self._state is not None:
+            self._state.save({"last_arm": self.last_arm, "closed_fetch": self._closed_fetch})
 
     @staticmethod
     def _timeframe() -> str:
@@ -768,15 +782,15 @@ class LtfConfirmationWatcher:
                 for setup in LtfSetupStore().arm(setups):
                     self._alert(setup, "armed")
                 self.last_arm[market] = session.isoformat()
-                if self._state is not None:
-                    self._state.save({"last_arm": self.last_arm})
+                self._save_state()
             except Exception as exc:
                 errors.append(f"arm {market}: {exc}")
         return errors
 
     async def _confirm(self) -> list[str]:
         import ict_scanner  # type: ignore  (src/ is on sys.path via strategy_bridge)
-        from ltf_confirmation import LtfSetupStore, bars_from_rows, evaluate_ltf
+        from ltf_confirmation import STATE_EXPIRED, LtfSetupStore, bars_from_rows, evaluate_ltf
+        from market_data import service as md_service
         from market_data.sources import tradingview_source
 
         timeframe = self._timeframe()
@@ -785,23 +799,33 @@ class LtfConfirmationWatcher:
         by_symbol: dict[str, list[Any]] = {}
         for setup in store.active():
             by_symbol.setdefault(setup.symbol, []).append(setup)
+        closed_before = dict(self._closed_fetch)
+        # Markers only for symbols that still have armed setups: no back-dated entries.
+        self._closed_fetch = {k: v for k, v in self._closed_fetch.items() if k.split("|", 1)[0] in by_symbol}
 
         errors: list[str] = []
         for symbol, setups in by_symbol.items():
-            session = ict_scanner.Session.NSE if setups[0].market == "NSE" else ict_scanner.Session.FOREX_24_5
+            nse = setups[0].market == "NSE"
+            session = ict_scanner.Session.NSE if nse else ict_scanner.Session.FOREX_24_5
             market_open = ict_scanner.is_market_open(session)
             key = f"{symbol}|{timeframe}"
             start = min(date.fromisoformat(s.signal_date) for s in setups) + timedelta(days=1)
             # Open market: fetch every poll (the completed-bar filter makes
-            # repeats harmless). Closed: once, to pick up the session's last bars.
+            # repeats harmless). Closed: once per session, to pick up its last bars.
             today = ist_today()  # TV intraday bars are labelled in IST
-            if start > today:
-                need_fetch = False  # the session after the signal has not started yet
+            sessions = md_service.expected_trading_dates("NSE" if nse else "TRADINGVIEW", start, today, symbol)
+            marker = {"through": sessions[-1].isoformat(), "from": start.isoformat()} if sessions else None
+            if marker is None:
+                need_fetch = False  # no session since the signal yet (weekend/holiday/not started)
             elif market_open:
-                self._fetched_while_closed.discard(key)
+                self._closed_fetch.pop(key, None)
                 need_fetch = True
             else:
-                need_fetch = key not in self._fetched_while_closed
+                done = self._closed_fetch.get(key) or {}
+                # A setup armed later with an earlier start needs its own fetch.
+                covered = done.get("through") == marker["through"] and str(done.get("from") or "~") <= marker["from"]
+                need_fetch = not covered
+            fetched = False
             if need_fetch:
                 try:
                     rows = await asyncio.to_thread(
@@ -809,17 +833,24 @@ class LtfConfirmationWatcher:
                         symbol.split(":", 1)[0] if ":" in symbol else "NSE",
                     )
                     self._bars[key] = bars_from_rows(rows)
-                    if not market_open:
-                        self._fetched_while_closed.add(key)
+                    fetched = True
                 except Exception as exc:
                     errors.append(f"{symbol}: {exc}")
             bars = self._bars.get(key)
-            if bars is None:
-                bars = bars_from_rows([])
             for setup in setups:
-                changed = store.apply(setup.key, evaluate_ltf(setup, bars, now, timeframe))
+                result = evaluate_ltf(setup, bars if bars is not None else bars_from_rows([]), now, timeframe)
+                # Without bars in memory (closed-market fetch skipped after a restart)
+                # the stored state already is the replay result; only the date-based
+                # expiry can still change it.
+                if bars is None and result["state"] != STATE_EXPIRED:
+                    continue
+                changed = store.apply(setup.key, result)
                 if changed is not None:
                     self._alert(changed, changed.state)
+            if fetched and not market_open and marker is not None:
+                self._closed_fetch[key] = marker
+        if self._closed_fetch != closed_before:
+            self._save_state()
         return errors
 
 
@@ -851,6 +882,66 @@ async def stop_silver_bullet_auto_schedule() -> None:
         silver_bullet_scanner.auto_task = None
     ltf_watcher.stop()
     price_alert_watcher.stop()
+
+
+# --- Read-only guests (api/auth.py) ------------------------------------------
+# Guests may only read (GET), except the routes in _GUEST_WRITES; reads that
+# belong to a page the admin has not opened to guests are refused too. Any
+# other write is admin-only, including routes added later.
+_GUEST_PAGE_READS = {
+    "watchlist": ("/api/market-data/records", "/api/market-data/meta", "/api/market-data/aliases",
+                  "/api/market-data/watchlist", "/api/market-data/turso-sync", "/api/watchlist/fno"),
+    "ipo": ("/api/market-data/ipo", "/api/ipo-scan", "/api/ipo-liquidity"),
+    "alerts": ("/api/price-alerts",),
+}
+# path -> page that must be open to guests (None = always allowed)
+_GUEST_WRITES: dict[str, str | None] = {
+    "/api/auth/login": None,
+    "/api/strategy-scan": "scanner",
+    "/api/strategy-scan/cancel": "scanner",
+    "/api/backtest": "backtest",
+}
+# Query flags that force remote fetches (TradingView/NSE/news) - admin only.
+_GUEST_BLOCKED_FLAGS = ("refresh", "auto_fetch")
+GUEST_DENIED = "Read-only guest access: sign in as admin to do this."
+_access_cache: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+def _access_settings() -> dict[str, Any]:
+    """Settings 'access' block, cached briefly (read on every guest request)."""
+    now = monotonic()
+    if _access_cache["value"] is None or now - _access_cache["at"] > 10:
+        _access_cache.update(at=now, value=app_settings.load_settings()["access"])
+    return _access_cache["value"]
+
+
+def _guest_allowed(method: str, path: str, query: Any) -> bool:
+    pages = set(_access_settings()["guest_pages"])
+    if method in ("GET", "HEAD"):
+        for page, prefixes in _GUEST_PAGE_READS.items():
+            if page not in pages and any(path == p or path.startswith(p + "/") for p in prefixes):
+                return False
+        return not any(str(query.get(flag, "")).lower() in ("1", "true", "yes") for flag in _GUEST_BLOCKED_FLAGS)
+    if path not in _GUEST_WRITES:
+        return False
+    page = _GUEST_WRITES[path]
+    return page is None or page in pages
+
+
+@app.middleware("http")
+async def access_control(request: Request, call_next: Any) -> Any:
+    if request.method == "OPTIONS":  # CORS preflight
+        return await call_next(request)
+    role = await asyncio.to_thread(auth.role_for, request)
+    request.state.role = role
+    path = request.url.path.rstrip("/") or "/"
+    if role == "guest" and not await asyncio.to_thread(_guest_allowed, request.method, path, request.query_params):
+        return JSONResponse({"detail": GUEST_DENIED}, status_code=403)
+    return await call_next(request)
+
+
+def _role(request: Request) -> str:
+    return getattr(request.state, "role", "guest")
 
 
 app.add_middleware(
@@ -980,16 +1071,74 @@ def update_strategy_flag(name: str, request: StrategyFlagUpdate) -> dict[str, An
 
 
 _strategy_scan_active = False
+# Who is running the current strategy scan: role, ip, symbol count, start time and
+# whether an admin scan stopped it (guest scans give way to the admin).
+_scan_owner: dict[str, Any] = {}
+_guest_last_scan: dict[str, float] = {}  # ip -> monotonic start of its last scan
+ADMIN_PREEMPT_WAIT_SECONDS = 30
+
+
+def _guest_scan_request(request: StrategyScanRequest, ip: str) -> StrategyScanRequest:
+    """Apply the guest limits (Settings -> Guest access) to a scan request."""
+    access = _access_settings()
+    cooldown = access["guest_scan_cooldown_seconds"]
+    wait = int(cooldown - (monotonic() - _guest_last_scan.get(ip, -1e9)))
+    if wait > 0:
+        raise HTTPException(status_code=429, detail=f"Guests can scan once every {cooldown} s - try again in {wait} s.")
+    watchlist = {str(item.get("symbol", "")).upper() for item in service.watchlist()}
+    symbols = list(dict.fromkeys(str(s).strip().upper() for s in request.symbols or [] if str(s).strip()))
+    if any(symbol not in watchlist for symbol in symbols):
+        raise HTTPException(status_code=403, detail="Guests can only scan watchlist symbols.")
+    limit = access["guest_max_symbols"]
+    if len(symbols) > limit:
+        raise HTTPException(status_code=400, detail=f"Guests can scan up to {limit} symbols at a time ({len(symbols)} selected) - narrow the selection, e.g. with a group filter.")
+    if request.anchor_date and not access["guest_past_dates"] and request.anchor_date < ist_today():
+        raise HTTPException(status_code=403, detail="Past-date scans are admin only.")
+    enabled = {item["name"] for item in strategy_bridge.list_strategies()[0] if item["enabled"]}
+    strategies = [name for name in request.strategies or [] if name in enabled] or None  # None = every enabled strategy
+    extra = bool(access["guest_extra_info"])
+    return request.model_copy(update={
+        "symbols": symbols,
+        "strategies": strategies,
+        "include_context": request.include_context and extra,
+        "include_bias": request.include_bias and extra,
+    })
+
+
+def _scan_busy_detail() -> str:
+    if not _strategy_scan_active:
+        return "Market data is syncing - try again in a minute."
+    started = int(monotonic() - _scan_owner.get("started", monotonic()))
+    return f"Another scan is running ({_scan_owner.get('symbols', '?')} symbols, started {started} s ago) - try again shortly."
 
 
 @app.post("/api/strategy-scan")
 async def run_strategy_scan(request: StrategyScanRequest, http_request: Request) -> dict[str, Any]:
     global _strategy_scan_active
+    role, ip = _role(http_request), auth.client_ip(http_request)
+    if role == "guest":
+        request = _guest_scan_request(request, ip)
     if service.lock.locked():
-        raise HTTPException(status_code=409, detail="A scan is already running")
+        # The admin goes first: stop a running guest scan (it checks the flag per symbol).
+        if role == "admin" and _strategy_scan_active and _scan_owner.get("role") == "guest":
+            _scan_owner["preempted"] = True
+            strategy_bridge.cancel_scan()
+            try:
+                await asyncio.wait_for(service.lock.acquire(), timeout=ADMIN_PREEMPT_WAIT_SECONDS)
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=409, detail="A guest scan is still stopping - try again in a few seconds.")
+            service.lock.release()
+        else:
+            raise HTTPException(status_code=409, detail=_scan_busy_detail())
+    if service.lock.locked():  # someone else got in between
+        raise HTTPException(status_code=409, detail=_scan_busy_detail())
     async with service.lock:
         strategy_bridge.reset_cancel()
         _strategy_scan_active = True
+        _scan_owner.clear()
+        _scan_owner.update(role=role, ip=ip, symbols=len(request.symbols or []), started=monotonic(), preempted=False)
+        if role == "guest":
+            _guest_last_scan[ip] = monotonic()
         scan = asyncio.ensure_future(asyncio.to_thread(
             strategy_bridge.run_scan,
             request.symbols,
@@ -1009,6 +1158,8 @@ async def run_strategy_scan(request: StrategyScanRequest, http_request: Request)
                     logging.getLogger(__name__).info("Strategy scan cancelled: client disconnected")
             return scan.result()
         except strategy_bridge.ScanCancelled:
+            if _scan_owner.get("preempted"):
+                raise HTTPException(status_code=409, detail="Scan stopped: the admin started a scan. Try again in a minute.")
             raise HTTPException(status_code=499, detail="Strategy scan cancelled")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1020,24 +1171,33 @@ async def run_strategy_scan(request: StrategyScanRequest, http_request: Request)
 
 
 @app.post("/api/strategy-scan/cancel")
-def cancel_strategy_scan() -> dict[str, Any]:
-    """Stop the running strategy scan (Stop button / page unload beacon)."""
+def cancel_strategy_scan(http_request: Request) -> dict[str, Any]:
+    """Stop the running strategy scan (Stop button / page unload beacon). Guests can only stop their own."""
     if not _strategy_scan_active:
         return {"cancelled": False}
+    if _role(http_request) == "guest" and (_scan_owner.get("role") != "guest" or _scan_owner.get("ip") != auth.client_ip(http_request)):
+        raise HTTPException(status_code=403, detail=GUEST_DENIED)
     strategy_bridge.cancel_scan()
     return {"cancelled": True}
 
 
 @app.post("/api/backtest")
-async def run_backtest_endpoint(request: BacktestRequest) -> dict[str, Any]:
+async def run_backtest_endpoint(request: BacktestRequest, http_request: Request) -> dict[str, Any]:
     """Run a backtest over the selected strategies + symbol universe.
 
     Ensures the required historical window is present in SQLite (best-effort,
     never blocks on failure), then replays each strategy point-in-time via
     ``src/backtest`` and returns per-strategy + combined reports.
     """
+    if _role(http_request) == "guest":
+        # Same limits as a guest scan (watchlist only, symbol cap, cooldown, enabled strategies).
+        limited = _guest_scan_request(StrategyScanRequest(symbols=request.symbols, strategies=request.strategies), auth.client_ip(http_request))
+        if not limited.strategies:
+            raise HTTPException(status_code=403, detail="Guests can only backtest enabled strategies.")
+        request = request.model_copy(update={"symbols": limited.symbols, "strategies": limited.strategies})
+        _guest_last_scan[auth.client_ip(http_request)] = monotonic()
     if service.lock.locked():
-        raise HTTPException(status_code=409, detail="A scan is already running")
+        raise HTTPException(status_code=409, detail=_scan_busy_detail())
     async with service.lock:
         try:
             return await asyncio.to_thread(_run_backtest, request)
@@ -1179,20 +1339,75 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "news_currencies": list(app_settings.NEWS_CURRENCIES),
         "sound_choices": list(app_settings.SOUND_CHOICES),
         "display_timezones": [{"value": value, "label": label} for value, label in DISPLAY_TIMEZONES.items()],
+        # Info only: the NSE (CM segment) calendar shared by every NSE-session consumer.
+        "nse_holidays": nse_holidays.info(),
     }
 
 
 @app.get("/api/settings")
-def get_settings() -> dict[str, Any]:
-    return _settings_payload(app_settings.load_settings())
+def get_settings(http_request: Request) -> dict[str, Any]:
+    settings = app_settings.load_settings()
+    if _role(http_request) == "guest":
+        # Display-only subset: no automation status, push channels or errors.
+        return {"settings": {key: settings[key] for key in ("ui", "sounds", "access")}}
+    return _settings_payload(settings)
 
 
 @app.put("/api/settings")
 async def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
     """Merge a partial settings document, persist it, and apply the automation changes."""
     settings = app_settings.save_settings(patch)
+    _access_cache["value"] = None  # guest rules pick up the change at once
     apply_automation(settings)
     return _settings_payload(settings)
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+
+
+class PasswordRequest(BaseModel):
+    password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=200)
+
+
+@app.get("/api/auth/me")
+def auth_me(http_request: Request) -> dict[str, Any]:
+    """Current role (admin/guest), whether it comes from localhost, and the guest rules the UI follows."""
+    return {
+        "role": _role(http_request),
+        "local": auth.is_local(http_request),
+        "password_set": auth.password_set(),
+        "access": _access_settings(),
+    }
+
+
+@app.post("/api/auth/login")
+def auth_login(request: LoginRequest, http_request: Request) -> dict[str, Any]:
+    ip = auth.client_ip(http_request)
+    wait = auth.login_blocked_for(ip)
+    if wait:
+        raise HTTPException(status_code=429, detail=f"Too many wrong passwords - try again in {max(1, wait // 60)} min.")
+    if not auth.password_set():
+        raise HTTPException(status_code=409, detail="No admin password is set yet - set one in Settings > Access on localhost, then push settings to Turso.")
+    ok = auth.check_password(request.password)
+    auth.record_login(ip, ok)
+    if not ok:
+        raise HTTPException(status_code=401, detail="Wrong password")
+    days = _access_settings()["session_days"]
+    return {"token": auth.issue_token(days), "days": days}
+
+
+@app.put("/api/auth/password")
+def auth_set_password(request: PasswordRequest, http_request: Request) -> dict[str, Any]:
+    """Admin only (middleware). Replaces the signing key, so every other device is signed out;
+    a remote admin gets a fresh token back to stay signed in."""
+    try:
+        auth.set_password(request.password)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if auth.is_local(http_request):
+        return {"token": None}
+    return {"token": auth.issue_token(_access_settings()["session_days"])}
 
 
 @app.get("/api/news/high-impact")
@@ -1203,9 +1418,13 @@ def get_high_impact_news(refresh: bool = False) -> dict[str, Any]:
 
 
 @app.get("/api/price-alerts")
-def get_price_alerts() -> dict[str, Any]:
-    """All price alerts, recent trigger events, and watcher status."""
-    return price_alert_watcher.status()
+def get_price_alerts(http_request: Request) -> dict[str, Any]:
+    """All price alerts, recent trigger events, and watcher status (guests: no push/error details)."""
+    status = price_alert_watcher.status()
+    if _role(http_request) == "guest":
+        for key in ("push_enabled", "push_channels", "last_push_error", "last_error"):
+            status.pop(key, None)
+    return status
 
 
 @app.post("/api/price-alerts")

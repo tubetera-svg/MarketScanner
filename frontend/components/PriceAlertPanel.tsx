@@ -12,6 +12,7 @@ import {
   type PriceAlertStatus,
 } from "./priceAlertShared";
 import { refreshPriceAlerts, subscribePriceAlerts } from "./priceAlertFeed";
+import { apiFetch } from "./auth";
 
 export * from "./priceAlertShared";
 
@@ -20,7 +21,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 /** POST/PUT a JSON body; returns an error message or null. */
 export const saveAlert = async (url: string, method: "POST" | "PUT", body: unknown): Promise<string | null> => {
   try {
-    const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const response = await apiFetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (response.ok) return null;
     const payload = await response.json().catch(() => null);
     return typeof payload?.detail === "string" ? payload.detail : `HTTP ${response.status}`;
@@ -80,7 +81,7 @@ export default function PriceAlertPanel({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json" } });
+      const response = await apiFetch(url, { ...init, headers: { "Content-Type": "application/json" } });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
         setError(typeof body?.detail === "string" ? body.detail : `HTTP ${response.status}`);

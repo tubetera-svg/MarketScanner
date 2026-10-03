@@ -15,6 +15,8 @@ import {
 } from "recharts";
 import { Activity, Play, TrendingDown, TrendingUp } from "lucide-react";
 import Navigation from "../../components/Navigation";
+import { apiFetch } from "../../components/auth";
+import PageGate from "../../components/PageGate";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -61,7 +63,7 @@ type Report = {
   warnings: string[];
 };
 
-export default function BacktestPage() {
+function BacktestPageContent() {
   const [catalog, setCatalog] = useState<StrategyFlag[]>([]);
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [customSymbols, setCustomSymbols] = useState<string[]>([]);
@@ -81,11 +83,11 @@ export default function BacktestPage() {
   const [reports, setReports] = useState<Record<string, Report> | null>(null);
 
   useEffect(() => {
-    fetch(`${API}/api/strategies`, { cache: "no-store" })
+    apiFetch(`${API}/api/strategies`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => setCatalog(d.strategies ?? []))
       .catch(() => {});
-    fetch(`${API}/api/watchlist`, { cache: "no-store" })
+    apiFetch(`${API}/api/watchlist`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => setWatchlist(d.symbols ?? []))
       .catch(() => {});
@@ -131,7 +133,7 @@ export default function BacktestPage() {
     }
     setRunning(true);
     try {
-      const resp = await fetch(`${API}/api/backtest`, {
+      const resp = await apiFetch(`${API}/api/backtest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -386,4 +388,8 @@ function Metric({ icon, label, value, tone }: { icon?: ReactNode; label: string;
       {icon}
     </div>
   );
+}
+
+export default function BacktestPage() {
+  return <PageGate page="backtest" active="/backtest" title="Backtest"><BacktestPageContent /></PageGate>;
 }

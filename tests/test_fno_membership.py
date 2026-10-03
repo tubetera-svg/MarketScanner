@@ -104,7 +104,7 @@ def test_preview_rejects_incomplete_list(fno_files, monkeypatch):
 def test_endpoints(fno_files, nse_download):
     from fastapi.testclient import TestClient
 
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.app, client=("127.0.0.1", 50000))
     assert client.get("/api/watchlist/fno").json() == {"saved_at": None, "count": 0}
     preview = client.post("/api/watchlist/fno/preview").json()
     assert client.post("/api/watchlist/fno/apply", json={"preview_id": "nope"}).status_code == 409

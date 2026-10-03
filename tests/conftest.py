@@ -36,3 +36,13 @@ def clean_flags(monkeypatch):
 def default_data_cutoffs(tmp_path, monkeypatch):
     """Isolate ict_scanner.daily_bar_cutoff from the user's saved app_settings.json."""
     monkeypatch.setenv("MARKET_SCANNER_SETTINGS_PATH", str(tmp_path / "app_settings.json"))
+
+
+@pytest.fixture(autouse=True)
+def offline_nse_holidays(tmp_path, monkeypatch):
+    """NSE holiday calendar from the built-in list: no download, no saved copy."""
+    from market_data import nse_holidays
+
+    monkeypatch.setattr(nse_holidays, "CACHE_PATH", tmp_path / "nse_holidays.json")
+    monkeypatch.setattr(nse_holidays, "_start_refresh", lambda: None)
+    monkeypatch.setattr(nse_holidays, "_memo", {"day": None, "doc": None, "dates": frozenset()})

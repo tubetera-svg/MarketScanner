@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = ROOT / "config" / "app_settings.json"
 
 HIDEABLE_PAGES = ("watchlist", "ipo", "backtest")
+# Pages a read-only guest may be allowed to open (Settings is always admin-only).
+GUEST_PAGES = ("scanner", "alerts", "ipo", "watchlist", "backtest")
 
 # Currencies offered for the high-impact news filter (api/news_calendar.py).
 NEWS_CURRENCIES = ("USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF", "CNY")
@@ -76,6 +78,16 @@ DEFAULTS: dict[str, Any] = {
         "price_alert": {"enabled": True, "sound": "doorbell"},
         "news_event": {"enabled": False, "sound": "bell", "lead_minutes": 5, "repeat": 3},
         "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:00"},
+    },
+    # Read-only guests (api/auth.py): pages they may open and their scan limits.
+    "access": {
+        "guest_pages": ["alerts", "ipo", "scanner"],
+        "guest_max_symbols": 100,
+        "guest_scan_cooldown_seconds": 60,
+        "guest_past_dates": True,
+        "guest_extra_info": False,
+        "guest_banner": "Read-only view",
+        "session_days": 30,
     },
 }
 
@@ -138,6 +150,12 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
         block = settings["automation"][section]
         block[key] = max(low, min(high, float(block[key])))
     settings["ui"]["hidden_pages"] = [p for p in settings["ui"]["hidden_pages"] if p in HIDEABLE_PAGES]
+    access = settings["access"]
+    access["guest_pages"] = [p for p in access["guest_pages"] if p in GUEST_PAGES]
+    access["guest_max_symbols"] = max(1, min(500, int(access["guest_max_symbols"])))
+    access["guest_scan_cooldown_seconds"] = max(0, min(3600, int(access["guest_scan_cooldown_seconds"])))
+    access["session_days"] = max(1, min(365, int(access["session_days"])))
+    access["guest_banner"] = access["guest_banner"][:200]
     if settings["ui"]["display_timezone"] not in DISPLAY_TIMEZONES:
         settings["ui"]["display_timezone"] = DEFAULT_DISPLAY_TIMEZONE
     settings["news"]["currencies"] = sorted({c.upper() for c in settings["news"]["currencies"]} & set(NEWS_CURRENCIES))

@@ -1,4 +1,29 @@
+# Strategy Information
+
+This file contains the exact conditions used by strategy runners in `all_strategy.py`.
+
+## Strategies
+
+### `points_of_interest`
+Summary: Information only: the nearest point of interest (FVG, untaken swing or CISD level) between the active protected swing and current price. No trade plan.
+- Uses the latest protected-swing analysis without creating a trade plan.
+- Reports the triggered protected level and type: `fvg`, `sweep`, or `CISD`.
+- Selection is point-in-time from the active protected low/high (sweep extreme) toward current price: FVG first (reported at its near edge; gaps narrower than 0.1 x ATR(14) are skipped), then an untaken swing/liquidity level, then a CISD (open of the first candle of an opposing series, later closed through).
+- Note shows the POI, the protected low/high with the date it was made, and the CISD confirmation level.
+- Output contains direction, triggered level, type, state, and note; entry, stop-loss, target, and R:R are intentionally omitted.
+- POI rows are informational and do not create backtest positions.
+
+### `candle_3_closure`
+Summary: Information only: a Candle 2 or Candle 3 closure (TTrades fractal model) at a protected-swing point of interest. Arms an intraday confirmation for the next session.
+- Detects Candle 2 and Candle 3 closures (TTrades fractal model) at a protected-swing POI; `closure_type` says which.
+- POI (as known before the reaction candles): the FVG -> swing -> CISD point of interest worked from the protected swing, then the protected (CISD) level itself.
+- Candle 2 closure (bullish; bearish mirrors): the latest candle reaches the POI, sweeps the previous candle's low and closes back above it.
+- Candle 3 closure: Candle 2 reached the POI, did NOT sweep Candle 1's low, and closed down; Candle 3 closes over Candle 2's body.
+- Reports the closure candle's high, low, equilibrium, POI level/type and direction; arms an intraday confirmation for the next session in the Candle 4 half (upper half bullish / lower half bearish).
+- Informational only: it does not emit entry, stop-loss, target, R:R, or backtest positions.
+
 ### `propulsion_blocks`
+Summary: An order-block displacement, a pullback into the block, then a confirming displacement. The propulsion candle's open is the entry reference and its midpoint (mean threshold) is the stop.
 Point-in-time propulsion blocks: an order-block displacement, retracement into
 the block, opposite candle, and confirming displacement. The propulsion candle
 open is the entry reference (`entry`; the backtest still fills at the next
@@ -10,29 +35,8 @@ through before the retrace is discarded. Targets use prior-week / pre-week
 swing liquidity (2R measured-move fallback). A confirmation arms an intraday
 confirmation for the next session (zone = propulsion open to mean).
 
-# Strategy Information
-
-This file contains the exact conditions used by strategy runners in `all_strategy.py`.
-
-## Strategies
-
-### `points_of_interest`
-- Uses the latest protected-swing analysis without creating a trade plan.
-- Reports the triggered protected level and type: `fvg`, `sweep`, or `CISD`.
-- Selection is point-in-time from the active protected low/high (sweep extreme) toward current price: FVG first (reported at its near edge; gaps narrower than 0.1 x ATR(14) are skipped), then an untaken swing/liquidity level, then a CISD (open of the first candle of an opposing series, later closed through).
-- Note shows the POI, the protected low/high with the date it was made, and the CISD confirmation level.
-- Output contains direction, triggered level, type, state, and note; entry, stop-loss, target, and R:R are intentionally omitted.
-- POI rows are informational and do not create backtest positions.
-
-### `candle_3_closure`
-- Detects Candle 2 and Candle 3 closures (TTrades fractal model) at a protected-swing POI; `closure_type` says which.
-- POI (as known before the reaction candles): the FVG -> swing -> CISD point of interest worked from the protected swing, then the protected (CISD) level itself.
-- Candle 2 closure (bullish; bearish mirrors): the latest candle reaches the POI, sweeps the previous candle's low and closes back above it.
-- Candle 3 closure: Candle 2 reached the POI, did NOT sweep Candle 1's low, and closed down; Candle 3 closes over Candle 2's body.
-- Reports the closure candle's high, low, equilibrium, POI level/type and direction; arms an intraday confirmation for the next session in the Candle 4 half (upper half bullish / lower half bearish).
-- Informational only: it does not emit entry, stop-loss, target, R:R, or backtest positions.
-
 ### `inside_bar_pattern_daily_sweep`
+Summary: A strong-bodied day, then an inside day, then today sweeps one side of the inside day and closes back inside it: bullish when the low is swept, bearish when the high is swept.
 - Uses the latest 3 daily candles.
 - Bullish condition `_inside_bar_bullish()` requires:
   - prior day 2 is bullish (`d2_open` < `d2_close`)
@@ -51,6 +55,7 @@ This file contains the exact conditions used by strategy runners in `all_strateg
 - Output: bullish or bearish inside-bar breakout matches.
 
 ### `ema5_sweep`
+Summary: Two days held beyond the 5-day EMA, and today runs the previous day's high (bullish) or low (bearish) but closes back inside its range.
 - Uses the latest 6+ daily candles and computes a 5-period EMA on close prices.
 - Bullish condition `_ema5_sweep_bullish()` requires:
   - current low > current EMA5
@@ -80,7 +85,7 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - `WEEKLY_PROFILE_FLAGS` — per-strategy dict (`classic_expansion_sweep`, `midweek_reversal_sweep`, `consolidation_reversal_sweep`, `intraweek_reversal_sweep`, `thursday_counter_sweep`, `tgif_setup_sweep`); set any entry False to exclude that single profile.
 
 ### Web UI / API selection layer
-- The "Strategy profiles" panel in the web app shows every strategy as a toggle chip (Core group + Weekly profiles group). Clicking a chip flips that strategy ON/OFF; the choice is persisted in `strategy_flags.json` in the project root.
+- The "Strategy profiles" panel in the web app shows every strategy as a toggle chip (Core group + Weekly profiles group). Clicking a chip flips that strategy ON/OFF; the choice is persisted in `config/strategy_flags.json`. Settings -> Scanning has the same Run toggles plus Show (hide from the scanner page).
 - Endpoints served by `api/main.py` via `api/strategy_bridge.py`: `GET /api/strategies` (catalog + master-switch state), `PUT /api/strategies/{name}` (`{"enabled": true|false}`), `POST /api/strategy-scan` (`{"symbols": [...], "strategies": [...]?, "anchor_date": "YYYY-MM-DD"?}` — defaults to all enabled strategies over the selected watchlist symbols).
 - `POST /api/strategy-scan` returns results clubbed per strategy (`results[].bullish` / `results[].bearish` rows carry symbol, profile label, note, TradingView link).
 - Code-level flags remain hard gates: a weekly profile chip cannot be turned ON from the UI while `WEEKLY_PROFILES_ENABLED` or its `WEEKLY_PROFILE_FLAGS` entry is False in `all_strategy.py`.
@@ -93,33 +98,39 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - `TGIF_EXPANSION_MIN_PCT = 0.01` — minimum expansion leg size off the weekly extreme before Friday may be faded.
 
 ### `classic_expansion_sweep`
+Summary: The week's low (or high) forms on Monday/Tuesday and price expands away from it for up to three days with strong closes.
 - Bullish requires: week's lowest low made Mon/Tue and never broken after; 1-3 post-extreme sessions (stops after 2-3 expansion days); latest close displaced beyond the first post-extreme open; latest session is a candle-two closure up (close > prior high, bullish body >= 50%) or, on Friday, an upward close vs the prior close (slowing tolerated — reported as a label only, never a trade, since Friday is not an expansion day).
 - Bearish is the mirror image with the week's highest high made Mon/Tue.
 - Notes report e.g. `extreme_d1_expand2_candle_two_closure`; rejections explain (`weekly_extreme_late_d3`, `expansion_days=4`, `candle_two_pending`, ...).
 
 ### `midweek_reversal_sweep`
+Summary: Monday and Tuesday push one way, then Wednesday (or Thursday) reverses with a close through the prior day; later days must hold the reversal.
 - Bullish requires: early-week decline (Tuesday closes below Monday's close and takes out Monday's low); Wednesday pivot reversal closure above Tuesday's high with a bullish close; every later session holds above the pivot close. Matched already on Wednesday evening as `pivot_wed_await_continuation`.
 - Thursday fallback (per the source): when Wednesday lacks a clean closure (`wednesday_unclear_await_thursday`), a Thursday closure above Wednesday's high with a bullish close is the pivot (`pivot_thu_fallback_*`). SL uses the Wed..pivot extreme.
 - Bearish mirrors (early rally, pivot closes below the prior day's low).
 
 ### `consolidation_reversal_sweep`
+Summary: Monday to Wednesday stay in a tight range; Thursday fakes out one side and closes back inside. Target is the opposite side of the range.
 - Mon-Wed must be a genuine consolidation: range width <= 5% of Wednesday's close AND net drift from Monday's open <= 2%.
 - Thursday must fake one side: trades beyond the consolidation high but closes back inside (bearish expectation), or below the low closing back inside (bullish expectation). Aggressive entry is signalled immediately on Thursday (`thursday_fake_break_aggressive_entry`).
 - If Friday exists it must expand opposite the fake break (close beyond Thursday's close) for `friday_expansion_confirmed`; a close back outside the range invalidates (`friday_invalidated`).
 - Target: the opposite side of the Mon-Wed consolidation range (source target).
 
 ### `intraweek_reversal_sweep`
+Summary: Monday expands one way, Tuesday stalls, then Wednesday or Thursday closes strongly the other way (Candle 2 or Candle 3 closure).
 - Bullish requires: Monday directional expansion down (bearish body >= 50%); Tuesday stall (inside bar or body <= 40%); then a reversal closure on Wednesday or Thursday - Thursday fallback is allowed when Wednesday is not clean. Either a Candle 2 closure (close beyond the prior day's high, bullish close, body >= 50%) or a Candle 3 closure (the prior day closed down without sweeping the day before it, and the pivot closes over its body) qualifies; the note says which (`candle_two_closure_dN` / `candle_three_closure_dN`).
 - Later sessions must hold the reversal structure (no close beyond the pivot day's opposite extreme).
 - Bearish mirrors (Monday expansion up, stall, downside reversal closure).
 
 ### `thursday_counter_sweep`
+Summary: After a clear trend Monday to Wednesday, Thursday takes out Wednesday's extreme and closes back against it. Target is the weekly open.
 - Requires an established directional week by Wednesday: |Wednesday close - Monday open| >= 1% of price, with Wednesday extending the extreme (high for up-weeks, low for down-weeks).
 - Thursday must sweep liquidity against nothing - i.e. in an up-week take out Wednesday's high then fail, closing below Wednesday's close (bearish counter); mirror for down-weeks (bullish counter).
 - Signal fires Thursday evening (`thursday_counter_set_friday_pending`); Friday confirms continuation (`friday_continuation_confirmed`) or fails it (`friday_continuation_failed`).
 - Target: the weekly open (Monday's open), the source's most common target.
 
 ### `tgif_setup_sweep`
+Summary: The week's extreme formed Mon/Tue and the expansion reached a higher-timeframe objective by Wed/Thu; fades Friday back into the weekly range (25% retrace target).
 - Critical rule enforced: no expansion + no HTF objective reached = no TGIF signal.
 - Requires: weekly extreme formed Mon/Tue; expansion leg completing Wed or Thu with move >= 1% off the weekly extreme; objective actually reached — prior week high/low, the 10-session pre-week extreme, or a swing high/low (equal highs/lows included) or FVG edge from the 20 sessions before the week (`TGIF_OBJECTIVE_SESSIONS`), counted only when it lies beyond the weekly open; then Friday retracing into the weekly range without new extremes (Friday fade signal - bearish after bullish weeks, bullish after bearish weeks).
 - Scenario handling: if scanned on Thursday with no Friday bar, "Thursday already reversed" variant matches when Thursday closes against the leg without exceeding its extreme (`thursday_reversed_friday_continuation`). This is the only tradeable variant on daily data; the Friday-close stage is a label (see "Fire once per week" above) and is traded intraday by the confirmation watcher instead.
@@ -130,6 +141,7 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - Same rule on each timeframe, closed bars only: bullish if the bar closes above the previous bar's high, or sweeps its low and closes back above it (bearish mirrored; outside bar closing inside = Neutral). An unfinished week/month is skipped (mid-week reads W-1 vs W-2).
 
 ### `daily_bias_invalidation`
+Summary: Reads the daily bias from the last closed candle, then signals when it is invalidated (opposite sweep or a close through the candle's midpoint) and the next day continues the other way.
 - Establishes the daily bias from completed historical daily candles only.
 - Bullish bias: the reference close exceeds the prior day's high, or the reference candle sweeps the prior low and closes back inside (a candle-2 closure); bearish is the mirror; conflicting reads are Neutral.
 - Invalidation (only two things count, per the source): an opposing setup — the next candle sweeps the reference candle's bias-side extreme and closes back inside it (an opposite candle 2) — or EQ disrespect — the next candle closes through the reference candle's EQ.
@@ -140,6 +152,7 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 - The runner uses only data available through `as_of_date`, so live scans must provide closed bars and backtests cannot use future data.
 
 ### `protected_swings`
+Summary: Finds the swing low/high the trend should hold (after a liquidity sweep or an FVG tap) and signals on the day a close confirms it; trades in that bias direction.
 - Self-contained strategy module (`src/protected_swings.py`) implementing ICT-style **protected swings**: a swing high/low that is expected to hold while the trend continues. Detection primitives are discrete and unit-tested in `tests/test_protected_swings.py`; the thin `run_protected_swings` runner in `all_strategy.py` plugs them into the standard `StrategyExecution` contract.
 - **Swings**: fractal detection (`detect_swing_points`, `SWING_LEFT_BARS=SWING_RIGHT_BARS=2`) identifies candidate short-term swing highs/lows.
 - **FVG**: `find_fvgs` scans the recent window for 3-candle fair value gaps using the *same definition* as `ict_scanner.detect_bullish_fvg`/`detect_bearish_fvg` (`c1.high < c3.low` bullish with a bullish c2; `c1.low > c3.high` bearish with a bearish c2).
@@ -217,3 +230,44 @@ Tier classification is computed based on four factors:
   - `RELIANCE` → NSE session (default)
   - `OANDA:XAUUSD` → Forex 24x5 (auto-detected)
   - `NSE:RELIANCE` → NSE session (explicit)
+
+## Environment Variables
+All optional: an unset variable means the default shown. Set them in the host's environment (Render dashboard → Environment; locally `setx NAME "value"` then open a new terminal / relaunch the scanner). Secrets (tokens, keys) live only in the environment, never in the repo or `config/*.json`. Booleans accept 1/0/true/false/yes/no/on.
+
+### Data sources & sync (`market_data/config.py`)
+- `FETCH_TRADINGVIEW_DATA` (default true): allow TradingView fetches (forex, commodities, crypto, TV-sourced symbols)
+- `FETCH_NSE_DATA` (default true): allow NSE bhavcopy fetches; also gates the NSE holiday-list refresh
+- `AUTO_FETCH_MISSING_DATA` (default true): allow automatic backfill of missing dates
+- `BACKDATE_LOOKBACK_DAYS` (default 14, clamped 1–120): calendar days fetched around a backdate/historical test
+- `TRADINGVIEW_DEFAULT_EXCHANGE` (default `NSE`): exchange used for TradingView symbols without a prefix
+
+### Storage & state
+- `MARKET_DATA_DB_PATH` (default `data/market_data.db`): SQLite file location; point it at persistent storage on a host
+- `APP_STATE_STORE` (default unset = files): `db` keeps settings, watchlist, favorites, alerts, auth and automation state in the DB (`app_state`) instead of `config/` / `data/state/` files; needed on hosts with a wiped disk
+- `MARKET_SCANNER_SETTINGS_PATH` (default `config/app_settings.json`): alternative settings file
+- `TURSO_DATABASE_URL` (default unset = local SQLite): `libsql://…` URL; when set, the app runs on Turso instead of the local DB. Set only on the host, never on the local PC
+- `TURSO_AUTH_TOKEN`: Turso token for `TURSO_DATABASE_URL` (secret)
+- `TURSO_SYNC_URL` / `TURSO_SYNC_TOKEN` (local PC only): enable "Sync to online (Turso)" on the Database page and `python -m market_data.turso_sync`; the local app keeps using local SQLite
+
+### API & frontend
+- `CORS_ORIGINS` (default: local dev origins only): comma-separated extra allowed origins, e.g. the Vercel frontend URL
+- `NEXT_PUBLIC_API_URL` (frontend; default `http://127.0.0.1:8000`): API base URL. Baked in at `next build`, so rebuild after changing it
+
+### Push notifications (`api/push.py`)
+- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`: enable Telegram push (both required; token is secret)
+- `NTFY_TOPIC`: enable ntfy push to this topic (treat the topic name as a secret)
+- `NTFY_SERVER` (default `https://ntfy.sh`): self-hosted ntfy server
+
+### Live FX data (`src/ict_scanner.py`)
+- `OANDA_API_KEY`: when set, the CLI live scanner fetches forex from OANDA (practice account) instead of the default fetcher (secret)
+
+### Liquidity & IPO screen (`market_data/config.py`)
+- `LIQUID_AVG_DAILY_VALUE_CR` (1.0) / `BORDERLINE_AVG_DAILY_VALUE_CR` (0.25): avg daily traded value (₹ cr) for liquid / borderline
+- `LIQUID_MAX_ZERO_DAYS` (1) / `BORDERLINE_MAX_ZERO_DAYS` (4): max no-trade days in the lookback
+- `LIQUIDITY_LOOKBACK_DAYS` (60): sessions used for the liquidity screen
+- `MARKET_CAP_MIN_CR` (100.0), `FREE_FLOAT_MIN_PCT` (15.0), `BID_ASK_SPREAD_MAX_PCT` (2.0): liquidity screen thresholds
+- `IPO_MIN_AVG_DAILY_VALUE_CR` (defaults to the borderline value, 0.25): min avg daily value for an IPO to be tracked
+- `IPO_MIN_ACTIVE_RATIO` (0.5): min share of sessions traded since listing
+- `IPO_MASTER_REFRESH_DAYS` (1): refresh interval for the NSE equity master (`EQUITY_L.csv`)
+- `IPO_MAX_AGE_DAYS` (1095 = 3 years): how long after listing a symbol counts as an IPO
+- Changing a liquidity/IPO threshold changes which symbols are screened or tracked

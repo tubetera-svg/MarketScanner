@@ -167,6 +167,14 @@ export const addDays = (isoDate: string, days: number): string => {
 /** Day of week (0 = Sunday) of a "YYYY-MM-DD" date. */
 export const weekdayOf = (isoDate: string): number => new Date(`${isoDate.slice(0, 10)}T00:00:00Z`).getUTCDay();
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-10-20" -> "20-Oct-2026" (NSE circular style; trading date, never zone-converted). */
+export const formatTradingDate = (isoDate: string): string => {
+  const [year, month, day] = isoDate.slice(0, 10).split("-");
+  return `${day}-${MONTHS[Number(month) - 1] ?? month}-${year}`;
+};
+
 /** Whole calendar days from ``fromDate`` to ``toDate`` ("YYYY-MM-DD"). */
 export const daysBetween = (fromDate: string, toDate: string): number =>
   Math.round((Date.parse(`${toDate.slice(0, 10)}T00:00:00Z`) - Date.parse(`${fromDate.slice(0, 10)}T00:00:00Z`)) / 86_400_000);

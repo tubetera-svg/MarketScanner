@@ -705,10 +705,8 @@ def delete_ohlc(
     with _WRITE_LOCK:
         conn = connect(db_path)
         try:
-            before = conn.total_changes
             conn.execute(f"DELETE FROM ohlc_no_data{where}", params)
-            conn.execute(f"DELETE FROM ohlc_daily{where}", params)
-            deleted = conn.total_changes - before
+            deleted = max(conn.execute(f"DELETE FROM ohlc_daily{where}", params).rowcount, 0)
             conn.commit()
             log.info("Deleted %d OHLC rows%s", deleted, where and f" ({where})" or "")
             return deleted

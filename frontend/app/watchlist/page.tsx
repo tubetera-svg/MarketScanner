@@ -6,11 +6,13 @@
 // trigger NSE/TradingView requests.
 
 import { useEffect, useRef, useState } from "react";
-import { Database, Download, Pencil, RefreshCw, Save, SearchX, Trash2, X } from "lucide-react";
+import { CloudUpload, Database, Download, Pencil, RefreshCw, Save, SearchX, Trash2, X } from "lucide-react";
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
 import { FavoriteStar, useFavorites } from "../../components/Favorites";
-import { IST, addDays, formatDateTime, marketToday, useDisplayTimezone } from "../../components/time";
+import { IST, addDays, formatDateTime, marketToday, useDisplayTimezone, zoneLabel } from "../../components/time";
+import { apiFetch } from "../../components/auth";
+import PageGate from "../../components/PageGate";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const number = (value: number | null) => value == null ? "-" : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -69,6 +71,25 @@ type WatchlistClassification = {
 };
 type ApiWatchlistItem = WatchlistClassification & { symbol: string };
 type FnoInfo = { saved_at: string | null; count: number };
+type TursoScope = "all" | "data" | "settings";
+const tursoScopeLabels: Record<TursoScope, string> = { all: "OHLC + settings", data: "OHLC data only", settings: "Settings only" };
+type TursoTableStats = { local_rows: number; upserted: number; deleted: number };
+type TursoSyncStatus = {
+  available: boolean;
+  reason: string;
+  job: { running: boolean; mode?: string; table?: string | null; done?: number; total?: number; error?: string | null };
+  last: {
+    mode?: string;
+    scope?: TursoScope;
+    start_date?: string | null;
+    end_date?: string | null;
+    finished_at?: string;
+    tables?: Record<string, TursoTableStats>;
+    state?: { pushed: number; keys: string[] };
+    online_counts?: Record<string, number>;
+  };
+  local_counts: Record<string, number>;
+};
 type FnoChanges = { to_fno: string[]; to_equity: string[]; flag_updated: string[] };
 type FnoPreview = FnoChanges & { preview_id: string; members: number; list_added: string[]; list_removed: string[] };
 const fnoChangeGroups: { key: keyof FnoChanges; label: string }[] = [
@@ -109,7 +130,7 @@ const emptyGridFilters = {
 };
 type GridFilters = typeof emptyGridFilters;
 
-export default function WatchlistPage() {
+function WatchlistPageContent() {
   const displayTz = useDisplayTimezone();
   const [records, setRecords] = useState<RecordsPayload | null>(null); // null = not loaded yet
   const [meta, setMeta] = useState<MetaPayload | null>(null);
@@ -134,6 +155,10 @@ export default function WatchlistPage() {
   const [fnoInfo, setFnoInfo] = useState<FnoInfo | null>(null);
   const [fnoPreview, setFnoPreview] = useState<FnoPreview | null>(null);
   const [fnoBusy, setFnoBusy] = useState(false);
+  const [turso, setTurso] = useState<TursoSyncStatus | null>(null);
+  const [tursoScope, setTursoScope] = useState<TursoScope>("all");
+  const [tursoStart, setTursoStart] = useState("");
+  const [tursoEnd, setTursoEnd] = useState("");
   const [managing, setManaging] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -161,13 +186,22 @@ export default function WatchlistPage() {
   useEffect(() => {
     void refreshWatchlist();
     void loadFnoInfo();
+    void loadTursoSync();
   }, []);
+
+  // Poll the local -> Turso push only while one is running.
+  const tursoRunning = Boolean(turso?.job.running);
+  useEffect(() => {
+    if (!tursoRunning) return;
+    const timer = window.setInterval(() => void loadTursoSync(), 2000);
+    return () => window.clearInterval(timer);
+  }, [tursoRunning]);
 
   const refreshWatchlist = async () => {
     try {
       const [aliasData, categoryData] = await Promise.all([
-        fetch(`${API}/api/market-data/aliases`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
-        fetch(`${API}/api/watchlist`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
+        apiFetch(`${API}/api/market-data/aliases`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
+        apiFetch(`${API}/api/watchlist`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
       ]);
       const rawItems = categoryData?.symbols as ApiWatchlistItem[] | undefined;
       const categoryItems = Array.isArray(rawItems) ? rawItems : [];
@@ -281,7 +315,7 @@ export default function WatchlistPage() {
     if (filters.from) params.set("start_date", filters.from);
     if (filters.to) params.set("end_date", filters.to);
     try {
-      const response = await fetch(`${API}/api/market-data/records?${params.toString()}`, {
+      const response = await apiFetch(`${API}/api/market-data/records?${params.toString()}`, {
         cache: "no-store",
         signal: controller.signal,
       });
@@ -292,7 +326,7 @@ export default function WatchlistPage() {
       setMessage(`Loaded ${(data as RecordsPayload).rows.length} of ${(data as RecordsPayload).total.toLocaleString()} rows`);
       // Always refresh aggregates so the Source/Exchange dropdowns reflect the DB
       // even when a source (e.g. TRADINGVIEW) synced since the previous load.
-      void fetch(`${API}/api/market-data/meta?scope=${SCOPE}`, { cache: "no-store" })
+      void apiFetch(`${API}/api/market-data/meta?scope=${SCOPE}`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .then(setMeta)
         .catch(() => {});
@@ -309,8 +343,18 @@ export default function WatchlistPage() {
       setMessage("Select at least one symbol to delete.");
       return;
     }
-    const hasRange = !!filters.from && !!filters.to;
-    const scope = hasRange ? `${filters.from} → ${filters.to}` : "all dates (full history)";
+    const dateScope = filters.from && filters.to
+      ? `${filters.from} → ${filters.to}`
+      : filters.from
+        ? `${filters.from} onward`
+        : filters.to
+          ? `up to ${filters.to}`
+          : "all dates (full history)";
+    const scope = [
+      dateScope,
+      filters.source ? `source ${filters.source}` : "",
+      filters.exchange ? `exchange ${filters.exchange}` : "",
+    ].filter(Boolean).join(", ");
     if (!window.confirm(
       `Delete stored market data for ${selectedSymbols.size} symbol(s) over ${scope}?\n\n` +
       `This clears cached history so it can be re-synced. This cannot be undone.`,
@@ -318,7 +362,7 @@ export default function WatchlistPage() {
     setDeleting(true);
     setMessage("Deleting stored data…");
     try {
-      const response = await fetch(`${API}/api/market-data/records`, {
+      const response = await apiFetch(`${API}/api/market-data/records`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -371,10 +415,61 @@ export default function WatchlistPage() {
   // ---- NSE F&O list: local file, refreshed only on demand (preview → apply) ----
   const loadFnoInfo = async () => {
     try {
-      const response = await fetch(`${API}/api/watchlist/fno`, { cache: "no-store" });
+      const response = await apiFetch(`${API}/api/watchlist/fno`, { cache: "no-store" });
       if (response.ok) setFnoInfo(await response.json());
     } catch {
       // best-effort
+    }
+  };
+
+  const loadTursoSync = async () => {
+    try {
+      const response = await apiFetch(`${API}/api/market-data/turso-sync`, { cache: "no-store" });
+      if (!response.ok) return;
+      const data: TursoSyncStatus = await response.json();
+      setTurso((previous) => {
+        if (previous?.job.running && !data.job.running) {
+          setMessage(data.job.error ? `Turso sync failed: ${data.job.error}` : "Turso sync finished.");
+        }
+        return data;
+      });
+    } catch {
+      // best-effort
+    }
+  };
+
+  const startTursoSync = async (mode: "incremental" | "full") => {
+    if (tursoStart && tursoEnd && tursoStart > tursoEnd) {
+      setMessage("Turso sync: From date must be on or before To date.");
+      return;
+    }
+    const withData = tursoScope !== "settings";
+    const ranged = Boolean(tursoStart || tursoEnd);
+    const range = ranged ? `${tursoStart || "start"} → ${tursoEnd || "latest"}` : "all dates";
+    if (mode === "full" && !window.confirm(
+      `Mirror local → Turso (${tursoScopeLabels[tursoScope]}${withData ? `, ${range}` : ""})?\n\n` +
+      (withData
+        ? "• Online OHLC rows are overwritten with the local values\n" +
+          `• Online OHLC rows ${ranged ? "in this date range " : ""}that don't exist locally are DELETED\n`
+        : "") +
+      (tursoScope !== "data" ? "• Settings, watchlist and alerts online are replaced with the local copies\n" : "") +
+      "\nThe hosted app's automation markers are kept.",
+    )) return;
+    try {
+      const response = await apiFetch(`${API}/api/market-data/turso-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, scope: tursoScope, start_date: tursoStart || null, end_date: tursoEnd || null }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(`Turso sync: ${data.detail ?? response.statusText}`);
+        return;
+      }
+      setTurso(data);
+      setMessage(mode === "full" ? "Mirroring local data to Turso…" : "Pushing new rows to Turso…");
+    } catch {
+      setMessage("Turso sync: API unreachable.");
     }
   };
 
@@ -382,7 +477,7 @@ export default function WatchlistPage() {
     setFnoBusy(true);
     setMessage("Downloading the NSE F&O list…");
     try {
-      const response = await fetch(`${API}/api/watchlist/fno/preview`, { method: "POST" });
+      const response = await apiFetch(`${API}/api/watchlist/fno/preview`, { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "F&O preview failed");
       setFnoPreview(data as FnoPreview);
@@ -399,7 +494,7 @@ export default function WatchlistPage() {
     if (!fnoPreview) return;
     setFnoBusy(true);
     try {
-      const response = await fetch(`${API}/api/watchlist/fno/apply`, {
+      const response = await apiFetch(`${API}/api/watchlist/fno/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ preview_id: fnoPreview.preview_id }),
@@ -436,7 +531,7 @@ export default function WatchlistPage() {
     const purgeData = confirmDeleteStoredData(symbol);
     setMessage(`Removing ${symbol}…`);
     try {
-      const response = await fetch(`${API}/api/watchlist`, {
+      const response = await apiFetch(`${API}/api/watchlist`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, delete_data: purgeData }),
@@ -493,7 +588,7 @@ export default function WatchlistPage() {
     setSavingEdit(true);
     try {
       {
-        const renameResponse = await fetch(`${API}/api/watchlist`, {
+        const renameResponse = await apiFetch(`${API}/api/watchlist`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ old_symbol: editingSymbol, new_symbol: newSymbol, category: category || null, classification, delete_old_data: deleteOldData }),
@@ -517,7 +612,7 @@ export default function WatchlistPage() {
         setEditingSymbol(newSymbol);
         await refreshWatchlist();
       }
-      const aliasResponse = await fetch(`${API}/api/market-data/aliases`, {
+      const aliasResponse = await apiFetch(`${API}/api/market-data/aliases`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: newSymbol, aliases: aliasList }),
@@ -682,6 +777,58 @@ export default function WatchlistPage() {
           </div>
         )}
       </section>
+
+      {turso?.available && (
+        <section className="auto-scan">
+          <span className="auto-title"><CloudUpload size={14} /> Sync to online (Turso)</span>
+          <button className="test-button" type="button" onClick={() => void startTursoSync("incremental")} disabled={tursoRunning}>
+            <RefreshCw size={13} className={tursoRunning ? "spin" : undefined} /> Sync new rows
+          </button>
+          <button className="test-button danger" type="button" onClick={() => void startTursoSync("full")} disabled={tursoRunning}>
+            Full overwrite (mirror)
+          </button>
+          <label className="auto-meta">
+            What{" "}
+            <select value={tursoScope} onChange={(e) => setTursoScope(e.target.value as TursoScope)} disabled={tursoRunning}>
+              {(Object.keys(tursoScopeLabels) as TursoScope[]).map((key) => <option key={key} value={key}>{tursoScopeLabels[key]}</option>)}
+            </select>
+          </label>
+          {tursoScope !== "settings" && (
+            <>
+              <label className="auto-meta" title="OHLC trading dates, inclusive. Empty = all dates (Sync new rows then sends only rows stored since the last sync).">
+                From <input type="date" value={tursoStart} max={tursoEnd || undefined} onChange={(e) => setTursoStart(e.target.value)} disabled={tursoRunning} />
+              </label>
+              <label className="auto-meta">
+                To <input type="date" value={tursoEnd} min={tursoStart || undefined} onChange={(e) => setTursoEnd(e.target.value)} disabled={tursoRunning} />
+              </label>
+              {(tursoStart || tursoEnd) && (
+                <button className="seg" type="button" onClick={() => { setTursoStart(""); setTursoEnd(""); }} disabled={tursoRunning}>
+                  <X size={13} /> All dates
+                </button>
+              )}
+            </>
+          )}
+          <span className="auto-meta">
+            {tursoRunning
+              ? `${turso.job.mode} · ${turso.job.table ?? "starting"} ${turso.job.done ?? 0}/${turso.job.total ?? 0}`
+              : turso.job.error
+                ? `Last run failed: ${turso.job.error}`
+                : turso.last.finished_at
+                  ? `Last sync ${formatDateTime(turso.last.finished_at, displayTz)} ${zoneLabel(displayTz, turso.last.finished_at)} · ${turso.last.mode}` +
+                    ` · ${tursoScopeLabels[turso.last.scope ?? "all"]}` +
+                    (turso.last.start_date || turso.last.end_date ? ` · ${turso.last.start_date ?? "start"} → ${turso.last.end_date ?? "latest"}` : "")
+                  : "Never synced"}
+          </span>
+          {!tursoRunning && turso.last.tables && (
+            <span className="auto-meta">
+              {Object.entries(turso.last.tables).map(([name, stats]) =>
+                `${name}: local ${turso.local_counts[name] ?? stats.local_rows} · online ${turso.last.online_counts?.[name] ?? "-"} · written ${stats.upserted} · deleted ${stats.deleted}`,
+              ).join("  |  ")}
+              {turso.last.state && turso.last.state.keys.length > 0 ? `  |  settings: ${turso.last.state.pushed}/${turso.last.state.keys.length} updated` : ""}
+            </span>
+          )}
+        </section>
+      )}
 
       <section className="auto-scan">
         <span className="auto-title"><Database size={14} /> Symbols</span>
@@ -870,4 +1017,8 @@ export default function WatchlistPage() {
       <footer>Read-only view of data/market_data.db. Use Sync on the scanner page to backfill missing history.</footer>
     </main>
   );
+}
+
+export default function WatchlistPage() {
+  return <PageGate page="watchlist" active="/watchlist" title="Database"><WatchlistPageContent /></PageGate>;
 }

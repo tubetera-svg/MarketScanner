@@ -378,10 +378,11 @@ def discover_new_ipos(
     # so "sessions since listing" can be derived even when the symbol stops
     # trading (the bhavcopy only lists symbols that traded).
     window_stats: dict[str, dict] = {}
-    mod = _load_all_strategy()
+    from .nse_holidays import holiday_dates
+
     current = start_date
     scanned = 0
-    holidays = set(getattr(mod, "NSE_HOLIDAYS", set()))
+    holidays = holiday_dates()
     while current <= end_date:
         if current.weekday() < 5 and current not in holidays:
             rows = _bhavcopy_rows(current)

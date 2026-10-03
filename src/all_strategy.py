@@ -53,15 +53,14 @@ def _cache_daily_map(cache_key, value):
         _SYMBOL_DAILY_CACHE.pop(next(iter(_SYMBOL_DAILY_CACHE)))
     _SYMBOL_DAILY_CACHE[cache_key] = value
 
-# NSE holidays used by the historical runner. Keep this list updated when
-# NSE publishes the next annual trading calendar.
-NSE_HOLIDAYS = {
-    date(2026, 1, 26), date(2026, 3, 3), date(2026, 3, 26),
-    date(2026, 3, 31), date(2026, 4, 3), date(2026, 4, 14),
-    date(2026, 5, 1), date(2026, 5, 27), date(2026, 6, 26),
-    date(2026, 9, 14), date(2026, 10, 2), date(2026, 10, 20),
-    date(2026, 11, 9), date(2026, 11, 24), date(2026, 12, 25),
-}
+# NSE holidays (CM segment, live from NSE, refreshed once per IST day): the one
+# calendar shared with ict_scanner and market_data. NSE sessions only.
+import sys as _sys  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+if str(_Path(__file__).resolve().parent.parent) not in _sys.path:
+    _sys.path.append(str(_Path(__file__).resolve().parent.parent))
+from market_data.nse_holidays import NSE_HOLIDAYS  # noqa: E402
 
 
 def resolve_previous_working_date(requested_date: date) -> tuple[date, date, str | None]:

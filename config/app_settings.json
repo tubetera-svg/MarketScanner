@@ -1,4 +1,17 @@
 {
+  "access": {
+    "guest_banner": "Read-only view",
+    "guest_extra_info": false,
+    "guest_max_symbols": 90,
+    "guest_pages": [
+      "alerts",
+      "ipo",
+      "scanner"
+    ],
+    "guest_past_dates": true,
+    "guest_scan_cooldown_seconds": 60,
+    "session_days": 9
+  },
   "automation": {
     "data_auto_sync": {
       "enabled": true,

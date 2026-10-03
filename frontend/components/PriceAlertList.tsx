@@ -15,6 +15,7 @@ import PriceAlertForm, { type AlertPayload } from "./PriceAlertForm";
 import { formatDateTime, formatTime, getDisplayTimezone, useDisplayTimezone } from "./time";
 import { saveAlert } from "./PriceAlertPanel";
 import { refreshPriceAlerts, subscribePriceAlerts } from "./priceAlertFeed";
+import { apiFetch, isAdmin, useAuth } from "./auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -65,6 +66,7 @@ function OutcomeChip({ label, outcome }: { label: string; outcome: AlertOutcome 
  */
 export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: string, interval?: "5m") => void }) {
   useDisplayTimezone();
+  const admin = isAdmin(useAuth()); // read-only guests: no select/edit/delete, no push details
   const [status, setStatus] = useState<PriceAlertStatus | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,7 +89,7 @@ export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: 
   const request = async (url: string, init: RequestInit) => {
     setBusy(true);
     try {
-      await fetch(url, { ...init, headers: { "Content-Type": "application/json" } });
+      await apiFetch(url, { ...init, headers: { "Content-Type": "application/json" } });
     } catch {
       // the next poll shows the real state
     } finally {
@@ -117,7 +119,7 @@ export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: 
   const checkNow = async () => {
     setChecking(true);
     try {
-      const response = await fetch(`${API}/api/price-alerts/check`, { method: "POST" });
+      const response = await apiFetch(`${API}/api/price-alerts/check`, { method: "POST" });
       if (response.ok) setStatus((await response.json()) as PriceAlertStatus);
     } catch {
       // keep the last status
@@ -200,14 +202,14 @@ export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: 
             {status.running && status.near_pct ? ` · 5 min within ${status.near_pct}%` : ""}
             {!status.running ? " · turn on in Settings" : ""}
           </small>
-          <small title={status.last_push_error ?? undefined}>
+          {admin && <small title={status.last_push_error ?? undefined}>
             Push: {status.push_enabled ? (channels.length ? channels.join(" + ") : "on, no channel set") : "off"}
             {status.last_push_error ? " · last send failed" : ""}
-          </small>
+          </small>}
           <div className="pa-watcher-actions">
-            <button type="button" className="chart-tool-btn" onClick={() => void checkNow()} disabled={checking} title="Check all active alerts now (open markets only)">
+            {admin && <button type="button" className="chart-tool-btn" onClick={() => void checkNow()} disabled={checking} title="Check all active alerts now (open markets only)">
               <RefreshCw size={11} className={checking ? "spin" : undefined} /> Check now
-            </button>
+            </button>}
             {notifyPermission === "default" ? (
               <button type="button" className="chart-tool-btn" onClick={() => void Notification.requestPermission().then(setNotifyPermission)}>
                 <BellRing size={11} /> Desktop alerts
@@ -251,7 +253,7 @@ export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: 
           <p className="pa-empty">Nothing in this view.</p>
         ) : (
           <div className="pa-table-wrap">
-            <table className="pa-table">
+            <table className={`pa-table${admin ? "" : " readonly"}`}>
               <thead>
                 <tr>
                   <th className="pa-check">

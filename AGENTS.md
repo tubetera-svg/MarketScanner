@@ -30,7 +30,7 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 | Task | Start at | Also update |
 |---|---|---|
 | New/changed strategy | `strategy_registry()` in `all_strategy.py`, or a `src/<name>.py` module | `config/strategy_info.txt`, `strategy_flags.json` default, `tests/test_<name>.py`, backtest parity |
-| Session/timezone/holiday | `detect_session`, `NSE_HOLIDAYS`, `is_*_open`, `is_daily_bar_ready` in `ict_scanner.py`; time helpers §2b | `session-timezone-audit` skill, `tests/test_time_contract.py` |
+| Session/timezone/holiday | `detect_session`, `NSE_HOLIDAYS` (live view from `market_data/nse_holidays.py`, NSE CM only), `is_*_open`, `is_daily_bar_ready` in `ict_scanner.py`; time helpers §2b | `session-timezone-audit` skill, `tests/test_time_contract.py` |
 | New data source / sync | `market_data/sources/`, `service.py`, `auto_sync.py`, `config.py` env flags | `tests/test_market_data.py`, `test_data_cutoffs.py` |
 | Backtest | `src/backtest/engine.py`, `POST /api/backtest` | `docs/BACKTEST_ENGINE_SPEC.md`, `backtest-validation` skill |
 | Alerts / push | `api/price_alerts.py`, `api/push.py`, `frontend/components/PriceAlert*` | `tests/test_price_alerts.py`, `test_push.py` |
@@ -40,7 +40,6 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 - Targeted test: `python -m pytest tests/test_<area>.py -q`
 - Frontend typecheck: `Push-Location frontend; npx.cmd tsc --noEmit; Pop-Location`
 - API: `python -m uvicorn api.main:app --reload --port 8000`
-- Known pre-existing failure: `tests/test_market_data.py::test_source_flags_are_independent` (needs live TradingView).
 
 **Domain facts:** NSE sessions are IST (09:15–15:30); forex/commodities (`FOREX_24_5`) and ICT kill zones / Silver Bullet use NY/ET with 17:00 NY rollover; crypto days are UTC. NSE daily bars are final after bhavcopy publish (17:00 IST, `is_daily_bar_ready`). TradingView intraday rows carry UTC open instants; daily rows carry the market's trading date (§2b). Sources are gated independently by env flags `FETCH_TRADINGVIEW_DATA` / `FETCH_NSE_DATA` / `AUTO_FETCH_MISSING_DATA`.
 

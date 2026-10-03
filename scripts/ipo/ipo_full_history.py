@@ -116,7 +116,9 @@ def bhavcopy_all_rows(trade_date: date) -> dict[str, dict]:
 
 
 def month_trading_days(year: int, month: int) -> list[date]:
-    holidays = set(getattr(mod, "NSE_HOLIDAYS", set()))
+    from market_data.nse_holidays import holiday_dates
+
+    holidays = holiday_dates()
     nxt = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
     days, cur = [], date(year, month, 1)
     while cur < nxt:

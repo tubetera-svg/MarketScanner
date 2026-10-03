@@ -28,10 +28,14 @@ def _restore_fetchers():
     reset_fetchers()
 
 
-def monday_before(d: date) -> date:
-    """Monday of the week containing `d - 7 days` -> stable Mon-Fri window."""
-    delta = d.weekday()
-    return d - timedelta(days=delta + 7)
+# Fixed past window (Mon 2026-09-21 .. Wed 2026-09-30) with no NSE holidays, so
+# "every weekday is a trading day" holds regardless of the host clock.
+FIXED_START, FIXED_END = date(2026, 9, 21), date(2026, 9, 30)
+
+
+def weekdays(start: date, end: date) -> list[date]:
+    days = (start + timedelta(offset) for offset in range((end - start).days + 1))
+    return [day for day in days if day.weekday() < 5]
 
 
 def row(source, symbol, exchange, day, close=100.0):
@@ -54,10 +58,7 @@ def seed_range(source, symbol, exchange, days):
 
 # ---------------------------------------------------------------- duplicates
 def test_duplicate_prevention(tmp_db):
-    day = date.today()
-    while day.weekday() >= 5:
-        day = date.today() - timedelta(days=1)
-    record = row("NSE", "RELIANCE", "NSE", day)
+    record = row("NSE", "RELIANCE", "NSE", FIXED_START)
 
     assert database.upsert_ohlc([record]) == 1
     # Same (source, exchange, symbol, date) again -> no new row, values kept
@@ -79,12 +80,8 @@ def test_duplicate_prevention(tmp_db):
 
 # ------------------------------------------------------------- cached reads
 def test_cached_request_skips_fetch(tmp_db, clean_flags):
-    end = date.today()
-    start = monday_before(end)
-    expected = [
-        day for day in (start + timedelta(offset) for offset in range((end - start).days + 1))
-        if day.weekday() < 5 and day <= end
-    ]
+    start, end = FIXED_START, FIXED_END
+    expected = weekdays(start, end)
     seed_range("NSE", "RELIANCE", "NSE", expected)
 
     calls = []
@@ -104,12 +101,8 @@ def test_cached_request_skips_fetch(tmp_db, clean_flags):
 
 # ------------------------------------------------------- missing-date fetch
 def test_missing_dates_are_fetched_and_stored(tmp_db, clean_flags):
-    end = date.today()
-    start = monday_before(end)
-    all_days = [
-        day for day in (start + timedelta(offset) for offset in range((end - start).days + 1))
-        if day.weekday() < 5 and day <= end
-    ]
+    start, end = FIXED_START, FIXED_END
+    all_days = weekdays(start, end)
     have_days = all_days[:-2]  # last two trading days missing
     seed_range("NSE", "RELIANCE", "NSE", have_days)
     missing = [d for d in all_days if d not in set(have_days)]
@@ -144,8 +137,7 @@ def test_missing_dates_are_fetched_and_stored(tmp_db, clean_flags):
 
 # ------------------------------------------------------------ source flags
 def test_source_flags_are_independent(tmp_db, clean_flags):
-    end = date.today()
-    start = monday_before(end)
+    start, end = FIXED_START, FIXED_END
 
     nse_calls, tv_calls = [], []
 
@@ -155,7 +147,8 @@ def test_source_flags_are_independent(tmp_db, clean_flags):
 
     def fake_tv(spec):
         tv_calls.append(spec)
-        return []
+        # Empty upstream data raises FetchError, so return rows to prove the fetch ran.
+        return [row("TRADINGVIEW", spec["store_symbol"], "OANDA", day) for day in spec["dates"]]
 
     register_fetcher("NSE", fake_nse)
     register_fetcher("TRADINGVIEW", fake_tv)
@@ -167,7 +160,7 @@ def test_source_flags_are_independent(tmp_db, clean_flags):
     assert nse_calls == []  # blocked by flag
 
     result = get_ohlc("TRADINGVIEW", "OANDA:XAUUSD", start, end, db_path=tmp_db)
-    assert result.rows == []
+    assert result.fetched_new > 0
     assert tv_calls != []  # TradingView still allowed
 
     # Fresh TV symbol so earlier no-data marks do not short-circuit this check
@@ -182,12 +175,8 @@ def test_source_flags_are_independent(tmp_db, clean_flags):
 # ------------------------------------------------- auto-fetch master switch
 def test_auto_fetch_disabled_returns_local_only(tmp_db, clean_flags):
     clean_flags.setenv("AUTO_FETCH_MISSING_DATA", "false")
-    end = date.today()
-    start = monday_before(end)
-    days = [
-        day for day in (start + timedelta(offset) for offset in range((end - start).days + 1))
-        if day.weekday() < 5 and day <= end
-    ]
+    start, end = FIXED_START, FIXED_END
+    days = weekdays(start, end)
 
     calls = []
 
@@ -214,12 +203,8 @@ def test_auto_fetch_disabled_returns_local_only(tmp_db, clean_flags):
 
 
 def test_fetch_failure_raises_and_keeps_local_rows(tmp_db, clean_flags):
-    end = date.today()
-    start = monday_before(end)
-    days = [
-        day for day in (start + timedelta(offset) for offset in range((end - start).days + 1))
-        if day.weekday() < 5 and day <= end
-    ]
+    start, end = FIXED_START, FIXED_END
+    days = weekdays(start, end)
     seed_range("NSE", "SBIN", "NSE", days[:1])
 
     def broken_fetch(spec):
@@ -256,12 +241,23 @@ def test_wal_mode_enabled(tmp_db):
 
 def test_unique_constraint_columns(tmp_db):
     """Same (source, exchange, symbol, date) collides even across sources."""
-    day = min(date.today(), date.today())
+    day = FIXED_START
     database.upsert_ohlc([row("NSE", "XYZ", "NSE", day)])
     database.upsert_ohlc([row("TRADINGVIEW", "XYZ", "MCX", day)])  # other source: ok
     assert database.count_rows(tmp_db) == 2
     database.upsert_ohlc([row("NSE", "xyz", "NSE", day)])  # case-insensitive dup
     assert database.count_rows(tmp_db) == 2
+
+
+def test_delete_ohlc_counts_only_ohlc_rows(tmp_db):
+    """No-data markers are removed too but not counted as deleted rows."""
+    days = [date(2026, 9, 28), date(2026, 9, 29), date(2026, 9, 30)]
+    database.upsert_ohlc([row("NSE", "XYZ", "NSE", d) for d in days])
+    database.mark_no_data([{"source": "NSE", "symbol": "XYZ", "exchange": "NSE", "date": "2026-10-01"}])
+    assert database.delete_ohlc(symbols=["XYZ"], start_date="2026-09-29") == 2
+    assert database.count_rows(tmp_db) == 1
+    assert database.delete_ohlc(symbols=["XYZ"]) == 1
+    assert database.delete_ohlc(symbols=["XYZ"]) == 0  # marker already gone
 
 
 def test_resolve_session_source():
@@ -272,8 +268,7 @@ def test_resolve_session_source():
 
 
 def test_sync_symbol_range_accepts_explicit_date_range(tmp_db):
-    end = date.today()
-    start = end - timedelta(days=4)
+    start, end = date(2026, 9, 21), date(2026, 9, 25)
     requested = []
 
     def fake_nse(spec):
@@ -295,12 +290,8 @@ def test_sync_symbol_range_accepts_explicit_date_range(tmp_db):
 # ------------------------------------------------------------------ endpoint
 def test_ohlc_endpoint(tmp_db, clean_flags):
     fastapi_testclient = pytest.importorskip("fastapi.testclient")
-    end = date.today()
-    start = monday_before(end)
-    days = [
-        day for day in (start + timedelta(offset) for offset in range((end - start).days + 1))
-        if day.weekday() < 5 and day <= end
-    ]
+    start, end = FIXED_START, FIXED_END
+    days = weekdays(start, end)
     seed_range("NSE", "RELIANCE", "NSE", days)
 
     def fake_nse(spec):
@@ -310,7 +301,7 @@ def test_ohlc_endpoint(tmp_db, clean_flags):
 
     from api import main as api_main
 
-    client = fastapi_testclient.TestClient(api_main.app)
+    client = fastapi_testclient.TestClient(api_main.app, client=("127.0.0.1", 50000))
 
     resp = client.get(
         "/ohlc",
@@ -434,9 +425,7 @@ def test_auto_sync_runs_once_per_final_session(tmp_db, clean_flags):
     import market_data.auto_sync as auto_sync
     import market_data.service as service
 
-    final = date.today() - timedelta(days=1)
-    while final.weekday() >= 5:
-        final -= timedelta(days=1)
+    final = FIXED_END
     for module in (service, auto_sync):
         clean_flags.setattr(module, "latest_final_session", lambda source, now=None, symbol=None: final)
     calls = []

@@ -5,6 +5,8 @@ Exposed paths:
     GET  /api/ohlc        (alias, consistent with other /api endpoints)
     POST /api/market-data/sync   (optional bulk backfill trigger)
     GET  /api/market-data/auto-sync  (per-market daily auto-sync status; on/off via PUT /api/settings)
+    GET  /api/market-data/turso-sync (local -> Turso push status)
+    POST /api/market-data/turso-sync {mode: incremental|full, scope: all|data|settings, start_date?, end_date?} (local API only)
     GET  /api/market-data/records   ?scope=watchlist|all&source=&exchange=&q=&start_date=&end_date=&sort=asc|desc&limit=&offset=&symbols=NSE:A,OANDA:B
     GET  /api/market-data/meta      ?scope=watchlist|all
     GET  /api/market-data/watchlist (static symbol list powering the picker UI)
@@ -26,7 +28,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from . import database, favorites
+from . import database, favorites, turso_sync
 from .config import (
     IPO_MAX_AGE_DAYS,
     KNOWN_SOURCES,
@@ -154,6 +156,38 @@ _AUTO_SYNC = None
 def auto_sync_status() -> dict:
     """Per-market auto-sync state (NSE after bhavcopy, forex after 17:00 NY)."""
     return _auto_sync().status()
+
+
+class TursoSyncRequest(BaseModel):
+    mode: str = Field("incremental", pattern="^(incremental|full)$")
+    scope: str = Field("all", pattern="^(all|data|settings)$")
+    start_date: Optional[date] = None  # trading dates, inclusive; limit the dated tables
+    end_date: Optional[date] = None
+
+
+@router.get("/api/market-data/turso-sync")
+def turso_sync_status() -> dict:
+    """Local -> Turso push: availability, running job progress, last result."""
+    return turso_sync.status()
+
+
+@router.post("/api/market-data/turso-sync")
+def turso_sync_start(request: TursoSyncRequest) -> dict:
+    """Start a push of the local DB to Turso (local API with TURSO_SYNC_URL only)."""
+    available, reason = turso_sync.availability()
+    if not available:
+        raise HTTPException(status_code=403, detail=reason)
+    try:
+        return turso_sync.start(
+            request.mode,
+            request.scope,
+            request.start_date.isoformat() if request.start_date else None,
+            request.end_date.isoformat() if request.end_date else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/api/market-data/sync")

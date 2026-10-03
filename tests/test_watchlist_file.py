@@ -153,7 +153,7 @@ def test_remove_endpoint_purges_only_when_asked(wl_files, monkeypatch):
     watch.write_text("NSE:A\nNSE:B\n", encoding="utf-8")
     calls = []
     monkeypatch.setattr(api_main.service, "purge_symbol_data", lambda s: calls.append(s) or {"ohlc_rows": 0})
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.app, client=("127.0.0.1", 50000))
     assert client.request("DELETE", "/api/watchlist", json={"symbol": "NSE:A"}).json()["purged"] is None
     assert client.request("DELETE", "/api/watchlist", json={"symbol": "NSE:B", "delete_data": True}).json()["purged"] == {"ohlc_rows": 0}
     watch.write_text("NSE:C\n", encoding="utf-8")

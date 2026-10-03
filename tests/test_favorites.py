@@ -40,7 +40,7 @@ def test_corrupt_file_reads_empty(tmp_path):
 
 
 def test_routes_round_trip():
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.app, client=("127.0.0.1", 50000))
     assert client.post("/api/favorites", json={"symbol": "nse:sbin"}).json() == {"symbols": ["NSE:SBIN"]}
     assert client.get("/api/favorites").json() == {"symbols": ["NSE:SBIN"]}
     assert client.request("DELETE", "/api/favorites", json={"symbol": "NSE:SBIN"}).json() == {"symbols": []}
@@ -58,7 +58,7 @@ def test_remove_favorites_and_rename():
 def test_watchlist_delete_drops_star(monkeypatch):
     fav.add_favorite("NSE:SBIN")
     monkeypatch.setattr(api_main.service, "remove_from_watchlist", lambda symbol: [])
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.app, client=("127.0.0.1", 50000))
     assert client.request("DELETE", "/api/watchlist", json={"symbol": "NSE:SBIN"}).status_code == 200
     assert fav.load_favorites() == []
 
@@ -69,7 +69,7 @@ def test_ipo_delete_drops_star(monkeypatch):
     fav.add_favorite("NSE:NEWIPO")
     fav.add_favorite("NSE:KEEP")
     monkeypatch.setattr(ipo, "remove_ipo_completely", lambda symbol: {})
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.app, client=("127.0.0.1", 50000))
     assert client.request("DELETE", "/api/market-data/ipo", json={"symbols": ["nse:newipo"]}).status_code == 200
     assert fav.load_favorites() == ["NSE:KEEP"]
 
@@ -78,7 +78,7 @@ def test_watchlist_rename_moves_star(monkeypatch):
     fav.add_favorite("NSE:OLD")
     monkeypatch.setattr(api_main.service, "rename_in_watchlist", lambda *args: [{"symbol": "NSE:NEW"}])
     monkeypatch.setattr(api_main.service.module, "categorize_symbol", lambda value: {"symbol": "NSE:" + value.upper()})
-    client = TestClient(api_main.app)
+    client = TestClient(api_main.app, client=("127.0.0.1", 50000))
     response = client.put("/api/watchlist", json={"old_symbol": "NSE:OLD", "new_symbol": "new"})
     assert response.status_code == 200
     assert fav.load_favorites() == ["NSE:NEW"]

@@ -4,6 +4,7 @@
 // subscriber sees the new state at once.
 
 import type { PriceAlertStatus } from "./priceAlertShared";
+import { apiFetch } from "./auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const POLL_MS = 15000;
@@ -16,12 +17,20 @@ let timer: number | null = null;
 let requested = 0; // sequence of started requests
 let applied = 0;   // sequence of the newest response applied (drops out-of-order replies)
 let inFlight = 0;
+let forbidden = false; // 403 = read-only guest without the Alerts page: stop polling
 
 export const refreshPriceAlerts = (): Promise<void> => {
   const seq = ++requested;
   inFlight += 1;
-  return fetch(`${API}/api/price-alerts`, { cache: "no-store" })
-    .then((response) => response.json())
+  return apiFetch(`${API}/api/price-alerts`, { cache: "no-store" })
+    .then((response) => {
+      if (response.status === 403) {
+        forbidden = true;
+        if (timer !== null) { window.clearInterval(timer); timer = null; }
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
     .then((data: PriceAlertStatus) => {
       if (seq < applied) return;
       applied = seq;
@@ -42,6 +51,7 @@ export const refreshPriceAlerts = (): Promise<void> => {
 export const subscribePriceAlerts = (listener: Listener): (() => void) => {
   listeners.add(listener);
   if (latest) listener(latest, false);
+  if (forbidden) return () => { listeners.delete(listener); };
   if (timer === null) timer = window.setInterval(() => { void refreshPriceAlerts(); }, POLL_MS);
   if (!inFlight) void refreshPriceAlerts();
   return () => {

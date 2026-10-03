@@ -7,8 +7,9 @@ import { useState } from "react";
 import Navigation from "../../components/Navigation";
 import PriceAlertList from "../../components/PriceAlertList";
 import TradingViewChartModal, { type ChartTarget } from "../../components/TradingViewChartModal";
+import PageGate from "../../components/PageGate";
 
-export default function AlertsPage() {
+function AlertsPageContent() {
   const [chart, setChart] = useState<ChartTarget | null>(null);
 
   return (
@@ -28,4 +29,8 @@ export default function AlertsPage() {
       {chart && <TradingViewChartModal key={chart.symbol} chart={chart} onClose={() => setChart(null)} />}
     </main>
   );
+}
+
+export default function AlertsPage() {
+  return <PageGate page="alerts" active="/alerts" title="Alerts"><AlertsPageContent /></PageGate>;
 }
