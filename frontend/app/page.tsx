@@ -6,7 +6,9 @@ import TradingViewChartModal, { type ChartLevel, type ChartTarget } from "../com
 import { useStatusFlash } from "../components/useStatusFlash";
 import { getSoundSettings, playAlertSound } from "../components/alertSound";
 import { fetchAppSettings } from "../components/appSettings";
-import { IST, NEW_YORK, addDays, calendarDateIn, formatDayDateTime, formatInZone, formatTime, marketToday, useDisplayTimezone, weekdayOf, zoneLabel, zoneOffsetMs } from "../components/time";
+import { IST, NEW_YORK, addDays, calendarDateIn, formatDayDateTime, formatInZone, formatTime, marketToday, useDisplayTimezone, wallLabel, weekdayOf, zoneLabel, zoneOffsetMs } from "../components/time";
+import CopyResultsButton from "../components/CopyResultsButton";
+import { autoColumns, tvSymbol, type Cell, type CopyTable } from "../components/copyRows";
 import Navigation from "../components/Navigation";
 import { FavoriteStar, useFavorites } from "../components/Favorites";
 import { renderInfoBody } from "../components/InfoBody";
@@ -1145,6 +1147,47 @@ function HomeContent() {
     }
     return Array.from(map.values()).sort((a, b) => b.items.length - a.items.length || a.symbol.localeCompare(b.symbol));
   }, [strategyGroups]);
+  // Copy-to-clipboard builders for the result panels (raw values; times in the display zone).
+  const strategyCopyTable = (items: { label: string; side: "bull" | "bear"; row: StrategyRow }[]): CopyTable => {
+    const rows = items.map((item) => item.row as unknown as Record<string, unknown>);
+    const columns = autoColumns(rows, ["symbol", "signal_date", "state", "entry", "sl", "target", "rr", "tag", "note"], ["tradingview_link"], ["direction"]);
+    return {
+      header: ["strategy", "side", ...columns],
+      rows: items.map((item, i) => [item.label, item.side, ...columns.map((key) => rows[i][key] as Cell)]),
+    };
+  };
+  const strategyCopyItems = (groups: StrategyGroup[]) => groups.flatMap((group) => [
+      ...group.bullish.map((row) => ({ label: group.label, side: "bull" as const, row })),
+      ...group.bearish.map((row) => ({ label: group.label, side: "bear" as const, row })),
+  ]);
+  // "Copy all" follows the on-screen grouping (strategy order or symbol order).
+  const allStrategyCopyItems = () => strategyResultsGroupBy === "symbol"
+    ? strategySymbolGroups.flatMap((group) => group.items)
+    : strategyCopyItems(strategyGroups);
+  const strategyCopySymbols = (items: { row: StrategyRow }[]) => items.map(({ row }) => tvSymbol(row.symbol, row.tradingview_link, "NSE"));
+  const silverBulletCopyTable = (): CopyTable => {
+    const signals = silverBullet?.signals.slice().reverse() ?? [];
+    return {
+      header: ["symbol", "direction", `signal_time (${zoneLabel(displayTz, signals[0]?.signal_time)})`, "range_high", "range_low", "entry", "stop_loss", "target", "note"],
+      rows: signals.map((s) => [s.symbol, s.direction, wallLabel(s.signal_time, displayTz).replace("T", " "), s.range_high, s.range_low, s.entry, s.stop_loss, s.target, s.note]),
+    };
+  };
+  const ltfCopyItems = () => [
+    ...ltfGroups.live.map((setup) => ({ group: "live", setup })),
+    ...ltfGroups.armed.map((setup) => ({ group: "armed", setup })),
+    ...ltfGroups.earlier.map((setup) => ({ group: "earlier", setup })),
+  ];
+  const ltfCopyTable = (): CopyTable => {
+    const items = ltfCopyItems();
+    const firstTrigger = items.find((item) => item.setup.triggered_at)?.setup.triggered_at ?? undefined;
+    return {
+      header: ["group", "symbol", "strategy", "direction", "state", "zone_low", "zone_high", "invalidation", "entry", "sl", "target", "signal_date", "valid_until", `triggered_at (${zoneLabel(displayTz, firstTrigger)})`, "market", "note"],
+      rows: items.map(({ group, setup: s }) => [
+        group, s.symbol, s.strategy, s.direction > 0 ? "bull" : "bear", s.state, s.zone_low, s.zone_high, s.invalidation, s.entry, s.sl, s.target,
+        s.signal_date, s.valid_until, s.triggered_at ? wallLabel(s.triggered_at, displayTz).replace("T", " ") : "", s.market, s.note,
+      ]),
+    };
+  };
   const renderSignalChip = (row: StrategyRow, side: "bull" | "bear", strategy: string, key: string, heading: string) => (
     <a key={key} href={row.tradingview_link ?? "#"} rel="noreferrer" className={`signal-chip ${side}`} onClick={(event) => openTradingViewChart(event, row)}>
       {side === "bull" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
@@ -1411,7 +1454,7 @@ function HomeContent() {
               </section>
             {silverBulletLoading || silverBullet?.scan_date ? (
               <section className={`panel silver-bullet-results${dateTransition ? " date-refresh" : ""}`} id="alerts" ref={(el) => { sectionRefs.current.alerts = el; }} style={{ marginBottom: 16 }}>
-                <div className="panel-heading"><span>AM Silver Bullet alerts</span><small>New York session — commodities only</small></div>
+                <div className="panel-heading"><span>AM Silver Bullet alerts</span><small>New York session — commodities only</small>{!silverBulletLoading && silverBullet?.signals.length ? <CopyResultsButton what="Silver Bullet alerts" table={silverBulletCopyTable} symbols={() => (silverBullet?.signals ?? []).map((s) => tvSymbol(s.symbol))} /> : null}</div>
                 {silverBulletLoading ? (
                   <div className="silver-bullet-loading" role="status" aria-live="polite">
                     <RefreshCw size={15} className="spin" />
@@ -1454,6 +1497,7 @@ function HomeContent() {
                     {ltf.running ? `watching ${ltf.armed_count} armed · ${ltf.timeframe} CISD` : "watcher off (Settings)"}
                     {ltf.last_check_at ? ` · checked ${formatTime(ltf.last_check_at, displayTz)}` : ""}
                   </small>
+                  {ltf.setups.length > 0 && <CopyResultsButton what="intraday confirmations" table={ltfCopyTable} symbols={() => ltfCopyItems().map(({ setup }) => tvSymbol(setup.symbol, null, setup.market === "NSE" ? "NSE" : undefined))} />}
                   {admin && <button className="test-button button-secondary" type="button" onClick={checkLtfNow} disabled={ltfChecking}>
                     {ltfChecking ? <RefreshCw size={12} className="spin" /> : <RefreshCw size={12} />} Check now
                   </button>}
@@ -1662,13 +1706,14 @@ Unticking M/W/D bias skips its calculation; unticking all three skips all extra 
                 </button>
               ))}
             </div>
+            <CopyResultsButton what="all strategy results" table={() => strategyCopyTable(allStrategyCopyItems())} symbols={() => strategyCopySymbols(allStrategyCopyItems())} />
           </div>
         )}
         {strategyGroups.length > 0 && strategyResultsGroupBy === "strategy" && (
           <div className="strategy-results">
             {strategyGroups.map((group) => (
               <details key={group.strategy} className="strategy-result" open>
-                <summary>{group.label}{group.total > 0 && (group.has_live_data ? <span className="mode-badge live" style={{ marginLeft: 8 }}><Radio size={10} /> Live</span> : <span className="mode-badge hist" style={{ marginLeft: 8 }}><History size={10} /> Historic</span>)} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull_count} BULL</span><span className="badge bearish">{group.bear_count} BEAR</span></span></summary>
+                <summary>{group.label}{group.total > 0 && (group.has_live_data ? <span className="mode-badge live" style={{ marginLeft: 8 }}><Radio size={10} /> Live</span> : <span className="mode-badge hist" style={{ marginLeft: 8 }}><History size={10} /> Historic</span>)} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull_count} BULL</span><span className="badge bearish">{group.bear_count} BEAR</span>{group.bull_count + group.bear_count > 0 && <CopyResultsButton compact what={`${group.label} results`} table={() => strategyCopyTable(strategyCopyItems([group]))} symbols={() => strategyCopySymbols(strategyCopyItems([group]))} />}</span></summary>
                 {group.bull_count + group.bear_count > 0 ? (
                   <div className="signal-list">
                     {group.bullish.map((row) => renderSignalChip(row, "bull", group.strategy, `bull-${row.symbol}`, row.symbol))}
@@ -1686,7 +1731,7 @@ Unticking M/W/D bias skips its calculation; unticking all three skips all extra 
             <div className="strategy-results">
               {strategySymbolGroups.map((group) => (
                 <details key={group.symbol} className="strategy-result" open>
-                  <summary>{group.symbol} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull} BULL</span><span className="badge bearish">{group.bear} BEAR</span></span></summary>
+                  <summary>{group.symbol} <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 6}}><span className="badge bullish">{group.bull} BULL</span><span className="badge bearish">{group.bear} BEAR</span><CopyResultsButton compact what={`${group.symbol} results`} table={() => strategyCopyTable(group.items)} /></span></summary>
                   <div className="signal-list">
                     {group.items.map((item) => renderSignalChip(item.row, item.side, item.strategy, `${item.strategy}-${item.side}-${group.symbol}`, item.label))}
                   </div>

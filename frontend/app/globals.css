@@ -437,6 +437,11 @@ details > summary::-webkit-details-marker { display: none; }
 
 /* Client-side grouping toggle */
 .tracker-groupby { align-items: center; display: inline-flex; gap: 6px; }
+.copy-results { align-items: center; display: inline-flex; gap: 6px; font-weight: 400; }
+.copy-results .button-secondary { min-height: 26px; padding: 3px 8px; }
+.copy-results.compact .button-secondary { min-height: 22px; padding: 2px 6px; }
+.copy-results-status { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.copy-results-status:empty { display: none; }
 
 /* Watchlist DB browser */
 .top-link {

@@ -14,6 +14,8 @@ import Link from "next/link";
 import { RefreshCw, Rocket, SearchX, ScanLine, SlidersHorizontal, Trash2, Wrench } from "lucide-react";
 import { apiFetch, isAdmin, useAuth } from "../../components/auth";
 import PageGate from "../../components/PageGate";
+import CopyResultsButton from "../../components/CopyResultsButton";
+import { tvSymbol, type CopyTable } from "../../components/copyRows";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -256,6 +258,20 @@ function IPOPageContent() {
     });
     return out;
   }, [items, query, year, bucket, freshness, liquidOnly, favoritesOnly, favorites, signalFilter, minPct, maxPct, neverAbove, sortKey, sortDir]);
+  // Copy the filtered, sorted setups (raw values; percentages are already in %).
+  const ipoCopyTable = (): CopyTable => ({
+    header: [
+      "symbol", "exchange", "signal", "trend_score", "entry_cue", "ret_5d_pct", "ret_20d_pct", "from_high_pct", "vs_listing_pct", "price",
+      "value_cr_per_day_60d", "liquidity", "listing_date", "age_days", "listing_price", "issue_price", "high_since_listing", "low_since_listing", "latest_date",
+    ],
+    rows: filtered.map((item) => [
+      item.symbol, item.exchange, item.signal, item.strength_score,
+      [item.breakout_20d ? "Breakout" : "", item.pullback_20dma ? "Pullback" : ""].filter(Boolean).join(" + "),
+      item.ret_5d, item.ret_20d, item.pct_from_high, item.pct_vs_listing, item.current_price,
+      item.avg_value_cr_60d, item.liquidity, item.listing_date, item.age_days, item.listing_price, item.issue_price,
+      item.high_since_listing, item.low_since_listing, item.latest_date,
+    ]),
+  });
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -615,6 +631,7 @@ function IPOPageContent() {
           <span>IPO setups · trend, entry cues &amp; since-listing range</span>
           <div className="panel-heading-actions">
             <small>{filtered.length} of {items.length} shown</small>
+            {filtered.length > 0 && <CopyResultsButton what="IPO setups" table={ipoCopyTable} symbols={() => filtered.map((item) => tvSymbol(item.symbol, null, item.exchange === "BSE" ? "BSE" : "NSE"))} />}
           </div>
         </div>
         <div className="table-wrap">
