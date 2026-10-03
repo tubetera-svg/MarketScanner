@@ -127,6 +127,22 @@ Double-click `scripts/start_market_scanner.bat`. It opens the API and frontend i
 
 Double-click `scripts/stop_market_scanner.bat` to close both service windows.
 
+## Hosting (Render free tier + Turso)
+
+The API runs on a Render free web service (Oregon). Render's disk is wiped on every restart/redeploy and the service sleeps after 15 min without incoming requests, so:
+
+- **Data persistence - Turso** (database `quantlensdb`, region AWS Oregon `aws-us-west-2`, same region as Render to keep each query ~1-5 ms). Render environment:
+  - `TURSO_DATABASE_URL` = `libsql://quantlensdb-...turso.io` (copy from the Turso dashboard)
+  - `TURSO_AUTH_TOKEN` = database token (Read & Write, no expiry) - only in Render env, never in the repo
+  - `APP_STATE_STORE=db` so settings, watchlist, favorites, alerts and automation state live in Turso too
+  Without `TURSO_DATABASE_URL` (local PC, tests) the app uses `data/market_data.db` as before. Watch Turso's free limits (500M rows read / 10M written per month) on its usage page.
+- **Keep-awake - cron-job.org** pings `GET https://<app>.onrender.com/api/health` (no DB access, so no Turso reads), method GET, max timeout, failure notification after 2-3 consecutive failures. Schedule, job timezone **UTC**:
+  ```
+  */10 * * * 1-5
+  ```
+  = awake Mon 05:30 IST -> Sat 05:30 IST: covers all NSE sessions, the 17:00 IST bhavcopy sync, Silver Bullet, price alerts, and the forex Friday close (Fri 21:00/22:00 UTC) plus its daily-bar sync. Over the weekend the API sleeps (data stays in Turso); the first visit then takes 30-60 s, and crypto alerts/syncs don't run until Monday. The forex Sunday open (21:00/22:00 UTC) is not covered; add a second job `*/10 20-23 * * 0` if early-Monday forex alerts are needed. Uses ~520 of Render's 750 free hours/month.
+- Keep a single API instance/worker: the schedulers run inside the process, so a second one would double syncs and pushes.
+
 ## Current Context
 -This is about trading automation and improvement
 -When new strategy is added, also add it to strategy_info.txt file
