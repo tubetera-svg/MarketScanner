@@ -80,7 +80,7 @@ def _load_row(path: Path | str) -> sqlite3.Row:
             return row
         finally:
             conn.close()
-    except sqlite3.Error as exc:
+    except database.DB_ERRORS as exc:
         raise OSError(f"app_state read failed for {key}: {exc}") from exc
 
 
@@ -108,7 +108,7 @@ def write_text(path: Path | str, text: str) -> None:
             conn.commit()
         finally:
             conn.close()
-    except sqlite3.Error as exc:
+    except database.DB_ERRORS as exc:
         raise OSError(f"app_state write failed for {key}: {exc}") from exc
 
 

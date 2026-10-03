@@ -10,11 +10,16 @@ Design notes
 - Index on (source, symbol, date) keeps range queries fast.
 - Writes go through a module lock + short-lived connections, batched via
   `executemany` inside one transaction.
+- Optional remote store: with TURSO_DATABASE_URL (+ TURSO_AUTH_TOKEN) set, the
+  default DB is a Turso/libSQL database reached over the network (for hosts
+  whose disk is wiped, e.g. Render free tier). Explicit non-default paths
+  (tests, CLI) stay local files.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 from datetime import date
@@ -87,8 +92,115 @@ _INDEXES = (
 _ROW_COLUMNS = ("source", "symbol", "exchange", "date", "open", "high", "low", "close", "volume")
 
 
+TURSO_URL_ENV = "TURSO_DATABASE_URL"
+TURSO_TOKEN_ENV = "TURSO_AUTH_TOKEN"
+
+
+def turso_url() -> str:
+    return os.environ.get(TURSO_URL_ENV, "").strip()
+
+
+def _uses_turso(db_path: Optional[Path | str]) -> bool:
+    """Turso only replaces the default DB; any other explicit path stays a local file."""
+    if not turso_url():
+        return False
+    return db_path is None or Path(db_path).resolve() == resolve_db_path().resolve()
+
+
+try:  # libsql is only installed where Turso is used (see requirements.txt)
+    import libsql as _libsql
+
+    DB_ERRORS: tuple[type[BaseException], ...] = (sqlite3.Error, _libsql.Error)
+except ImportError:
+    _libsql = None
+    DB_ERRORS = (sqlite3.Error,)
+
+
+class _Row(tuple):
+    """Tuple row that also supports row["column"], keys() and dict(row), like sqlite3.Row."""
+
+    def __new__(cls, values, index: dict[str, int]):
+        row = super().__new__(cls, values)
+        row._index = index
+        return row
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return tuple.__getitem__(self, self._index[key])
+        return tuple.__getitem__(self, key)
+
+    def keys(self) -> list[str]:
+        return list(self._index)
+
+
+class _TursoCursor:
+    def __init__(self, cursor) -> None:
+        self._cursor = cursor
+        self.rowcount = cursor.rowcount
+        self.lastrowid = cursor.lastrowid
+        self.description = cursor.description
+        names = [col[0] for col in (cursor.description or ())]
+        self._index = {name: i for i, name in enumerate(names)}
+
+    def _wrap(self, row):
+        return None if row is None else _Row(row, self._index)
+
+    def fetchone(self):
+        return self._wrap(self._cursor.fetchone())
+
+    def fetchall(self) -> list:
+        return [_Row(row, self._index) for row in self._cursor.fetchall()]
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class _TursoConnection:
+    """The subset of sqlite3.Connection this module and state_store use, over libsql.
+
+    libsql has no row_factory or total_changes, so rows are wrapped in _Row and
+    total_changes is summed from each statement's rowcount.
+    """
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+        self.total_changes = 0
+
+    def execute(self, sql: str, params: Sequence = ()) -> _TursoCursor:
+        cursor = _TursoCursor(self._conn.execute(sql, tuple(params)))
+        self.total_changes += max(cursor.rowcount, 0)
+        return cursor
+
+    def executemany(self, sql: str, seq_of_params: Iterable[Sequence]) -> None:
+        for params in seq_of_params:
+            self.execute(sql, params)
+
+    def executescript(self, script: str) -> None:
+        self._conn.executescript(script)
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def _connect_turso() -> _TursoConnection:
+    if _libsql is None:
+        raise RuntimeError(f"{TURSO_URL_ENV} is set but the 'libsql' package is not installed.")
+    conn = _libsql.connect(turso_url(), auth_token=os.environ.get(TURSO_TOKEN_ENV, "").strip())
+    return _TursoConnection(conn)
+
+
 def connect(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
-    """Open a connection with WAL enabled and sane busy timeout."""
+    """Open a connection with WAL enabled and sane busy timeout.
+
+    Returns a libsql-backed look-alike when Turso is configured (see _uses_turso)."""
+    if _uses_turso(db_path):
+        return _connect_turso()  # type: ignore[return-value]
     path = Path(db_path) if db_path else resolve_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=15)
@@ -101,12 +213,17 @@ def connect(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
 def init_db(db_path: Optional[Path | str] = None) -> None:
     """Create the schema if needed. Idempotent and safe to call often: after the
     first run per DB file it is a no-op (re-runs if the file was removed)."""
-    path = Path(db_path) if db_path else resolve_db_path()
-    key = str(path.resolve())
-    if key in _INITIALIZED and path.exists():
-        return
+    if _uses_turso(db_path):
+        key = turso_url()
+        if key in _INITIALIZED:
+            return
+    else:
+        path = Path(db_path) if db_path else resolve_db_path()
+        key = str(path.resolve())
+        if key in _INITIALIZED and path.exists():
+            return
     with _WRITE_LOCK:
-        conn = connect(path)
+        conn = connect(db_path)
         try:
             conn.executescript(_SCHEMA)
             for statement in _INDEXES:
@@ -161,7 +278,7 @@ def upsert_ohlc(rows: Iterable[dict], db_path: Optional[Path | str] = None) -> i
             conn.commit()
             log.info("Stored %d new OHLC rows (%d submitted).", inserted, len(payload))
             return inserted
-        except sqlite3.Error:
+        except DB_ERRORS:
             conn.rollback()
             raise
         finally:
@@ -595,7 +712,7 @@ def delete_ohlc(
             conn.commit()
             log.info("Deleted %d OHLC rows%s", deleted, where and f" ({where})" or "")
             return deleted
-        except sqlite3.Error:
+        except DB_ERRORS:
             conn.rollback()
             raise
         finally:
@@ -702,7 +819,7 @@ def upsert_ipo_metadata(row: dict, db_path: Optional[Path | str] = None) -> int:
             conn.commit()
             log.info("Stored IPO metadata for %s (listed %s)", symbol, listing_date)
             return 1
-        except sqlite3.Error:
+        except DB_ERRORS:
             conn.rollback()
             raise
         finally:
@@ -747,7 +864,7 @@ def remove_ipo_metadata(symbol: str, db_path: Optional[Path | str] = None) -> in
             cursor = conn.execute("DELETE FROM ipo_metadata WHERE symbol = ?", (key,))
             conn.commit()
             return cursor.rowcount
-        except sqlite3.Error:
+        except DB_ERRORS:
             conn.rollback()
             raise
         finally:
@@ -782,7 +899,7 @@ def upsert_tv_symbol(row: dict, db_path: Optional[Path | str] = None) -> int:
             )
             conn.commit()
             return 1
-        except sqlite3.Error:
+        except DB_ERRORS:
             conn.rollback()
             raise
         finally:
@@ -832,7 +949,7 @@ def remove_tv_symbol(symbol: str, db_path: Optional[Path | str] = None) -> int:
             cursor = conn.execute("DELETE FROM tv_symbol_cache WHERE symbol = ?", (key,))
             conn.commit()
             return cursor.rowcount
-        except sqlite3.Error:
+        except DB_ERRORS:
             conn.rollback()
             raise
         finally:
