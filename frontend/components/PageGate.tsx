@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import Navigation from "./Navigation";
 import { canOpen, useAuth, type GuestPage } from "./auth";
 
-type Active = "/" | "/alerts" | "/watchlist" | "/ipo" | "/backtest" | "/settings";
+type Active = "/" | "/alerts" | "/watchlist" | "/ipo" | "/backtest" | "/status" | "/settings";
 
 export default function PageGate({ page, active, title, children }: { page: GuestPage | "settings"; active: Active; title: string; children: ReactNode }) {
   const auth = useAuth();

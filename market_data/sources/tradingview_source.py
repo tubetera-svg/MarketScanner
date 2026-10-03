@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from .. import bar_quality
 from ..config import SOURCE_TRADINGVIEW
 from ..timeutil import machine_local_to_utc
 
@@ -175,6 +176,7 @@ def fetch_timeframe(
             }
         )
     rows.sort(key=lambda item: item["date"])
+    rows = bar_quality.clean_rows(rows, context=f"TradingView {exchange_name}:{sym} {normalized_timeframe}")
     log.info("TradingView returned %d %s bars for %s:%s in range.",
              len(rows), normalized_timeframe, exchange_name, sym)
     return rows
@@ -242,4 +244,4 @@ def fetch_recent_bars(symbol: str, interval: str, n_bars: int) -> list[dict]:
             }
         )
     rows.sort(key=lambda item: item["date"])
-    return rows
+    return bar_quality.clean_rows(rows, context=f"TradingView {exchange_name}:{sym} {interval} chart", key_fields=("date",))

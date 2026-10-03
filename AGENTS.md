@@ -16,8 +16,9 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 | `api/{app_settings,price_alerts,push,news_calendar,fno_membership}.py` | Settings JSON, price alerts, Telegram/ntfy push, econ calendar, F&O list | Push creds only from env |
 | `market_data/` | SQLite OHLC layer: `database.py` (schema), `service.py`, `routes.py`, `sources/{nse,tradingview}_source.py`, `auto_sync.py`, `bootstrap.py`, `tv_symbol.py`, `state_store.py` (`APP_STATE_STORE=db`), `favorites.py`, `etf_list.py`, `config.py` | DB: `data/market_data.db` (`ohlc_daily`, `ohlc_no_data`, `app_state`, …) |
 | `market_data/{ipo,equity_master,liquidity_screener}.py` | IPO tracking + liquidity screen | CLIs in `scripts/ipo/` |
+| `market_data/{nse_holidays,nse_events,health,bar_quality}.py` | NSE holiday calendar, NSE results/ex-dates + F&O expiry (display only), Status-page freshness report, bad-bar rejection (store/read/fetch) | `GET /api/nse-events`, `/api/health/details` (admin) |
 | `market_data/timeutil.py`, `frontend/components/time.ts` | Time contract helpers (parse/serialize instants, display formatting, market dates) | See §2b — the only place time is formatted |
-| `frontend/app/` | Next.js pages: `page.tsx` (scanner, ~1.8k lines), `watchlist/`, `ipo/`, `backtest/`, `alerts/`, `settings/` | Shared: `frontend/components/` |
+| `frontend/app/` | Next.js pages: `page.tsx` (scanner, ~1.8k lines), `watchlist/`, `ipo/`, `backtest/`, `alerts/`, `status/` (admin), `settings/` | Shared: `frontend/components/` |
 | `config/` | Watchlist, `strategy_flags.json`, `strategy_info.txt`, `symbol_aliases.json`, `app_settings.json`, `favorites.json` | Edited by users/UI; runtime state in `data/state/` (git-ignored) |
 | `main.py` | CLI: run strategies → CSVs in `strategy_outputs/` | |
 | `scripts/` | Launchers (`start/stop_market_scanner.bat`), `ipo/` | `scripts/debug/` = throwaway checks |

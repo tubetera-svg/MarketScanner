@@ -29,6 +29,10 @@ export type ChartTarget = {
   interval?: "5m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1M";
   /** Scanner setup levels: drawn as guides, offered as one-click alerts ("Watch setup"). */
   levels?: ChartLevel[];
+  /** Reference levels (PDH/PWL/draws): drawn muted, never turned into alerts. */
+  context?: ChartLevel[];
+  /** Trading date of the signal bar ("YYYY-MM-DD"), marked on the chart. */
+  signalDate?: string | null;
 };
 
 export type ChartLevel = { label: string; price: number; price2?: number | null };
@@ -72,12 +76,15 @@ const OVERLAY_LABELS: Array<[keyof Overlays, string]> = [
   ["volume", "Volume"],
   ["rsi", "RSI 14"],
   ["levels", "52W H/L"],
+  ["setup", "Setup levels"],
+  ["signal", "Signal bar"],
+  ["context", "PD/PW levels"],
 ];
 
 type Prefs = { overlays: Overlays; interval: Interval; autoRefresh: boolean };
 const PREFS_KEY = "marketScanner.chartModal.v3";
 const DEFAULT_PREFS: Prefs = {
-  overlays: { ema20: true, ema50: true, ema200: false, vwap: true, volume: false, rsi: false, levels: true },
+  overlays: { ema20: true, ema50: true, ema200: false, vwap: true, volume: false, rsi: false, levels: true, setup: true, signal: true, context: false },
   interval: "1d",
   autoRefresh: true,
 };
@@ -98,6 +105,15 @@ const readPrefs = (): Prefs => {
 };
 
 const shiftIso = (iso: string, days: number) => addDays(iso, days);
+
+/** Colour role of a scanner level, from its label (zones = price2 set). */
+const guideRole = (level: ChartLevel): "entry" | "stop" | "target" | "zone" | "level" => {
+  if (level.price2 != null) return "zone";
+  if (/^(entry|trigger)/i.test(level.label)) return "entry";
+  if (/^(sl|stop|invalidation)/i.test(level.label)) return "stop";
+  if (/^target/i.test(level.label)) return "target";
+  return "level";
+};
 
 const detailText = (payload: unknown): string | null => {
   const detail = (payload as { detail?: unknown } | null)?.detail;
@@ -388,11 +404,16 @@ export default function TradingViewChartModal({
     [symbolEvents, displayTz],
   );
   const setupLevels = useMemo(() => chart?.levels ?? [], [chart?.levels]);
+  // Scanner drawings are optional (toolbar toggles, saved per browser): turn
+  // them off when a chart with many levels feels slow.
+  const showSetup = prefs.overlays.setup;
+  const showContext = prefs.overlays.context;
   const guideLines = useMemo(
-    () => setupLevels.flatMap((level) => (level.price2 != null
-      ? [{ price: Math.max(level.price, level.price2), label: `${level.label} high` }, { price: Math.min(level.price, level.price2), label: `${level.label} low` }]
-      : [{ price: level.price, label: level.label }])),
-    [setupLevels],
+    () => [
+      ...(showContext ? (chart?.context ?? []).map((level) => ({ price: level.price, label: level.label, tone: "context" as const })) : []),
+      ...(showSetup ? setupLevels.map((level) => ({ price: level.price, price2: level.price2 ?? null, label: level.label, role: guideRole(level) })) : []),
+    ],
+    [setupLevels, chart?.context, showContext, showSetup],
   );
 
   // Right-click menu: common reference levels at the latest bar.
@@ -546,9 +567,11 @@ export default function TradingViewChartModal({
                 ))}
               </div>
               {OVERLAY_LABELS.map(([key, label]) => {
-                const disabled = (key === "vwap" && !intraday) || (key === "levels" && intraday);
+                const disabled = (key === "vwap" && !intraday) || (key === "levels" && intraday)
+                  // Scanner drawings only exist for charts opened from a signal.
+                  || (key === "setup" && !setupLevels.length) || (key === "signal" && !chart?.signalDate) || (key === "context" && !chart?.context?.length);
                 return (
-                  <label key={key} className={`chart-indicator${disabled ? " disabled" : ""}`} title={disabled ? (key === "vwap" ? "Intraday only" : "Daily and higher only") : undefined}>
+                  <label key={key} className={`chart-indicator${disabled ? " disabled" : ""}`} title={disabled ? (key === "vwap" ? "Intraday only" : key === "levels" ? "Daily and higher only" : "Only for charts opened from a scanner signal") : undefined}>
                     <input type="checkbox" checked={prefs.overlays[key]} disabled={disabled} onChange={(event) => setOverlay(key, event.target.checked)} />
                     {key in EMA_COLORS || key === "vwap" ? (
                       <span className="chart-swatch" style={{ background: key === "vwap" ? VWAP_COLOR : EMA_COLORS[key as keyof typeof EMA_COLORS] }} />
@@ -639,6 +662,7 @@ export default function TradingViewChartModal({
                   onContextMenu={admin ? (price, x, y) => setMenu({ price, x, y }) : undefined}
                   guideLines={guideLines}
                   markers={markers}
+                  signalDate={prefs.overlays.signal ? chart.signalDate ?? null : null}
                   tick={tick}
                 />
               ) : data.status === "loading" ? (

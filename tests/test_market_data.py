@@ -464,16 +464,17 @@ def test_sync_replaces_bars_stored_before_their_daily_close(tmp_db, clean_flags)
     import sqlite3
 
     day = date(2026, 9, 21)
-    database.upsert_ohlc([row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", day, close=1.0)], db_path=tmp_db)
+    # (closes 101/102: row() builds low = close - 2, which must stay a valid positive bar)
+    database.upsert_ohlc([row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", day, close=101.0)], db_path=tmp_db)
     # Stored at 2026-09-21 10:00 UTC, before the 17:00 NY (21:00 UTC) close -> partial.
     with sqlite3.connect(tmp_db) as conn:
         conn.execute("UPDATE ohlc_daily SET created_at = '2026-09-21 10:00:00'")
     register_fetcher(
         "TRADINGVIEW",
-        lambda spec: [row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", d, close=2.0) for d in spec["dates"]],
+        lambda spec: [row("TRADINGVIEW", "OANDA:XAUUSD", "OANDA", d, close=102.0) for d in spec["dates"]],
     )
     result = sync_symbol_range("TRADINGVIEW", "OANDA:XAUUSD", day, start_date=day, db_path=tmp_db)
-    assert [r["close"] for r in result.rows] == [2.0]
+    assert [r["close"] for r in result.rows] == [102.0]
     assert any("partial bars" in note for note in result.notes)
 
 

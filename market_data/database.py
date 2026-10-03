@@ -26,6 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
+from . import bar_quality
 from .config import db_path as resolve_db_path, SOURCE_NSE
 
 log = logging.getLogger(__name__)
@@ -239,10 +240,11 @@ def upsert_ohlc(rows: Iterable[dict], db_path: Optional[Path | str] = None) -> i
 
     Each row needs: source, symbol, exchange, date ('YYYY-MM-DD'),
     open, high, low, close and optional volume.
-    Returns the number of NEW rows stored.
+    Returns the number of NEW rows stored. Bad bars (``bar_quality``) are
+    rejected and logged, never stored.
     """
     payload = []
-    for row in rows:
+    for row in bar_quality.clean_rows(rows, context="store"):
         try:
             payload.append(
                 (
@@ -320,7 +322,8 @@ def query_ohlc_multi(
         for row in conn.execute(sql, params).fetchall():
             record = dict(row)
             grouped.setdefault(str(record["symbol"]), []).append(record)
-        return grouped
+        # Rows stored before the integrity check existed never reach a strategy.
+        return {symbol: bar_quality.clean_rows(rows, context=f"{source} {symbol}") for symbol, rows in grouped.items()}
     finally:
         conn.close()
 
@@ -352,9 +355,11 @@ def query_ohlc(
     )
     conn = connect(db_path)
     try:
-        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
     finally:
         conn.close()
+    # Rows stored before the integrity check existed never reach a strategy.
+    return bar_quality.clean_rows(rows, context=f"{source} {symbol}")
 
 
 def stored_at_by_date(

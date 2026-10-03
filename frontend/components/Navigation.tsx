@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Database, History, Rocket, Settings } from "lucide-react";
+import { Activity, Bell, Database, HeartPulse, History, Rocket, Settings } from "lucide-react";
 import SoundToggle from "./SoundToggle";
 import AdminMenu from "./AdminMenu";
 import { canOpen, useAuth } from "./auth";
@@ -9,7 +9,7 @@ import { fetchAppSettings } from "./appSettings";
 import { subscribePriceAlerts } from "./priceAlertFeed";
 
 type NavigationProps = {
-  active: "/" | "/alerts" | "/watchlist" | "/ipo" | "/backtest" | "/settings";
+  active: "/" | "/alerts" | "/watchlist" | "/ipo" | "/backtest" | "/status" | "/settings";
 };
 
 export default function Navigation({ active }: NavigationProps) {
@@ -36,6 +36,7 @@ export default function Navigation({ active }: NavigationProps) {
       {!hidden.includes("watchlist") && !guestHides("watchlist") && <a className={`top-link${active === "/watchlist" ? " active" : ""}`} href="/watchlist" aria-current={active === "/watchlist" ? "page" : undefined}><Database size={13} /> Database</a>}
       {!hidden.includes("ipo") && !guestHides("ipo") && <a className={`top-link${active === "/ipo" ? " active" : ""}`} href="/ipo" aria-current={active === "/ipo" ? "page" : undefined}><Rocket size={13} /> IPO</a>}
       {!hidden.includes("backtest") && !guestHides("backtest") && <a className={`top-link${active === "/backtest" ? " active" : ""}`} href="/backtest" aria-current={active === "/backtest" ? "page" : undefined}><History size={13} /> Backtest</a>}
+      {!guestHides("settings") && <a className={`top-link${active === "/status" ? " active" : ""}`} href="/status" aria-current={active === "/status" ? "page" : undefined} title="Data freshness, automations and calendars (admin)"><HeartPulse size={13} /> Status</a>}
       {!guestHides("settings") && <a className={`top-link${active === "/settings" ? " active" : ""}`} href="/settings" aria-current={active === "/settings" ? "page" : undefined}><Settings size={13} /> Settings</a>}
       <SoundToggle />
       <AdminMenu />

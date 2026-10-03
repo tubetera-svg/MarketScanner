@@ -31,7 +31,7 @@ import news_calendar  # noqa: E402  (TradingView/ForexFactory news + EIA invento
 import price_alerts  # noqa: E402  (chart-popup price alerts, in-app delivery)
 import push  # noqa: E402  (Telegram / ntfy pushes shared by the automations)
 import strategy_bridge  # noqa: E402  (strategy profiles panel: lives in the api folder)
-from market_data import favorites, nse_holidays  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
+from market_data import favorites, health as market_health, nse_events, nse_holidays  # noqa: E402  (starred symbols shared by scanner / watchlist / IPO pages)
 from market_data.automation_state import AutomationState  # noqa: E402  (restart-safe "already done" markers)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data, ist_today  # noqa: E402
@@ -962,6 +962,32 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/health/details")
+def health_details(http_request: Request) -> dict[str, Any]:
+    """Status page (admin only): data freshness per source/symbol, automations, caches.
+
+    ``/api/health`` stays a bare liveness probe for the keep-awake cron; this one
+    can carry error texts, so guests are refused.
+    """
+    if _role(http_request) != "admin":
+        raise HTTPException(status_code=403, detail=GUEST_DENIED)
+    automation = _automation_status()
+    sb_status = silver_bullet_scanner.status()
+    automation["silver_bullet"].update({key: sb_status[key] for key in ("running", "last_check_at", "next_check_at", "last_error")})
+    return {
+        "checked_at": utc_now().isoformat(timespec="seconds"),
+        "database": market_health.database_info(),
+        "sources": market_health.source_summary(),
+        "freshness": market_health.symbol_freshness(service.watchlist()),
+        "automation": automation,
+        "caches": {
+            "nse_holidays": {key: nse_holidays.info()[key] for key in ("source", "fetched_at", "error")},
+            "nse_events": nse_events.info(),
+            "news_calendar": news_calendar.cache_info(),
+        },
+    }
+
+
 @app.get("/api/watchlist")
 def get_watchlist() -> dict[str, Any]:
     return {"symbols": service.watchlist()}
@@ -1307,33 +1333,38 @@ def apply_automation(settings: dict[str, Any], on_boot: bool = False) -> None:
         price_alert_watcher.stop()
 
 
+def _automation_status() -> dict[str, Any]:
+    """Scheduler / push status shared by the Settings payload and the Status page."""
+    return {
+        "silver_bullet": {
+            "auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done(),
+            "last_push_error": silver_bullet_scanner.pusher.last_error,
+        },
+        "ipo_scanner": ipo_scanner.status(),
+        "data_auto_sync": _auto_sync().status(),
+        "ltf_confirmation": {
+            "running": ltf_watcher.task is not None and not ltf_watcher.task.done(),
+            "last_check_at": ltf_watcher.last_check_at,
+            "last_error": ltf_watcher.last_error,
+            "last_push_error": ltf_watcher.pusher.last_error,
+        },
+        "price_alerts": {
+            "running": price_alert_watcher.running,
+            "last_check_at": price_alert_watcher.last_check_at,
+            "last_error": price_alert_watcher.last_error,
+            "push_channels": push.channels(),
+            "last_push_error": price_alert_watcher.pusher.last_error,
+        },
+    }
+
+
 def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
     strategies, master = strategy_bridge.list_strategies()
     return {
         "settings": settings,
         "strategies": strategies,
         "weekly_profiles_master_enabled": master,
-        "status": {
-            "silver_bullet": {
-                "auto_armed": silver_bullet_scanner.auto_task is not None and not silver_bullet_scanner.auto_task.done(),
-                "last_push_error": silver_bullet_scanner.pusher.last_error,
-            },
-            "ipo_scanner": ipo_scanner.status(),
-            "data_auto_sync": _auto_sync().status(),
-            "ltf_confirmation": {
-                "running": ltf_watcher.task is not None and not ltf_watcher.task.done(),
-                "last_check_at": ltf_watcher.last_check_at,
-                "last_error": ltf_watcher.last_error,
-                "last_push_error": ltf_watcher.pusher.last_error,
-            },
-            "price_alerts": {
-                "running": price_alert_watcher.running,
-                "last_check_at": price_alert_watcher.last_check_at,
-                "last_error": price_alert_watcher.last_error,
-                "push_channels": push.channels(),
-                "last_push_error": price_alert_watcher.pusher.last_error,
-            },
-        },
+        "status": _automation_status(),
         "hideable_pages": list(app_settings.HIDEABLE_PAGES),
         "strategy_choices": {key: list(values) for key, values in app_settings.STRATEGY_CHOICES.items()},
         "news_currencies": list(app_settings.NEWS_CURRENCIES),
@@ -1415,6 +1446,20 @@ def get_high_impact_news(refresh: bool = False) -> dict[str, Any]:
     """High-impact events + Crude/NatGas release times (TradingView, ForexFactory fallback; cached per IST day)."""
     currencies = app_settings.load_settings()["news"]["currencies"]
     return news_calendar.get_events(currencies, refresh=refresh)
+
+
+@app.post("/api/health/refetch-bad-bars")
+def refetch_bad_bars(http_request: Request, source: str | None = None) -> dict[str, Any]:
+    """Status page: delete stored bars that fail the integrity check and fetch those dates again (admin)."""
+    if _role(http_request) != "admin":
+        raise HTTPException(status_code=403, detail=GUEST_DENIED)
+    return {**market_health.refetch_invalid(source), "sources": market_health.source_summary()}
+
+
+@app.get("/api/nse-events")
+def get_nse_events(days: int = 14, refresh: bool = False) -> dict[str, Any]:
+    """Upcoming NSE results / board meetings / ex-dates by symbol, plus F&O monthly expiries (display only)."""
+    return nse_events.upcoming(days=max(0, min(days, 45)), refresh_now=refresh)
 
 
 @app.get("/api/price-alerts")

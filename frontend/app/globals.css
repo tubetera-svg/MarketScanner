@@ -430,6 +430,10 @@ details > summary::-webkit-details-marker { display: none; }
 .signal-state.expired { background: #f3ece1; color: var(--amber); }
 .signal-state.closed_sl, .signal-state.closed_target { background: #eceef1; color: #46566a; }
 .signal-track { display: inline-block; font: 10px 'DM Mono', monospace; padding: 1px 4px; border-radius: 3px; background: #e7eef4; color: var(--blue-ink); text-transform: uppercase; }
+.signal-event { align-self: flex-start; display: inline-block; width: fit-content; font: 10px 'DM Mono', monospace; padding: 1px 4px; border-radius: 3px; border: 1px solid var(--line); color: var(--ink); white-space: nowrap; }
+.signal-event.results { border-color: #b98a2c; color: #8a6114; }
+.signal-event.ex_date { border-color: #8a6fb0; color: #5f4a85; }
+.signal-event.soon { font-weight: 600; background: #fff4dc; }
 /* Strategy-level live data indicator */
 .live-data-badge { align-items: center; background: #e3f1ea; border: 1px solid #bfe3d2; border-radius: 3px; color: #1f7a55; display: inline-flex; font: 600 10px 'DM Mono', monospace; gap: 3px; padding: 2px 6px; text-transform: uppercase; letter-spacing: .5px; }
 
@@ -939,3 +943,24 @@ td.number.bias-bear { color: var(--coral-ink); }
 .check-symbol { align-items: center; display: inline-flex; min-width: 0; }
 .ipo-symbol-cell { align-items: center; display: inline-flex; gap: 2px; }
 .ipo-symbol-cell .fav-star { margin-left: 0; }
+
+/* Status page (app/status) */
+.status-panel { margin-bottom: 16px; padding: 14px 16px; }
+.status-panel .muted { color: var(--muted); font-weight: 400; }
+.status-grid { display: grid; gap: 16px 24px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); margin-top: 12px; }
+.status-grid h3 { font: 600 11px 'DM Mono', monospace; letter-spacing: .5px; margin: 0 0 6px; text-transform: uppercase; }
+.status-grid h3:not(:first-child) { margin-top: 14px; }
+.status-table { min-width: 0; }
+.status-table th, .status-table td { padding: 6px 8px; }
+.status-table td { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.status-note { font-size: 11px; margin: 6px 0 0; }
+.status-error, .status-bad { color: #b42318; }
+.status-error { font-size: 12px; margin: 10px 0 0; }
+.status-pill { border-radius: 3px; display: inline-block; font: 10px 'DM Mono', monospace; padding: 2px 6px; text-transform: uppercase; }
+.status-pill.ok { background: #e3f4ea; color: #1d6b3d; }
+.status-pill.idle { background: var(--slate-soft); color: var(--slate-ink); }
+.status-pill.stale, .status-pill.empty { background: #fde8e6; color: #b42318; }
+.status-pill.gaps { background: #fff4dc; color: #8a6114; }
+.status-refetch { align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); cursor: pointer; display: inline-flex; font: 10px 'DM Mono', monospace; gap: 3px; margin-left: 4px; padding: 1px 5px; }
+.status-refetch:disabled { cursor: default; opacity: .45; }
+.status-refetch:not(:disabled):hover { border-color: var(--ink); }

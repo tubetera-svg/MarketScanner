@@ -60,6 +60,8 @@ class OhlcResult:
     fetched_new: int = 0
     missing_dates: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Dates in range confirmed to have no session (holiday / exchange closed).
+    no_data_dates: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -90,8 +92,12 @@ def _default_fetchers() -> dict[str, FetchCallable]:
             )
 
         def fetch_tradingview(spec: dict) -> list[dict]:
+            # Up to the market's today (not just the missing range) so get_ohlc can
+            # see how far the feed reaches and tell a closed day from a feed gap;
+            # get_ohlc stores only final bars inside the requested window.
+            end = max(spec["end"], market_today(SOURCE_TRADINGVIEW, spec.get("store_symbol") or spec["symbol"]))
             return tradingview_source.fetch_daily(
-                spec["symbol"], spec["start"], spec["end"], exchange=spec.get("exchange"),
+                spec["symbol"], spec["start"], end, exchange=spec.get("exchange"),
                 store_symbol=spec.get("store_symbol"),
             )
 
@@ -146,6 +152,35 @@ def market_today(source: str, symbol: Optional[str] = None, now: Optional[dateti
     if is_crypto_symbol(symbol):
         return instant.astimezone(timezone.utc).date()
     return instant.astimezone(_NY).date()
+
+
+# A TradingView day with no bar counts as "no session" once its bar has been
+# final this long and the feed (which did answer) still ends before it.
+NO_SESSION_GRACE = timedelta(hours=24)
+
+
+def _closed_days(
+    source: str, symbol: str, missing: list[date], latest_upstream: Optional[str], now: Optional[datetime] = None
+) -> list[str]:
+    """Missing days the feed shows had no session.
+
+    - The feed returned a later bar but none for the day -> closed (any source).
+    - TradingView only: the feed returned bars, all older than the day, and the
+      day's bar has been final for NO_SESSION_GRACE -> closed (e.g. an NSE IX
+      holiday on a Friday, before the next session exists).
+    A feed that returned nothing proves nothing: those days stay missing.
+    """
+    if not latest_upstream:
+        return []
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for day in missing:
+        iso = day.isoformat()
+        if latest_upstream > iso:
+            out.append(iso)
+        elif normalize_source(source) == SOURCE_TRADINGVIEW and now >= bar_final_at(source, symbol, day) + NO_SESSION_GRACE:
+            out.append(iso)
+    return out
 
 
 def ist_today(now: Optional[datetime] = None) -> date:
@@ -250,6 +285,7 @@ def get_ohlc(
         rows=rows,
         cached=not missing,
         missing_dates=[day.isoformat() for day in missing],
+        no_data_dates=sorted(known_no_data),
     )
     if not missing:
         return result
@@ -284,6 +320,7 @@ def get_ohlc(
     # rows for the requested window.
     candidates = [sym] + [a for a in (aliases or []) if a and a.strip().upper() != sym]
     fetched_rows: list[dict] = []
+    latest_upstream: Optional[str] = None  # newest bar date the feed returned (any candidate)
     last_exc: Exception | None = None
     for candidate in candidates:
         spec = {
@@ -300,6 +337,9 @@ def get_ohlc(
             last_exc = exc
             log.warning("Fetch candidate %s failed for %s (%s): %s", candidate, sym, source_name, exc)
             continue
+        dates_seen = [str(row["date"])[:10] for row in rows]
+        if dates_seen:
+            latest_upstream = max([latest_upstream or "", *dates_seen])
         in_range = [
             row
             for row in rows
@@ -313,6 +353,19 @@ def get_ohlc(
                 )
             break
     if not fetched_rows:
+        closed = _closed_days(source_name, sym, missing, latest_upstream)
+        if closed and len(closed) == len(missing):
+            # The feed answered but has no bar for any missing day: no session
+            # (e.g. an NSE IX or forex holiday). Remember it, do not retry.
+            database.mark_no_data(
+                [{"source": source_name, "symbol": sym, "exchange": exchange, "date": day} for day in closed],
+                db_path=db_path,
+            )
+            result.no_data_dates = sorted(set(result.no_data_dates) | set(closed))
+            result.missing_dates = []
+            result.notes.append(f"No session upstream on {', '.join(closed)} (marked no data).")
+            log.info("%s %s: no upstream session on %s - marked no data", source_name, sym, ", ".join(closed))
+            return result
         exc = last_exc or RuntimeError("no upstream data for any candidate")
         log.error("Fetching %s data for %s failed: %s", source_name, sym, exc)
         raise FetchError(
@@ -338,6 +391,7 @@ def get_ohlc(
             ],
             db_path=db_path,
         )
+        result.no_data_dates = sorted(set(result.no_data_dates) | set(still_missing))
 
     result.rows = database.query_ohlc(
         source_name, sym, start, end, exchange=exchange, db_path=db_path

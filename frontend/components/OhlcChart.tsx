@@ -19,6 +19,12 @@ export type Overlays = {
   volume: boolean;
   rsi: boolean;
   levels: boolean;
+  /** Scanner setup levels and zones (entry/SL/target, OB, candle range) - used by the chart popup. */
+  setup: boolean;
+  /** Vertical marker on the scanner signal bar - used by the chart popup. */
+  signal: boolean;
+  /** Scanner context levels (PDH/PDL/PWH/PWL/draws) - used by the chart popup. */
+  context: boolean;
 };
 
 // Literal colours (not CSS vars) so PNG snapshots render identically.
@@ -31,6 +37,22 @@ const INK = "#15232d";
 const RSI_COLOR = "#287b79";
 const ALERT_COLOR = "#e07b00";
 const GUIDE_COLOR = "#2f6f9e";
+const CONTEXT_COLOR = "#8a6fb0";
+/** Scanner level colours by role (guide lines / zones). */
+const ROLE_COLOR = { entry: "#2563eb", stop: "#dc2626", target: "#15803d", zone: "#c27803", level: "#475569" } as const;
+type GuideRole = keyof typeof ROLE_COLOR;
+const GUIDE_LABEL_H = 14;
+
+/** Push label centres apart (sorted top-down) so none overlap, staying in [min, max]. */
+const spreadLabels = <T extends { y: number }>(items: T[], gap: number, min: number, max: number): (T & { ly: number })[] => {
+  const out = items.map((item) => ({ ...item, ly: Math.min(max, Math.max(min, item.y)) })).sort((a, b) => a.ly - b.ly);
+  for (let i = 1; i < out.length; i++) out[i].ly = Math.max(out[i].ly, out[i - 1].ly + gap);
+  for (let i = out.length - 1; i >= 0; i--) {
+    const limit = i === out.length - 1 ? max : out[i + 1].ly - gap;
+    out[i].ly = Math.min(out[i].ly, limit);
+  }
+  return out;
+};
 export const EMA_COLORS = { ema20: "#356c9b", ema50: "#c08a2e", ema200: "#7c3aed" } as const;
 export const VWAP_COLOR = "#db2777";
 const FONT = "'DM Mono', ui-monospace, monospace";
@@ -243,6 +265,7 @@ export default function OhlcChart({
   alertLines,
   guideLines,
   markers,
+  signalDate,
   tick,
   onAltClick,
   onZoneDraw,
@@ -264,8 +287,12 @@ export default function OhlcChart({
   /** Price alerts to draw; inactive ones are faded. */
   /** Price alerts to draw (``price2`` = zone); inactive ones are faded. */
   alertLines?: { id: string; price: number; price2?: number | null; active: boolean; draggable?: boolean }[];
-  /** Reference levels (e.g. a scanner setup's entry/SL/target), drawn dotted. */
-  guideLines?: { price: number; label: string }[];
+  /** Reference levels (e.g. a scanner setup's entry/SL/target), drawn dotted;
+   * ``price2`` = shaded zone (order block, candle range), ``tone: "context"`` =
+   * muted reference level (PDH/PWL/draw on liquidity). */
+  guideLines?: { price: number; price2?: number | null; label: string; tone?: "setup" | "context"; role?: GuideRole }[];
+  /** Trading date ("YYYY-MM-DD") of the bar the scanner signal was decided on: vertical marker. */
+  signalDate?: string | null;
   /** Fired alerts: ``ts`` = ISO time of the bar where it happened. */
   markers?: { id: string; ts: string; price: number; label: string }[];
   /** Price step for snapping picked/dragged levels. */
@@ -356,6 +383,17 @@ export default function OhlcChart({
       rsi: rsi(closes, 14),
     };
   }, [bars, intraday]);
+
+  // Signal bar: daily/weekly/monthly = the bar containing the trading date;
+  // intraday = the first bar of that day.
+  const signalIndex = useMemo(() => {
+    if (!signalDate) return -1;
+    if (intraday) return bars.findIndex((bar) => bar.date.slice(0, 10) >= signalDate);
+    for (let i = bars.length - 1; i >= 0; i--) {
+      if (bars[i].date.slice(0, 10) <= signalDate) return i;
+    }
+    return -1;
+  }, [bars, intraday, signalDate]);
 
   const v = clampView(view.start, view.count, len);
   const plotW = Math.max(0, size.w - AXIS_W);
@@ -454,6 +492,51 @@ export default function OhlcChart({
     const last = bars[len - 1];
     const lastUp = len < 2 || last.close >= bars[len - 2].close;
     const lastY = y(last.close);
+    // Scanner guides: lines/zones in the plot, a label chip at the left edge and
+    // a price tag on the axis. Labels and tags are spread so they never overlap.
+    const guides = (guideLines ?? []).flatMap((guide, index) => {
+      const top = Math.max(guide.price, guide.price2 ?? guide.price);
+      const bottom = Math.min(guide.price, guide.price2 ?? guide.price);
+      if (top < lo || bottom > hi) return [];
+      const context = guide.tone === "context";
+      const role: GuideRole = guide.role ?? (guide.price2 != null ? "zone" : "level");
+      return [{ ...guide, index, top, bottom, context, role, color: context ? CONTEXT_COLOR : ROLE_COLOR[role] }];
+    });
+    const setupGuides = guides.filter((g) => !g.context);
+    // Setup levels outside the visible price range: a "▲ Target 123" chip pinned to the edge.
+    const offscreen = (guideLines ?? []).flatMap((guide, index) => {
+      if (guide.tone === "context") return [];
+      const top = Math.max(guide.price, guide.price2 ?? guide.price);
+      const bottom = Math.min(guide.price, guide.price2 ?? guide.price);
+      if (bottom > hi) return [{ guide, index, above: true }];
+      if (top < lo) return [{ guide, index, above: false }];
+      return [];
+    }).map(({ guide, index, above }) => {
+      const role: GuideRole = guide.role ?? (guide.price2 != null ? "zone" : "level");
+      const value = guide.price2 != null ? `${formatPrice(Math.min(guide.price, guide.price2))}–${formatPrice(Math.max(guide.price, guide.price2))}` : formatPrice(guide.price);
+      return { index, above, color: ROLE_COLOR[role], text: `${above ? "▲" : "▼"} ${guide.label} ${value}` };
+    });
+    const contextGuides = guides.filter((g) => g.context);
+    const labelMin = yTop + GUIDE_LABEL_H / 2;
+    const labelMax = yBot - GUIDE_LABEL_H / 2;
+    const setupLabels = spreadLabels(
+      setupGuides.map((g) => ({ g, y: g.price2 != null ? clampY(y(g.top)) + GUIDE_LABEL_H / 2 + 1 : y(g.price) })),
+      GUIDE_LABEL_H + 1, labelMin, labelMax,
+    );
+    const contextLabels = spreadLabels(contextGuides.map((g) => ({ g, y: y(g.price) - 6 })), GUIDE_LABEL_H - 2, labelMin, labelMax);
+    // The last-price tag takes part in the spread so guide tags never hide under it.
+    const lastInView = lastY >= yTop && lastY <= yBot;
+    const spreadTags = spreadLabels<{ g: (typeof setupGuides)[number] | null; value: number; y: number }>(
+      [
+        ...setupGuides.flatMap((g) => (g.price2 != null ? [g.top, g.bottom] : [g.price])
+          .filter((value) => value >= lo && value <= hi)
+          .map((value) => ({ g, value, y: y(value) }))),
+        ...(lastInView ? [{ g: null, value: last.close, y: lastY }] : []),
+      ],
+      16, yTop + 8, yBot - 8,
+    );
+    const axisTags = spreadTags.flatMap((tag) => (tag.g ? [{ ...tag, g: tag.g }] : []));
+    const lastTagY = spreadTags.find((tag) => tag.g === null)?.ly ?? lastY;
     const levelLines =
       overlays.levels && levels
         ? ([
@@ -503,16 +586,66 @@ export default function OhlcChart({
               </text>
             </g>
           ))}
-          {(guideLines ?? [])
-            .filter(({ price }) => price >= lo && price <= hi)
-            .map(({ price, label }, index) => (
-              <g key={`guide-${index}`}>
-                <line x1={0} x2={plotW} y1={y(price)} y2={y(price)} stroke={GUIDE_COLOR} strokeDasharray="1 3" opacity={0.8} />
-                <text x={plotW - 4} y={y(price) - 4} fontSize={9.5} fill={GUIDE_COLOR} fontFamily={FONT} textAnchor="end">
-                  {label} {formatPrice(price)}
+          {signalIndex >= v.start && signalIndex < end ? (
+            <g>
+              <title>Signal bar {signalDate}</title>
+              <line x1={xc(signalIndex)} x2={xc(signalIndex)} y1={yTop} y2={yBot} stroke={GUIDE_COLOR} strokeDasharray="3 3" opacity={0.7} />
+              <text x={xc(signalIndex) + 3} y={yTop + 10} fontSize={9.5} fill={GUIDE_COLOR} fontFamily={FONT}>signal</text>
+            </g>
+          ) : null}
+          {contextGuides.map((g) => (
+            <line key={`ctx-${g.index}`} x1={0} x2={plotW} y1={y(g.price)} y2={y(g.price)} stroke={g.color} strokeDasharray="6 4" opacity={0.55} />
+          ))}
+          {contextLabels.map(({ g, ly }) => (
+            <text key={`ctx-label-${g.index}`} x={plotW - 6} y={ly + 3.5} fontSize={9.5} fill={g.color} fontFamily={FONT} textAnchor="end" opacity={0.85}>
+              {g.label} {formatPrice(g.price)}
+            </text>
+          ))}
+          {setupGuides.map((g) => (g.price2 != null ? (
+            <g key={`guide-${g.index}`}>
+              <rect x={0} width={plotW} y={clampY(y(g.top))} height={Math.max(0, clampY(y(g.bottom)) - clampY(y(g.top)))} fill={g.color} opacity={0.13} />
+              {[g.top, g.bottom].filter((edge) => edge >= lo && edge <= hi).map((edge) => (
+                <line key={edge} x1={0} x2={plotW} y1={y(edge)} y2={y(edge)} stroke={g.color} strokeWidth={1} opacity={0.85} />
+              ))}
+            </g>
+          ) : (
+            <line
+              key={`guide-${g.index}`}
+              x1={0} x2={plotW} y1={y(g.price)} y2={y(g.price)}
+              stroke={g.color}
+              strokeWidth={g.role === "level" ? 1 : 1.5}
+              strokeDasharray={g.role === "level" ? "5 3" : undefined}
+              opacity={0.95}
+            />
+          )))}
+          {(["above", "below"] as const).map((edge) => {
+            const items = offscreen.filter((item) => item.above === (edge === "above"));
+            let x = plotW - 6;
+            return items.map((item) => {
+              const width = item.text.length * 6 + 10;
+              x -= width + 4;
+              const top = edge === "above" ? yTop + 2 : yBot - GUIDE_LABEL_H - 2;
+              return (
+                <g key={`guide-off-${item.index}`}>
+                  <title>Outside the visible range - zoom out or pan to see it</title>
+                  <rect x={x} y={top} width={width} height={GUIDE_LABEL_H} rx={3} fill="#ffffff" opacity={0.92} stroke={item.color} strokeDasharray="3 2" />
+                  <text x={x + 5} y={top + GUIDE_LABEL_H / 2 + 3.5} fontSize={10} fill={item.color} fontFamily={FONT}>{item.text}</text>
+                </g>
+              );
+            });
+          })}
+          {setupLabels.map(({ g, ly }) => {
+            const text = g.price2 != null ? `${g.label} ${formatPrice(g.bottom)}–${formatPrice(g.top)}` : g.label;
+            const width = text.length * 6 + 10;
+            return (
+              <g key={`guide-label-${g.index}`}>
+                <rect x={4} y={ly - GUIDE_LABEL_H / 2} width={width} height={GUIDE_LABEL_H} rx={3} fill="#ffffff" opacity={0.92} stroke={g.color} strokeWidth={1} />
+                <text x={9} y={ly + 3.5} fontSize={10} fontWeight={g.role === "level" || g.role === "zone" ? 500 : 700} fill={g.color} fontFamily={FONT}>
+                  {text}
                 </text>
               </g>
-            ))}
+            );
+          })}
           {zoneDraw ? (
             <rect x={0} width={plotW} y={clampY(y(Math.max(zoneDraw.from, zoneDraw.to)))} height={Math.abs(clampY(y(zoneDraw.from)) - clampY(y(zoneDraw.to)))} fill={ALERT_COLOR} opacity={0.14} stroke={ALERT_COLOR} strokeDasharray="4 3" />
           ) : null}
@@ -569,10 +702,19 @@ export default function OhlcChart({
             <line x1={0} x2={plotW} y1={lastY} y2={lastY} stroke={lastUp ? UP : DOWN} strokeDasharray="3 3" opacity={0.7} />
           ) : null}
         </g>
+        {axisTags.map(({ g, value, ly }) => (
+          <g key={`guide-tag-${g.index}-${value}`}>
+            <title>{g.label} {formatPrice(value)}</title>
+            <rect x={plotW + 1} y={ly - 8} width={AXIS_W - 2} height={16} rx={2} fill={g.color} opacity={g.price2 != null ? 0.75 : 1} />
+            <text x={plotW + 6} y={ly + 3.5} fontSize={10} fill="#fff" fontFamily={FONT}>
+              {formatPrice(value)}
+            </text>
+          </g>
+        ))}
         {lastY >= yTop && lastY <= yBot ? (
           <g>
-            <rect x={plotW + 1} y={lastY - 8} width={AXIS_W - 2} height={16} rx={2} fill={lastUp ? UP : DOWN} />
-            <text x={plotW + 6} y={lastY + 3.5} fontSize={10} fill="#fff" fontFamily={FONT}>
+            <rect x={plotW + 1} y={lastTagY - 8} width={AXIS_W - 2} height={16} rx={2} fill={lastUp ? UP : DOWN} />
+            <text x={plotW + 6} y={lastTagY + 3.5} fontSize={10} fill="#fff" fontFamily={FONT}>
               {formatPrice(last.close)}
             </text>
           </g>
@@ -602,7 +744,7 @@ export default function OhlcChart({
     );
     // y/xc/ry are derived from the listed values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, series, overlays, levels, alertLines, alertDrag, guideLines, markers, zoneDraw, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId, displayTz]);
+  }, [bars, series, overlays, levels, alertLines, alertDrag, guideLines, markers, signalIndex, signalDate, zoneDraw, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId, displayTz]);
 
   // ---- interaction --------------------------------------------------------
 

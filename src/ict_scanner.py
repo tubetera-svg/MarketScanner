@@ -527,6 +527,7 @@ if os.path.dirname(os.path.dirname(os.path.abspath(__file__))) not in sys.path:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Live NSE (CM segment) holiday calendar shared with all_strategy and market_data;
 # NSE sessions only — never GIFT Nifty, forex, commodities or crypto.
+from market_data import bar_quality  # noqa: E402  (reject bad bars before they form levels)
 from market_data.nse_holidays import NSE_HOLIDAYS  # noqa: E402
 
 
@@ -1647,6 +1648,7 @@ class TvDatafeedFetcher(DataFetcher):
                 last_exc = exc
                 log.warning("[%s] TradingView fetch failed on %s: %s", sym, ex, exc)
                 continue
+            df = bar_quality.clean_frame(df, context=f"{ex}:{sym}")
             if df is not None and len(df) > 0:
                 if ex != exchange:
                     log.info("[%s] Using fallback exchange %s (primary %s unavailable).", sym, ex, exchange)

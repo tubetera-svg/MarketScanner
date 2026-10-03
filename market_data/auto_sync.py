@@ -153,7 +153,7 @@ class DataAutoSync:
             state["pending_session"] = target_iso
             state["attempts"] = 0
 
-        ok = failed = have_target = 0
+        ok = failed = have_target = closed = 0
         for symbol in symbols:
             result = sync_symbol_range(
                 source,
@@ -169,14 +169,19 @@ class DataAutoSync:
             ok += 1
             if any(str(row.get("date")) == target_iso for row in result.rows):
                 have_target += 1
+            elif target_iso in result.no_data_dates:
+                closed += 1  # confirmed no session upstream (e.g. NSE IX / forex holiday)
         state["attempts"] += 1
         state["last_result"] = (
             f"{target_iso}: {ok} ok, {failed} failed, {have_target}/{len(symbols)} have the new bar"
+            + (f", {closed} closed (no session)" if closed else "")
         )
         # Done once the new bar is actually available upstream (NSE bhavcopy is
         # all-or-nothing, so any hit means it is published); otherwise retry on
         # the next tick, up to MAX_ATTEMPTS_PER_SESSION.
-        if have_target or state["attempts"] >= MAX_ATTEMPTS_PER_SESSION:
+        # Every symbol either has the bar or had no session -> nothing left to retry.
+        settled = ok > 0 and failed == 0 and have_target + closed == ok
+        if have_target or settled or state["attempts"] >= MAX_ATTEMPTS_PER_SESSION:
             state["last_synced_session"] = target_iso
             state["pending_session"] = None
         log.info("Auto-sync %s -> %s", market, state["last_result"])

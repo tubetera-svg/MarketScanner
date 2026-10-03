@@ -6,7 +6,7 @@ import TradingViewChartModal, { type ChartLevel, type ChartTarget } from "../com
 import { useStatusFlash } from "../components/useStatusFlash";
 import { getSoundSettings, playAlertSound } from "../components/alertSound";
 import { fetchAppSettings } from "../components/appSettings";
-import { IST, NEW_YORK, addDays, calendarDateIn, formatDayDateTime, formatInZone, formatTime, marketToday, useDisplayTimezone, wallLabel, weekdayOf, zoneLabel, zoneOffsetMs } from "../components/time";
+import { IST, NEW_YORK, addDays, calendarDateIn, daysBetween, formatDayDateTime, formatInZone, formatTime, formatTradingDate, marketToday, useDisplayTimezone, wallLabel, weekdayOf, zoneLabel, zoneOffsetMs } from "../components/time";
 import CopyResultsButton from "../components/CopyResultsButton";
 import { autoColumns, tvSymbol, type Cell, type CopyTable } from "../components/copyRows";
 import Navigation from "../components/Navigation";
@@ -96,6 +96,12 @@ type StrategyRow = {
   protected_level?: number | null;
   triggered_level?: number | null;
   order_block_midpoint?: number | null;
+  order_block_low?: number | null;
+  order_block_high?: number | null;
+  mean_threshold?: number | null;
+  candle_3_high?: number | null;
+  candle_3_low?: number | null;
+  equilibrium?: number | null;
   flip_level?: number | null;
   signal_date?: string | null;
   ctx_bias_d?: string | null;
@@ -284,6 +290,12 @@ const INVENTORY_REPORTS: {
 type NewsEvent = { title: string; currency: string; time_utc: string; forecast: string; previous: string };
 type InventoryRelease = { report: string; time_utc: string };
 type NewsFeed = { events: NewsEvent[]; inventory: InventoryRelease[]; currencies: string[]; fetched_at: string | null; source: string | null; stale: boolean; error: string | null };
+// Upcoming NSE results / board meetings / ex-dates by "NSE:SYMBOL" plus the
+// F&O expiries NSE lists for live contracts (GET /api/nse-events). Labels only.
+type NseEvent = { date: string; kind: "results" | "board" | "ex_date"; title: string };
+type NseEventsFeed = { today: string; events: Record<string, NseEvent[]>; fno_expiries: string[]; index_expiries: string[]; fetched_at: string | null; error: string | null; url: string };
+const NSE_EVENT_SHORT: Record<NseEvent["kind"], string> = { results: "Results", board: "Board", ex_date: "Ex" };
+const NSE_EVENT_PAST_DAYS = 5; // recent ex-dates still explain a gap on the chart
 const CALENDAR_SOURCES: Record<string, { name: string; url: string }> = {
   tradingview: { name: "TradingView", url: "https://www.tradingview.com/economic-calendar/" },
   forexfactory: { name: "ForexFactory", url: "https://www.forexfactory.com/calendar" },
@@ -323,6 +335,14 @@ const formatChipTime = (instant: Date, now: number, zone: string): string => {
   if (minutes < 24 * 60) return minutes >= 60 ? `in ${Math.floor(minutes / 60)}h ${minutes % 60}m` : `in ${minutes}m`;
   return formatInZone(instant, zone, { weekday: "short", hour: "2-digit", minute: "2-digit" });
 };
+
+// Zones (low, high) for the chart popup: shaded band, one "Watch setup" zone alert.
+const setupZones = (triples: [string, number | null | undefined, number | null | undefined][]): ChartLevel[] =>
+  triples.flatMap(([label, low, high]) => (
+    typeof low === "number" && typeof high === "number" && Number.isFinite(low) && Number.isFinite(high) && low > 0 && high > 0 && low !== high
+      ? [{ label, price: Math.min(low, high), price2: Math.max(low, high) }]
+      : []
+  ));
 
 // Scanner setup levels handed to the chart popup (guides + "Watch setup"
 // alerts). Read-only: strategy output is never changed here.
@@ -452,6 +472,7 @@ function HomeContent() {
 
   const [inventoryNow, setInventoryNow] = useState(() => Date.now());
   const [newsFeed, setNewsFeed] = useState<NewsFeed | null>(null);
+  const [nseEvents, setNseEvents] = useState<NseEventsFeed | null>(null);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsOpen, setNewsOpen] = useState<{ top: number; right: number } | null>(null);
   const [chart, setChart] = useState<ChartTarget | null>(null);
@@ -512,7 +533,13 @@ function HomeContent() {
       levels: setupLevels([
         ["Entry", row.entry], ["SL", row.sl], ["Target", row.target], ["Swing", row.swing_level],
         ["Protected", row.protected_level], ["Triggered", row.triggered_level], ["OB mid", row.order_block_midpoint], ["Flip", row.flip_level],
+        ["Mean threshold", row.mean_threshold], ["EQ", row.equilibrium],
+      ]).concat(setupZones([["OB", row.order_block_low, row.order_block_high], ["C3 range", row.candle_3_low, row.candle_3_high]])),
+      context: setupLevels([
+        ["PDH", row.ctx_pdh], ["PDL", row.ctx_pdl], ["PWH", row.ctx_pwh], ["PWL", row.ctx_pwl], ["PMH", row.ctx_pmh], ["PML", row.ctx_pml],
+        ["Draw above", row.ctx_draw_above], ["Draw below", row.ctx_draw_below],
       ]),
+      signalDate: row.signal_date ?? null,
     });
   };
 
@@ -877,6 +904,13 @@ function HomeContent() {
       .finally(() => setNewsLoading(false));
   };
   useEffect(() => { loadHighImpactNews(); }, []);
+  // NSE results / ex-dates (downloaded by the API once per IST day) + F&O expiry.
+  useEffect(() => {
+    apiFetch(`${API}/api/nse-events?days=14`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: NseEventsFeed | null) => setNseEvents(data))
+      .catch(() => setNseEvents(null));
+  }, []);
 
   // Sound shortly before each high-impact news / EIA release (Settings →
   // Alert sounds → News event). Past events are never announced.
@@ -1077,6 +1111,7 @@ function HomeContent() {
           ? `TRIGGERED ${setup.entry ?? ""} · SL ${setup.sl ?? ""}${setup.target != null ? ` · T ${setup.target}` : ""}`
           : `zone ${setup.zone_low}–${setup.zone_high} · until ${setup.valid_until}`}
       </small>
+      {nseEventBadges(setup.symbol)}
     </a>
   );
 
@@ -1188,6 +1223,24 @@ function HomeContent() {
       ]),
     };
   };
+  const nseEventBadges = (symbol: string) => {
+    if (!nseEvents) return null;
+    const today = nseEvents.today;
+    const events = (nseEvents.events[symbol.toUpperCase()] ?? []).filter((event) => {
+      const days = daysBetween(today, event.date);
+      return days >= 0 || (event.kind === "ex_date" && days >= -NSE_EVENT_PAST_DAYS);
+    });
+    if (!events.length) return null;
+    return events.slice(0, 2).map((event) => {
+      const days = daysBetween(today, event.date);
+      const when = days === 0 ? "today" : days > 0 ? `in ${days}d` : `${-days}d ago`;
+      return (
+        <span key={`${event.kind}-${event.date}`} className={`signal-event ${event.kind}${days >= 0 && days <= 3 ? " soon" : ""}`} title={`${event.title} — ${formatTradingDate(event.date)} (${when}). NSE event calendar / corporate actions; display only.`}>
+          {NSE_EVENT_SHORT[event.kind]} {formatTradingDate(event.date).slice(0, 6)}
+        </span>
+      );
+    });
+  };
   const renderSignalChip = (row: StrategyRow, side: "bull" | "bear", strategy: string, key: string, heading: string) => (
     <a key={key} href={row.tradingview_link ?? "#"} rel="noreferrer" className={`signal-chip ${side}`} onClick={(event) => openTradingViewChart(event, row)}>
       {side === "bull" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
@@ -1200,6 +1253,7 @@ function HomeContent() {
         </span>
       )}
       {row.state && <span className={`signal-state ${row.state}`}>{row.state}</span>}
+      {nseEventBadges(row.symbol)}
       {strategy !== "protected_swings" && row.entry != null && (
         (() => {
           const detail = "E " + row.entry + (row.sl != null ? ` — SL ${row.sl}` : "") + (row.target != null ? ` — T ${row.target}` : "") + (row.rr != null ? ` — R:R ${row.rr}` : "") + (row.tag ? ` — ${row.tag}` : "");
@@ -1355,6 +1409,19 @@ function HomeContent() {
                   <span className="inventory-ist">{nextNews.time}</span>
                 </a>
               )}
+              {nseEvents?.fno_expiries[0] && (() => {
+                const expiry = nseEvents.fno_expiries[0];
+                const days = daysBetween(nseEvents.today, expiry);
+                const nifty = nseEvents.index_expiries?.[0];
+                return (
+                  <span className={`inventory-chip${days <= 2 ? " soon" : ""}`} title={`NSE stock F&O expiry ${formatTradingDate(expiry)} — ${days === 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`}${nifty ? `
+Next Nifty expiry ${formatTradingDate(nifty)}` : ""}
+From NSE's live contract list (holiday shifts included).`}>
+                    <span className="inventory-label">F&amp;O exp</span>
+                    <span className="inventory-ist">{formatTradingDate(expiry).slice(0, 6)}</span>
+                  </span>
+                );
+              })()}
               <span
                 tabIndex={0}
                 className={`news-toggle${newsFeed?.stale ? " stale" : ""}`}

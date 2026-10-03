@@ -201,6 +201,13 @@ def _load(refresh: bool) -> dict[str, Any]:
         return doc
 
 
+def cache_info() -> dict[str, Any]:
+    """Cache status for the health page (no download)."""
+    doc = _read_cache() or {}
+    return {"fetched_at": doc.get("fetched_at"), "source": doc.get("source"), "stale": bool(doc.get("stale")),
+            "error": doc.get("error"), "retry_at": doc.get("retry_at"), "events": len(doc.get("events") or [])}
+
+
 def get_events(currencies: list[str] | None = None, refresh: bool = False) -> dict[str, Any]:
     """High-impact events (``currencies`` empty/None = all) plus inventory release times."""
     doc = _load(refresh)
