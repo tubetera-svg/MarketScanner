@@ -21,7 +21,6 @@ IST = ZoneInfo("Asia/Kolkata")
 ROOT = Path(__file__).resolve().parent.parent
 ALL_STRATEGY_PATH = ROOT / "src" / "all_strategy.py"
 FLAGS_PATH = ROOT / "config" / "strategy_flags.json"
-OUTPUT_DIR = ROOT / "strategy_outputs"
 INFO_PATH = ROOT / "config" / "strategy_info.txt"
 
 if str(ROOT / "src") not in sys.path:
@@ -246,14 +245,11 @@ def run_scan(
             }
         )
 
-    combined_path = _write_combined(groups, resolved_date)
-
     return {
         "results": groups,
         "requested_date": requested_date.isoformat(),
         "resolved_date": resolved_date.isoformat(),
         "resolution_reason": reason,
-        "combined_file": combined_path,
         "scanned_at": pd.Timestamp.now().isoformat(),
     }
 
@@ -304,20 +300,3 @@ def collect_ltf_setups(symbols: list[str], as_of: date) -> list[Any]:
                 note=str(rec.get("note") or ""),
             ))
     return setups
-
-
-def _write_combined(groups: list[dict[str, Any]], resolved_date: date) -> str | None:
-    frames: list[pd.DataFrame] = []
-    for group in groups:
-        for side, rows in (("bull", group["bullish"]), ("bear", group["bearish"])):
-            if rows:
-                frame = pd.DataFrame(rows)
-                frame.insert(0, "signal_type", side)
-                frame.insert(0, "strategy", group["strategy"])
-                frames.append(frame)
-    if not frames:
-        return None
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT_DIR / f"api_strategy_matches_{resolved_date.strftime('%d_%m_%Y')}.csv"
-    pd.concat(frames, ignore_index=True).to_csv(path, index=False)
-    return str(path)

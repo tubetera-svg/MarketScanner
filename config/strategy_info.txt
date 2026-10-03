@@ -82,7 +82,7 @@ Six additional strategies in `all_strategy.py` model the weekly profile framewor
 ### Web UI / API selection layer
 - The "Strategy profiles" panel in the web app shows every strategy as a toggle chip (Core group + Weekly profiles group). Clicking a chip flips that strategy ON/OFF; the choice is persisted in `strategy_flags.json` in the project root.
 - Endpoints served by `api/main.py` via `api/strategy_bridge.py`: `GET /api/strategies` (catalog + master-switch state), `PUT /api/strategies/{name}` (`{"enabled": true|false}`), `POST /api/strategy-scan` (`{"symbols": [...], "strategies": [...]?, "anchor_date": "YYYY-MM-DD"?}` — defaults to all enabled strategies over the selected watchlist symbols).
-- `POST /api/strategy-scan` returns results clubbed per strategy (`results[].bullish` / `results[].bearish` rows carry symbol, profile label, note, TradingView link) and also writes `strategy_outputs/api_strategy_matches_<date>.csv`.
+- `POST /api/strategy-scan` returns results clubbed per strategy (`results[].bullish` / `results[].bearish` rows carry symbol, profile label, note, TradingView link).
 - Code-level flags remain hard gates: a weekly profile chip cannot be turned ON from the UI while `WEEKLY_PROFILES_ENABLED` or its `WEEKLY_PROFILE_FLAGS` entry is False in `all_strategy.py`.
 
 ### Tunables

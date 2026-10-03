@@ -23,7 +23,7 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 | `tests/` | pytest suite (one file per area) | |
 | `docs/` | Specs + `pine/ict_scanner.pine` | `RUNBOOK.md` (root) = setup + dated changelog |
 
-**Do not read/scan** unless the task requires it: `data/` (116 MB DB, bhavcopy cache, logs, `state/`), `backups/`, `strategy_outputs/`, `.venv/`, `frontend/node_modules/`, `frontend/.next/`, `.kilo/node_modules/`, `*package-lock.json`, `__pycache__/`, `config/watchlist*.{txt,json}` (1k+ lines — grep for a symbol). In `RUNBOOK.md`, read only the relevant section; "Current Context" is long history — grep by keyword/date.
+**Do not read/scan** unless the task requires it: `data/` (116 MB DB, bhavcopy cache, logs, `state/`), `backups/` (if present), `strategy_outputs/` (CLI output), `.venv/`, `frontend/node_modules/`, `frontend/.next/`, `.kilo/node_modules/`, `*package-lock.json`, `__pycache__/`, `config/watchlist*.{txt,json}` (1k+ lines — grep for a symbol). In `RUNBOOK.md`, read only the relevant section; "Current Context" is long history — grep by keyword/date.
 
 **Where to look by task**
 | Task | Start at | Also update |
@@ -50,6 +50,17 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 - No unrelated refactors, "improvements," new abstractions/deps/config, or formatting/line-ending changes. Don't touch generated files or dependencies unless required.
 - Follow existing repo patterns. Put throwaway diagnostics in `scripts/debug/` (never repo root, never named `test_*.py` outside `tests/`), and delete them if not reusable.
 - New strategy → also add it to `config/strategy_info.txt`.
+
+### 1a. Hosting Environment (check on every change)
+The app runs locally on Windows **and** hosted (Linux, UTC clock; PaaS such as Render free tier with an ephemeral disk that is wiped on deploy/restart and sleeps when idle; frontend possibly on Vercel). Before finishing any change, check it against these and mention real impact under "Remaining issues / risks":
+- **Time:** no host-local dates/times (§2a). Schedules must tolerate the host sleeping or restarting mid-session and be computed in the market's zone.
+- **State & disk:** runtime writes go only to `config/` or `data/state/` through `market_data.state_store` (`APP_STATE_STORE=db`, DB on persistent storage via `MARKET_DATA_DB_PATH`). No new loose output files/folders. A restart must not repeat finished work or re-send alerts — persist "already done" markers (`market_data.automation_state`).
+- **Processes:** in-process schedulers assume one API worker/instance; more would double scans and pushes. Background work must not depend on a page being open.
+- **OS/paths:** `pathlib`, case-sensitive file names, no Windows-only commands or paths in app code (`.bat`/PowerShell stay in `scripts/`).
+- **Network:** TradingView, NSE and ForexFactory can block or rate-limit cloud IPs (403/429, Cloudflare). Every outbound call needs a timeout, failure backoff and a fallback or clear error — no tight polling or bulk fetches on boot.
+- **Resources:** free tiers have ~512 MB RAM and little CPU; avoid loading the whole DB/watchlist history into memory, keep SQLite single-writer, keep boot fast.
+- **Security:** hosted means internet-exposed. Secrets only via env (never in repo or `config/*.json`, never logged); endpoints that write, delete or trigger expensive work must stay behind the site's auth; CORS only explicit origins (`CORS_ORIGINS`).
+- **Config:** a new env var needs a default that works locally and a RUNBOOK note; the frontend reaches the API only via `NEXT_PUBLIC_API_URL`.
 
 ## 2. Trading Logic Safety
 - Entry, filters, position sizing, SL/TP, RR threshold, session, timeframe, and signal-timing logic are sensitive: never change silently.
