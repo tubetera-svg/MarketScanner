@@ -10,6 +10,7 @@ import { Database, Download, Pencil, RefreshCw, Save, SearchX, Trash2, X } from 
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
 import { FavoriteStar, useFavorites } from "../../components/Favorites";
+import { IST, addDays, formatDateTime, marketToday, useDisplayTimezone } from "../../components/time";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const number = (value: number | null) => value == null ? "-" : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -92,12 +93,9 @@ const classificationFields: { key: keyof WatchlistClassification; label: string;
 
 const SCOPE = "watchlist";
 const pageSizeOptions = [25, 50, 100, 250];
-const todayISO = () => new Date().toISOString().slice(0, 10);
-// Local-calendar "today" (the max selectable date); todayISO() is UTC and can lag IST by a day.
-const localTodayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+// Stored bars are dated by trading day; "today" is the IST (NSE) date, whatever the browser zone.
+const todayISO = () => marketToday(IST);
+const localTodayISO = todayISO;
 const defaultFilters = { source: "", exchange: "", q: "", from: todayISO(), to: "", sort: "desc" };
 
 // Per-column grid filters (Date/Symbol/Exchange/Source). These now drive the
@@ -112,6 +110,7 @@ const emptyGridFilters = {
 type GridFilters = typeof emptyGridFilters;
 
 export default function WatchlistPage() {
+  const displayTz = useDisplayTimezone();
   const [records, setRecords] = useState<RecordsPayload | null>(null); // null = not loaded yet
   const [meta, setMeta] = useState<MetaPayload | null>(null);
   const [filters, setFilters] = useState(defaultFilters);
@@ -344,7 +343,7 @@ export default function WatchlistPage() {
 
   const rows = records?.rows ?? [];
 
-  const daysAgoISO = (days: number) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const daysAgoISO = (days: number) => addDays(todayISO(), -days);
   const applyPreset = (from: string, to = "") => {
     setFilters((current) => ({ ...current, from, to }));
     markStale();
@@ -599,7 +598,7 @@ export default function WatchlistPage() {
           <div className="watchlist-editor">
             <div className="fno-refresh">
               <span className="symbol-row muted">
-                F&amp;O list: {fnoInfo?.count ? `${fnoInfo.count} symbols · saved ${fnoInfo.saved_at?.replace("T", " ") ?? "?"}` : "not saved yet — new NSE stocks are tagged Equity"}
+                F&amp;O list: {fnoInfo?.count ? `${fnoInfo.count} symbols · saved ${fnoInfo.saved_at ? formatDateTime(fnoInfo.saved_at, displayTz) : "?"}` : "not saved yet — new NSE stocks are tagged Equity"}
               </span>
               {!fnoPreview && (
                 <button className="test-button" type="button" onClick={() => void previewFnoRefresh()} disabled={fnoBusy}>

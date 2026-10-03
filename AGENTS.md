@@ -16,6 +16,7 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 | `api/{app_settings,price_alerts,push,news_calendar,fno_membership}.py` | Settings JSON, price alerts, Telegram/ntfy push, econ calendar, F&O list | Push creds only from env |
 | `market_data/` | SQLite OHLC layer: `database.py` (schema), `service.py`, `routes.py`, `sources/{nse,tradingview}_source.py`, `auto_sync.py`, `bootstrap.py`, `tv_symbol.py`, `state_store.py` (`APP_STATE_STORE=db`), `favorites.py`, `etf_list.py`, `config.py` | DB: `data/market_data.db` (`ohlc_daily`, `ohlc_no_data`, `app_state`, …) |
 | `market_data/{ipo,equity_master,liquidity_screener}.py` | IPO tracking + liquidity screen | CLIs in `scripts/ipo/` |
+| `market_data/timeutil.py`, `frontend/components/time.ts` | Time contract helpers (parse/serialize instants, display formatting, market dates) | See §2b — the only place time is formatted |
 | `frontend/app/` | Next.js pages: `page.tsx` (scanner, ~1.8k lines), `watchlist/`, `ipo/`, `backtest/`, `alerts/`, `settings/` | Shared: `frontend/components/` |
 | `config/` | Watchlist, `strategy_flags.json`, `strategy_info.txt`, `symbol_aliases.json`, `app_settings.json`, `favorites.json` | Edited by users/UI; runtime state in `data/state/` (git-ignored) |
 | `main.py` | CLI: run strategies → CSVs in `strategy_outputs/` | |
@@ -29,7 +30,7 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 | Task | Start at | Also update |
 |---|---|---|
 | New/changed strategy | `strategy_registry()` in `all_strategy.py`, or a `src/<name>.py` module | `config/strategy_info.txt`, `strategy_flags.json` default, `tests/test_<name>.py`, backtest parity |
-| Session/timezone/holiday | `detect_session`, `NSE_HOLIDAYS`, `is_*_open`, `is_daily_bar_ready` in `ict_scanner.py` | `session-timezone-audit` skill |
+| Session/timezone/holiday | `detect_session`, `NSE_HOLIDAYS`, `is_*_open`, `is_daily_bar_ready` in `ict_scanner.py`; time helpers §2b | `session-timezone-audit` skill, `tests/test_time_contract.py` |
 | New data source / sync | `market_data/sources/`, `service.py`, `auto_sync.py`, `config.py` env flags | `tests/test_market_data.py`, `test_data_cutoffs.py` |
 | Backtest | `src/backtest/engine.py`, `POST /api/backtest` | `docs/BACKTEST_ENGINE_SPEC.md`, `backtest-validation` skill |
 | Alerts / push | `api/price_alerts.py`, `api/push.py`, `frontend/components/PriceAlert*` | `tests/test_price_alerts.py`, `test_push.py` |
@@ -41,7 +42,7 @@ Senior developer maintaining a multi-strategy ICT/TTrades-style technical-analys
 - API: `python -m uvicorn api.main:app --reload --port 8000`
 - Known pre-existing failure: `tests/test_market_data.py::test_source_flags_are_independent` (needs live TradingView).
 
-**Domain facts:** NSE sessions are IST (09:15–15:30); forex/commodities (`FOREX_24_5`) and ICT kill zones / Silver Bullet use NY/ET with 17:00 NY rollover; crypto days are UTC. NSE daily bars are final after bhavcopy publish (17:00 IST, `is_daily_bar_ready`). TradingView returns IST wall-clock naive timestamps. Sources are gated independently by env flags `FETCH_TRADINGVIEW_DATA` / `FETCH_NSE_DATA` / `AUTO_FETCH_MISSING_DATA`.
+**Domain facts:** NSE sessions are IST (09:15–15:30); forex/commodities (`FOREX_24_5`) and ICT kill zones / Silver Bullet use NY/ET with 17:00 NY rollover; crypto days are UTC. NSE daily bars are final after bhavcopy publish (17:00 IST, `is_daily_bar_ready`). TradingView intraday rows carry UTC open instants; daily rows carry the market's trading date (§2b). Sources are gated independently by env flags `FETCH_TRADINGVIEW_DATA` / `FETCH_NSE_DATA` / `AUTO_FETCH_MISSING_DATA`.
 
 **Skills** (review checklists): `backtest-validation`, `data-quality-check`, `session-timezone-audit`, `trading-strategy-review`. Use when the task matches.
 
@@ -73,13 +74,36 @@ Apply to all strategy, indicator, scanner and backtest code. Violations are flag
 - **Confirmation lag.** Swing highs/lows, pivots, fractals, protected swings, and order blocks are known only N bars after the extreme. Signals must be stamped at the confirmation bar, not the pivot bar.
 - **Signal time = detection time.** Each signal carries the bar timestamp it was decided on; the same setup must not re-fire on later scans (dedupe by symbol + strategy + setup bar).
 - **Higher-timeframe context** (PDH/PDL, PWH/PWL, weekly profile, daily bias) comes from the last *completed* HTF period relative to the bar being evaluated — never today's/this week's partial bar.
-- **Timezone-aware everywhere.** Never use host-local `date.today()` / naive `datetime.now()` for market dates (the app may run on a UTC/US server). Use `market_data.service.market_today(source, symbol)` (NSE/NSE IX = IST, crypto = UTC, other TradingView = NY) or `service.ist_today()` for NSE/IPO work. Stored bars are already host-independent (TradingView bars labelled by IST open). Store/compare in one zone per market.
+- **Timezone-aware everywhere.** Follow §2b. Never use host-local `date.today()` / naive `datetime.now()` (the app may run on a UTC/US server); market dates come from `market_data.service.market_today(source, symbol)` / `ist_today()`.
 - **Calendars.** NSE holidays, weekends, half/special sessions (Muhurat) and FX DST shifts must not create phantom or missing bars. A missing bar is "no data", not "flat price".
 - **Price adjustments.** NSE splits/bonuses/rights change historical prices; mixing adjusted (TradingView) and unadjusted (bhavcopy) series breaks levels. Flag any cross-source comparison that ignores this.
 - **Data integrity before signals.** Reject bars with `high < low`, open/close outside range, zero/NaN prices, or duplicate timestamps rather than letting them form levels.
 - **Backtest realism.** Entries fill at the next tradable price after the signal bar (not the signal bar's close/extreme). If SL and TP both sit inside one bar, assume SL first unless intrabar data proves otherwise. Gaps through stops fill at the open. Account for costs (brokerage, STT/fees, slippage) or report results as gross. Universe must be point-in-time (no survivorship: delisted/SME-migrated symbols, IPO listing date).
 - **Parity.** Live scanner, historical test (`anchor_date`), and backtest must call the same detection functions with the same parameters.
 - **No over-fitting.** Don't tune parameters on the same window used to report performance; mention sample size (trades, period) with any metric.
+
+### 2b. Time & Timezone Contract
+Two different things — never mix them:
+| | **Market zone** (logic) | **Display zone** (people) |
+|---|---|---|
+| Decides | sessions, bar finality/cut-offs, "today" per market, which trading day a bar belongs to | how a time *looks* in the UI and push messages |
+| Value | fixed: NSE/NSE IX = IST, forex/commodities = New York, crypto = UTC | `config/app_settings.json` → `ui.display_timezone` (default `Asia/Kolkata`; Settings page; `"browser"` = viewer's zone, server falls back to IST) |
+| Changing it | changes signals → §2 trading-logic change | display only, never alters data or signals |
+
+Rules
+1. **Instants** (bar open time, alerts, news, signal/trigger/last-run times) are tz-aware and serialized as **UTC ISO-8601 with offset** (`2026-10-03T04:15:00+00:00`). Never write a naive time. Backend: `timeutil.utc_now()`, `to_utc_iso()`.
+2. **Trading-day dates** (`ohlc_daily.date`, `signal_date`, `valid_until`, date pickers, scan anchors) are plain `YYYY-MM-DD` in the market's calendar and are **never timezone-converted**.
+3. **Reading**: parse with `timeutil.parse_instant()` / TS `toInstant()`. A naive value is legacy **IST wall time** (old rows, cached state) — never assume host-local.
+4. **Intraday bars**: `tradingview_source` emits UTC instants. Consumers convert to their market zone (`silver_bullet` → NY, `ltf_confirmation.session_date`). Strategy frames in `all_strategy._protected_swing_frame` are re-indexed to naive IST wall time so strategy outputs stay identical; keep that conversion at the edge.
+5. **"Today"**: backend `service.market_today(source, symbol)` / `ist_today()`; frontend `marketToday(zone)` (IST for NSE scan/sync dates). Never the browser or host date.
+6. **Formatting for people**: only via helpers — backend `timeutil.fmt_display(value, app_settings.display_timezone())` (push texts); frontend `components/time.ts` (`formatTime`, `formatDateTime`, `formatDayDateTime`, `formatInZone`, `zoneLabel`, `wallLabel` for chart axes) with the zone from `useDisplayTimezone()` (re-renders on change). Show the zone label (`zoneLabel`) next to times.
+7. **User-entered times** (quiet hours, "mute until") are in the display zone; market cut-offs on the Settings page stay in their market zone and say so.
+8. **Banned** outside the helper modules (enforced by `tests/test_time_contract.py`): Python `date.today()`, `datetime.now()` without tz, `datetime.utcnow()`, `.astimezone()` without tz; TS `toLocale{Date,Time}String`, `new Date(...).toLocaleString`, `toISOString().slice(...)`, `Date#getHours/getDate/getDay/getMonth/getFullYear/getMinutes`, `new Intl.DateTimeFormat`, hard-coded IST offsets.
+9. **New display surface or setting**: add a helper to `time.ts` / `timeutil.py` if one is missing, never inline `Intl`/`strftime`; new choices for the display zone go in `timeutil.DISPLAY_TIMEZONES`.
+10. **Tests**: time logic gets a test at a moment where IST, NY and UTC dates differ (e.g. `2026-10-03T20:00Z`), plus a DST boundary when NY is involved.
+
+Example — a new API field `last_synced_at` and its UI:
+`state["last_synced_at"] = utc_now().isoformat(timespec="seconds")` → TS `{formatDateTime(s.last_synced_at, tz)} {zoneLabel(tz, s.last_synced_at)}` with `const tz = useDisplayTimezone()`.
 
 ## 3. Flag (don't silently fix, unless fixing is the task)
 - **Repainting** — signal uses data unavailable at its bar/timestamp (future bars, same-bar close after decision, future-derived indicators).

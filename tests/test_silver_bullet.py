@@ -99,3 +99,22 @@ def test_target_side_swept_before_confirmation_voids_setup():
     ]
 
     assert _evaluate(window) is None
+
+
+def test_utc_rows_give_identical_signal_to_legacy_ist_rows():
+    """Parity: TradingView rows now carry UTC instants (time contract)."""
+    window = [
+        (100, 100, 98, 99.5),
+        (99.5, 102, 99.2, 101.8),
+        (101.8, 102.5, 100.5, 102),
+    ]
+    legacy = _rows(window)
+    ist = ZoneInfo("Asia/Kolkata")
+    utc_rows = [
+        {**row, "date": datetime.fromisoformat(row["date"]).replace(tzinfo=ist).astimezone(ZoneInfo("UTC")).isoformat()}
+        for row in legacy
+    ]
+    now = datetime(2026, 9, 21, 11, 0, tzinfo=NEW_YORK)
+    expected = evaluate_am_silver_bullet("COMEX:GC1!", legacy, trading_date=DAY, now=now)
+    assert expected is not None
+    assert evaluate_am_silver_bullet("COMEX:GC1!", utc_rows, trading_date=DAY, now=now) == expected

@@ -248,7 +248,12 @@ def _rows_to_daily_df(rows: list[dict]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=["Open", "High", "Low", "Close"])
     frame = pd.DataFrame(rows)
-    frame["Date"] = pd.to_datetime(frame.get("date"), errors="coerce")
+    dates = frame.get("date")
+    if dates is not None and dates.astype(str).str.contains(r"[+-]\d{2}:\d{2}$|Z$", regex=True).any():
+        # Intraday rows are UTC instants; daily rows are plain trading dates.
+        frame["Date"] = pd.to_datetime(dates, errors="coerce", utc=True)
+    else:
+        frame["Date"] = pd.to_datetime(dates, errors="coerce")
     frame = frame.dropna(subset=["Date"]).sort_values("Date").set_index("Date")
     out = pd.DataFrame(index=frame.index)
     out["Open"] = frame.get("open")
@@ -446,8 +451,8 @@ def _protected_swing_frame(
 
     from market_data.sources import tradingview_source
 
-    # Intraday TradingView bars are labelled by their IST date for every market
-    # (see tradingview_source.fetch_timeframe), so cap the window in IST.
+    # fetch_timeframe selects intraday bars by the IST date of their open for
+    # every market, so cap the window in IST.
     today = _get_md_service().ist_today(now=datetime.now(timezone.utc))
     end = min(as_of_date or today, today)
     rows = tradingview_source.fetch_timeframe(
@@ -457,7 +462,13 @@ def _protected_swing_frame(
         timeframe=_PROTECTED_SWING_TV_TIMEFRAMES[normalized],
         exchange=symbol.split(":", 1)[0] if ":" in symbol else "NSE",
     )
-    return _rows_to_daily_df(rows)
+    frame = _rows_to_daily_df(rows)
+    # Rows carry UTC instants (time contract). Strategy frames index intraday
+    # bars by naive IST wall time, so session days and note dates are the same
+    # on any host and unchanged from before the UTC switch.
+    if not frame.empty and frame.index.tz is not None:
+        frame.index = frame.index.tz_convert(_IST).tz_localize(None)
+    return frame
 
 
 def _daily_frame_stale(symbol: str, daily: pd.DataFrame, as_of_date: date, timeframe: str) -> bool:

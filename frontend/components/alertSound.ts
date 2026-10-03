@@ -4,6 +4,7 @@
 // /api/settings (api/app_settings.py); a temporary mute is per browser.
 
 import { fetchAppSettings } from "./appSettings";
+import { formatTime, getDisplayTimezone } from "./time";
 
 export type AlertSoundKind = "ltf" | "silver_bullet" | "price_alert" | "news_event";
 type SoundChoice = { enabled: boolean; sound: string };
@@ -177,10 +178,10 @@ export const setMutedUntil = (until: number | null) => {
   notify();
 };
 
-// Quiet hours are IST 'HH:MM' and may wrap midnight (23:00 -> 07:00).
+// Quiet hours are 'HH:MM' in the display timezone (default IST) and may wrap midnight (23:00 -> 07:00).
 const inQuietHours = ({ enabled, start, end }: SoundSettings["quiet_hours"]) => {
   if (!enabled) return false;
-  const now = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(Date.now());
+  const now = formatTime(Date.now(), getDisplayTimezone());
   return start <= end ? now >= start && now < end : now >= start || now < end;
 };
 

@@ -1668,10 +1668,17 @@ class TvDatafeedFetcher(DataFetcher):
     def _filter_to_anchor(df, anchor_date: Optional[date], exact: bool = False):
         if anchor_date is None or df is None or len(df) == 0:
             return df
+        def ist_day(value):
+            # tvDatafeed stamps bars with naive *host-local* time; compare by the
+            # IST date of the bar so results do not depend on the PC's timezone.
+            if hasattr(value, "to_pydatetime"):
+                return value.to_pydatetime().astimezone(IST).date()
+            return getattr(value, "date", lambda: value)()
+
         if exact:
-            mask = [getattr(value, "date", lambda: value)() == anchor_date for value in df.index]
+            mask = [ist_day(value) == anchor_date for value in df.index]
         else:
-            mask = [getattr(value, "date", lambda: value)() <= anchor_date for value in df.index]
+            mask = [ist_day(value) <= anchor_date for value in df.index]
         return df.loc[mask]
 
     def get_ohlc(self, symbol: str, anchor_date: Optional[date] = None) -> StructureSnapshot:

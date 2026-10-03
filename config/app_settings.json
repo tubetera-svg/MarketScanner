@@ -67,6 +67,7 @@
     "propulsion_mean_threshold": "range"
   },
   "ui": {
+    "display_timezone": "Asia/Kolkata",
     "hidden_pages": [],
     "hidden_strategies": [
       "ema5_sweep",

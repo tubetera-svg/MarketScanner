@@ -78,11 +78,11 @@ def test_window_is_capped(monkeypatch):
     assert client.calls[0]["n_bars"] == 5000
 
 
-def test_intraday_rows_are_labelled_in_ist(monkeypatch):
-    """Intraday ``date`` is IST wall time whatever zone the bar is stamped in.
+def test_intraday_rows_are_utc_instants(monkeypatch):
+    """Intraday ``date`` is the bar-open instant in UTC whatever zone the bar is stamped in.
 
-    A zone-aware UTC index stands in for a non-IST machine: 13:00 UTC must be
-    stored as 18:30 IST (09:00 New York), not as the raw 13:00.
+    A zone-aware UTC index stands in for a non-IST machine: 13:00 UTC (18:30 IST,
+    09:00 New York) must be emitted as 13:00+00:00 and selected by its IST date.
     """
     session = date.today() - timedelta(days=1)
     index = pd.DatetimeIndex([pd.Timestamp(session).tz_localize("UTC") + pd.Timedelta(hours=13)])
@@ -91,4 +91,4 @@ def test_intraday_rows_are_labelled_in_ist(monkeypatch):
 
     rows = tradingview_source.fetch_timeframe("OANDA:XAUUSD", session, session, "5m", "OANDA")
 
-    assert [row["date"] for row in rows] == [f"{session.isoformat()}T18:30:00"]
+    assert [row["date"] for row in rows] == [f"{session.isoformat()}T13:00:00+00:00"]

@@ -62,3 +62,27 @@ def test_service_market_today_and_ist_today_ignore_host_zone():
 
     la = _INSTANT.astimezone(ZoneInfo("America/Los_Angeles"))
     assert service.market_today("NSE", "NSE:INFY", now=la) == date(2026, 10, 4)
+
+
+def test_protected_swing_frame_utc_rows_match_legacy_ist_frame(monkeypatch):
+    """Parity: UTC instants are converted back to the naive IST index strategies use."""
+    import pandas as pd
+    from market_data.sources import tradingview_source
+
+    utc_rows = [
+        {"date": "2026-10-02T18:45:00+00:00", "open": 1, "high": 2, "low": 0.5, "close": 1.5},  # 00:15 IST Oct 3
+        {"date": "2026-10-03T03:45:00+00:00", "open": 1.5, "high": 2.5, "low": 1, "close": 2},  # 09:15 IST Oct 3
+    ]
+    monkeypatch.setattr(tradingview_source, "fetch_timeframe", lambda **kwargs: utc_rows)
+    frame = all_strategy._protected_swing_frame("OANDA:XAUUSD", "1h", None, date(2026, 10, 3))
+    assert list(frame.index) == [pd.Timestamp("2026-10-03 00:15"), pd.Timestamp("2026-10-03 09:15")]
+    assert frame.index.tz is None
+
+
+def test_price_alert_bar_close_accepts_utc_and_legacy_labels():
+    sys.path.insert(0, str(ROOT / "api"))
+    import price_alerts
+
+    expected = datetime(2026, 10, 3, 4, 20, tzinfo=timezone.utc)  # 09:45 IST open + 5m
+    assert price_alerts.bar_close_utc("2026-10-03T04:15:00+00:00") == expected
+    assert price_alerts.bar_close_utc("2026-10-03T09:45") == expected

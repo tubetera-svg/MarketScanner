@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { addDays, useDisplayTimezone, wallLabel, weekdayOf } from "./time";
 
 /**
  * Lightweight SVG candlestick chart (no external charting dependency). Fed by
@@ -8,7 +9,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
  * symbols the TradingView embed widget refuses, or stored daily OHLC.
  */
 
-/** `date` is YYYY-MM-DD, or YYYY-MM-DDTHH:MM (IST) for intraday bars. */
+/** `date` is YYYY-MM-DD (trading day), or YYYY-MM-DDTHH:MM wall time in the display zone for intraday bars. */
 export type Bar = { date: string; open: number; high: number; low: number; close: number; volume: number };
 export type Overlays = {
   ema20: boolean;
@@ -30,7 +31,6 @@ const INK = "#15232d";
 const RSI_COLOR = "#287b79";
 const ALERT_COLOR = "#e07b00";
 const GUIDE_COLOR = "#2f6f9e";
-const IST_OFFSET_MS = 5.5 * 3600 * 1000;
 export const EMA_COLORS = { ema20: "#356c9b", ema50: "#c08a2e", ema200: "#7c3aed" } as const;
 export const VWAP_COLOR = "#db2777";
 const FONT = "'DM Mono', ui-monospace, monospace";
@@ -89,7 +89,7 @@ export const rsi = (values: number[], period = 14): Array<number | null> => {
   return out;
 };
 
-/** Session VWAP, reset each (IST) calendar day. */
+/** Session VWAP, reset each calendar day of the bar labels (display zone). */
 export const vwap = (bars: Bar[]): Array<number | null> => {
   let day = "";
   let pv = 0;
@@ -108,11 +108,8 @@ export const vwap = (bars: Bar[]): Array<number | null> => {
   });
 };
 
-const weekKey = (iso: string) => {
-  const day = new Date(`${iso}T00:00:00Z`);
-  day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
-  return day.toISOString().slice(0, 10);
-};
+// Monday of the bar's week (pure calendar arithmetic on the trading date).
+const weekKey = (iso: string) => addDays(iso, -((weekdayOf(iso) + 6) % 7));
 
 /** Roll daily bars up to weekly (Mon-start) or monthly bars. */
 export const aggregate = (bars: Bar[], timeframe: "D" | "W" | "M"): Bar[] => {
@@ -254,7 +251,7 @@ export default function OhlcChart({
 }: {
   bars: Bar[];
   overlays: Overlays;
-  /** Bars carry IST times; enables VWAP and time-of-day labels. */
+  /** Bars carry display-zone wall times; enables VWAP and time-of-day labels. */
   intraday: boolean;
   monthly?: boolean;
   title: string;
@@ -282,6 +279,7 @@ export default function OhlcChart({
   /** Right-click inside the price pane. */
   onContextMenu?: (price: number, clientX: number, clientY: number) => void;
 }) {
+  const displayTz = useDisplayTimezone();
   const wrapRef = useRef<HTMLDivElement>(null);
   const clipId = `ohlc-clip-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -549,8 +547,8 @@ export default function OhlcChart({
             );
           })}
           {(markers ?? []).map((marker) => {
-            // Bar containing the trigger (bars are labelled by IST open time).
-            const label = new Date(Date.parse(marker.ts) - 60000 + IST_OFFSET_MS).toISOString().slice(0, 16);
+            // Bar containing the trigger (intraday bars are labelled by display-zone open time).
+            const label = wallLabel(Date.parse(marker.ts) - 60000, displayTz);
             const key = intraday ? label : label.slice(0, 10);
             let index = -1;
             for (let i = len - 1; i >= 0; i--) {
@@ -604,7 +602,7 @@ export default function OhlcChart({
     );
     // y/xc/ry are derived from the listed values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, series, overlays, levels, alertLines, alertDrag, guideLines, markers, zoneDraw, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId]);
+  }, [bars, series, overlays, levels, alertLines, alertDrag, guideLines, markers, zoneDraw, intraday, monthly, v.start, v.count, plotW, plotH, priceH, len, clipId, displayTz]);
 
   // ---- interaction --------------------------------------------------------
 

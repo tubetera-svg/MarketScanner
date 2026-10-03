@@ -26,6 +26,7 @@ from datetime import date, datetime
 from typing import Any, Callable, Optional
 
 from .automation_state import AutomationState
+from .timeutil import utc_now
 from .config import backdate_lookback_days, load_symbol_aliases, source_enabled, source_flag_name
 from .service import is_crypto_symbol, is_nseix_symbol, latest_final_session, resolve_session_source, sync_symbol_range
 
@@ -124,7 +125,7 @@ class DataAutoSync:
             report: dict[str, Any] = {}
             for (market, source), symbols in groups.items():
                 report[market] = self._sync_market(market, source, symbols, alias_map, now)
-            self.last_run_at = datetime.now().astimezone().isoformat()
+            self.last_run_at = utc_now().isoformat(timespec="seconds")
             self.run_count += 1
             self.last_error = None
             return report

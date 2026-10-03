@@ -37,6 +37,9 @@ import pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_PATH = os.path.join(ROOT, "data", "state", "ltf_setups.json")
 log = logging.getLogger(__name__)
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+from market_data.timeutil import parse_instant  # noqa: E402
 
 IST = ZoneInfo("Asia/Kolkata")
 NEW_YORK = ZoneInfo("America/New_York")
@@ -102,17 +105,15 @@ def session_date(ts: pd.Timestamp, market: str) -> date:
 
 
 def bars_from_rows(rows: Iterable[Dict[str, Any]]) -> pd.DataFrame:
-    """TradingView rows -> tz-aware (IST) OHLC frame sorted by bar open time.
+    """TradingView rows -> tz-aware (UTC) OHLC frame sorted by bar open time.
 
-    The market-data layer returns TradingView bars as naive IST wall time.
+    Rows carry UTC instants (time contract); legacy naive values are IST wall time.
     """
     frame = pd.DataFrame(list(rows))
     if frame.empty or "date" not in frame:
         return pd.DataFrame(columns=["Open", "High", "Low", "Close"])
-    stamps = pd.to_datetime(frame["date"], errors="coerce")
+    stamps = pd.to_datetime(frame["date"].map(parse_instant), errors="coerce", utc=True)
     frame = frame.assign(ts=stamps).dropna(subset=["ts"])
-    if frame["ts"].dt.tz is None:
-        frame["ts"] = frame["ts"].dt.tz_localize(IST)
     out = pd.DataFrame(
         {
             "Open": pd.to_numeric(frame["open"], errors="coerce").to_numpy(),

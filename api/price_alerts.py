@@ -41,6 +41,7 @@ from zoneinfo import ZoneInfo
 
 import push as push_notify
 from market_data import state_store
+from market_data.timeutil import parse_instant
 
 ROOT = Path(__file__).resolve().parent.parent
 STORE_PATH = ROOT / "data" / "state" / "price_alerts.json"
@@ -363,8 +364,8 @@ def delete(alert_id: str) -> bool:
 # ---------------------------------------------------------------- evaluation
 
 def bar_close_utc(label: str, minutes: int = BAR_MINUTES) -> datetime:
-    """``YYYY-MM-DDTHH:MM`` IST bar-open label -> bar close time (UTC)."""
-    opened = datetime.fromisoformat(label).replace(tzinfo=IST)
+    """Bar-open instant (UTC ISO; legacy naive = IST wall time) -> bar close time (UTC)."""
+    opened = parse_instant(label)
     return (opened + timedelta(minutes=minutes)).astimezone(timezone.utc)
 
 
@@ -426,7 +427,7 @@ def _fires(alert: dict[str, Any], side: str, unit: dict[str, Any]) -> bool:
 def evaluate(alert: dict[str, Any], bars: list[dict[str, Any]] | dict[str, list[dict[str, Any]]], now: datetime) -> bool:
     """Replay completed units since ``last_checked_at``; mutate ``alert``; True when it fired.
 
-    ``bars`` maps timeframe -> TradingView rows (IST open labels, oldest
+    ``bars`` maps timeframe -> TradingView rows (UTC open instants, oldest
     first); a plain list means 5m bars. ``last_checked_at`` only advances past
     units actually used, so none is replayed or skipped.
     """

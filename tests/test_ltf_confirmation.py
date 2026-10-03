@@ -50,7 +50,18 @@ def test_cisd_after_zone_touch_triggers_with_stop_beyond_intraday_low():
     assert result["state"] == ltf.STATE_TRIGGERED
     assert result["entry"] == 101.7
     assert result["sl"] == 99.9
-    assert result["at"].startswith("2026-02-13T11:15")
+    # Instants are emitted in UTC (time contract): 11:15 IST == 05:45 UTC.
+    assert pd.Timestamp(result["at"]) == pd.Timestamp("2026-02-13 11:15", tz="Asia/Kolkata")
+
+
+def test_utc_rows_give_same_result_as_legacy_ist_rows():
+    """Parity: TradingView rows now carry UTC instants; signals must not change."""
+    utc_rows = [
+        (pd.Timestamp(ts, tz="Asia/Kolkata").tz_convert("UTC").isoformat(), o, h, l, c)
+        for ts, o, h, l, c in BULLISH_DAY
+    ]
+    now = _ist("2026-02-13 12:30")
+    assert ltf.evaluate_ltf(_setup(), _bars(utc_rows), now, "1h") == ltf.evaluate_ltf(_setup(), _bars(BULLISH_DAY), now, "1h")
 
 
 def test_forming_bar_is_not_used():

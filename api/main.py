@@ -32,6 +32,7 @@ from market_data import favorites  # noqa: E402  (starred symbols shared by scan
 from market_data.automation_state import AutomationState  # noqa: E402  (restart-safe "already done" markers)
 from market_data.routes import router as market_data_router, _auto_sync  # noqa: E402
 from market_data.service import ensure_backdate_data, ist_today  # noqa: E402
+from market_data.timeutil import DISPLAY_TIMEZONES, fmt_display, parse_instant, utc_now  # noqa: E402
 from market_data.liquidity_screener import screen_all_ipos  # noqa: E402
 
 
@@ -482,8 +483,9 @@ class SilverBulletLiveScanner:
         if unsent:
             self._pushed[1].update(s.get("id") for s in unsent)
             self._save_state()
+        zone = app_settings.display_timezone()
         await self.pusher.push(
-            f"{s['symbol']} {s['direction']} @ {s['signal_time']}; entry {s['entry']:g}, SL {s['stop_loss']:g}, TP {s['target']:g}"
+            f"{s['symbol']} {s['direction']} @ {fmt_display(s['signal_time'], zone)}; entry {s['entry']:g}, SL {s['stop_loss']:g}, TP {s['target']:g}"
             for s in unsent
         )
         return now
@@ -561,11 +563,10 @@ class IPOScanner:
         """Seconds left of the interval since the last successful scan (0 = run now)."""
         if not self.last_ran_at:
             return 0.0
-        try:
-            last = datetime.fromisoformat(self.last_ran_at)
-        except ValueError:
+        last = parse_instant(self.last_ran_at)  # legacy naive values are IST
+        if last is None:
             return 0.0
-        elapsed = (datetime.now(timezone.utc) - last.astimezone()).total_seconds()
+        elapsed = (utc_now() - last).total_seconds()
         return max(0.0, self.interval_minutes * 60 - elapsed)
 
     def start(self) -> dict[str, Any]:
@@ -622,7 +623,7 @@ class IPOScanner:
         start = end - timedelta(days=self.lookback_days)
         candidates = ipo_service.discover_new_ipos(start, today, known_symbols=baseline, db_path=db_path())
         registered = ipo_service.register_ipos(candidates, db_path=db_path()) if candidates else []
-        self.last_ran_at = datetime.now().astimezone().isoformat()
+        self.last_ran_at = utc_now().isoformat(timespec="seconds")
         if self._state is not None:
             self._state.save({"last_ran_at": self.last_ran_at})
         self.run_count += 1
@@ -1092,7 +1093,7 @@ def _run_backtest(request: BacktestRequest) -> dict[str, Any]:
     reports = _run(config)
     return {
         "reports": {key: report.to_dict() for key, report in reports.items()},
-        "generated_at": datetime.now().astimezone().isoformat(),
+        "generated_at": utc_now().isoformat(timespec="seconds"),
     }
 
 
@@ -1177,6 +1178,7 @@ def _settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "strategy_choices": {key: list(values) for key, values in app_settings.STRATEGY_CHOICES.items()},
         "news_currencies": list(app_settings.NEWS_CURRENCIES),
         "sound_choices": list(app_settings.SOUND_CHOICES),
+        "display_timezones": [{"value": value, "label": label} for value, label in DISPLAY_TIMEZONES.items()],
     }
 
 

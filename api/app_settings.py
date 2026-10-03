@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from market_data import state_store
+from market_data.timeutil import DEFAULT_DISPLAY_TIMEZONE, DISPLAY_TIMEZONES
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = ROOT / "config" / "app_settings.json"
@@ -59,9 +60,12 @@ DEFAULTS: dict[str, Any] = {
     "ui": {
         "hidden_strategies": [],
         "hidden_pages": [],
+        # Zone every displayed time uses (UI + push messages). Display only:
+        # market logic keeps its fixed zones. See market_data/timeutil.py.
+        "display_timezone": DEFAULT_DISPLAY_TIMEZONE,
     },
     # Browser alert sounds (frontend/components/alertSound.ts). Quiet hours are
-    # IST 'HH:MM' and may wrap midnight; news_event.lead_minutes = how long
+    # 'HH:MM' in the display timezone (ui.display_timezone) and may wrap midnight; news_event.lead_minutes = how long
     # before a high-impact news / EIA release its sound plays; news_event.repeat =
     # how many times that sound plays back to back.
     "sounds": {
@@ -134,6 +138,8 @@ def _clamp(settings: dict[str, Any]) -> dict[str, Any]:
         block = settings["automation"][section]
         block[key] = max(low, min(high, float(block[key])))
     settings["ui"]["hidden_pages"] = [p for p in settings["ui"]["hidden_pages"] if p in HIDEABLE_PAGES]
+    if settings["ui"]["display_timezone"] not in DISPLAY_TIMEZONES:
+        settings["ui"]["display_timezone"] = DEFAULT_DISPLAY_TIMEZONE
     settings["news"]["currencies"] = sorted({c.upper() for c in settings["news"]["currencies"]} & set(NEWS_CURRENCIES))
     for key, choices in STRATEGY_CHOICES.items():
         if settings["strategy"][key] not in choices:
@@ -170,6 +176,11 @@ def load_settings() -> dict[str, Any]:
     except (OSError, ValueError):
         raw = {}
     return _clamp(_merge(DEFAULTS, raw))
+
+
+def display_timezone() -> str:
+    """Configured display zone (IANA name or "browser") for formatting times."""
+    return load_settings()["ui"]["display_timezone"]
 
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:

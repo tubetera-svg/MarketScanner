@@ -4,6 +4,7 @@ import TradingViewChartModal, { type ChartTarget } from "../../components/Tradin
 import { useStatusFlash } from "../../components/useStatusFlash";
 import Navigation from "../../components/Navigation";
 import { FavoriteStar, useFavorites } from "../../components/Favorites";
+import { IST, daysBetween, formatTime, marketToday, useDisplayTimezone } from "../../components/time";
 
 // IPO tracker: reads NSE IPO metadata + live performance from the local API.
 // Data loads from the local SQLite store on mount/refresh.
@@ -120,6 +121,7 @@ const FRESHNESS_DAYS: Record<Exclude<Freshness, "all">, number> = {
 };
 
 export default function IPOPage() {
+  const displayTz = useDisplayTimezone();
   const [items, setItems] = useState<PerformanceItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Load IPO performance from the local database.");
@@ -203,9 +205,8 @@ export default function IPOPage() {
       if (q && !item.symbol.toUpperCase().includes(q)) return false;
       if (year !== "all" && !item.listing_date.startsWith(year)) return false;
       if (freshness !== "all") {
-        const listed = new Date(`${item.listing_date}T00:00:00`).getTime();
-        const cutoff = Date.now() - FRESHNESS_DAYS[freshness] * 86_400_000;
-        if (!(listed >= cutoff)) return false;
+        // listing_date is an NSE trading date: compare calendar days in IST.
+        if (!(daysBetween(item.listing_date, marketToday(IST)) <= FRESHNESS_DAYS[freshness])) return false;
       }
       if (liquidOnly && item.liquidity !== "LIQUID") return false;
       if (favoritesOnly && !favorites.has(item.symbol.toUpperCase())) return false;
@@ -448,7 +449,7 @@ export default function IPOPage() {
           {status?.running ? `RUNNING · every ${status.interval_minutes ?? 60} min` : "Auto-scan off"}
           {" · "}<Link href="/settings">schedule in Settings</Link>
           {status ? ` · lookback ${status.lookback_days ?? 7}d` : ""}
-          {status?.last_ran_at ? ` · last ${new Date(status.last_ran_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+          {status?.last_ran_at ? ` · last ${formatTime(status.last_ran_at, displayTz)}` : ""}
           {status?.last_error ? ` · ${status.last_error}` : ""}
         </small>
       </section>

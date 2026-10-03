@@ -16,6 +16,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from ..config import SOURCE_TRADINGVIEW
+from ..timeutil import machine_local_to_utc
 
 log = logging.getLogger(__name__)
 
@@ -74,8 +75,10 @@ def fetch_timeframe(
 ) -> list[dict]:
     """Fetch OHLC bars for a supported timeframe from TradingView.
 
-    Intraday rows retain their timestamp in ``date``; higher timeframes use
-    their bar date.
+    Intraday rows carry the bar OPEN instant in ``date`` as UTC ISO-8601
+    (``2026-10-03T04:15:00+00:00``); higher timeframes use their bar date
+    (``YYYY-MM-DD``, the market's trading day). ``start_date``/``end_date``
+    select bars by the IST calendar date of their open.
     """
     if start_date > end_date:
         raise ValueError("start_date must be on or before end_date")
@@ -153,8 +156,8 @@ def fetch_timeframe(
         if bar_day < start_date or bar_day > end_date:
             continue
         volume = row.get("volume")
-        # Intraday rows are naive IST wall time (what src/silver_bullet.py and
-        # the chart feed assume), independent of the PC's timezone.
+        # Intraday rows are UTC instants (time contract), independent of the
+        # PC's timezone; consumers convert to their market zone as needed.
         intraday = normalized_timeframe in {"5m", "15m", "1h", "4h"}
         if intraday and opened is None:
             continue
@@ -163,7 +166,7 @@ def fetch_timeframe(
                 "source": SOURCE_NAME,
                 "symbol": qualified,
                 "exchange": store_exchange,
-                "date": opened.replace(tzinfo=None).isoformat() if intraday else bar_day.isoformat(),
+                "date": machine_local_to_utc(index).isoformat(timespec="seconds") if intraday else bar_day.isoformat(),
                 "open": float(row["open"]),
                 "high": float(row["high"]),
                 "low": float(row["low"]),
@@ -202,8 +205,9 @@ _INTRADAY_CHART = {"5m", "15m", "1h", "4h"}
 def fetch_recent_bars(symbol: str, interval: str, n_bars: int) -> list[dict]:
     """Most recent ``n_bars`` bars for display only (never stored).
 
-    Intraday bars are labelled ``YYYY-MM-DDTHH:MM`` in IST; higher timeframes
-    use the IST date of the bar open, matching :func:`fetch_timeframe`.
+    Intraday bars carry their open instant as UTC ISO-8601 (the UI converts
+    it to the display timezone); higher timeframes use the IST date of the bar
+    open (the market's trading day), matching :func:`fetch_timeframe`.
     """
     if interval not in _CHART_INTERVALS:
         raise ValueError(f"Unsupported chart interval: {interval}")
@@ -229,7 +233,7 @@ def fetch_recent_bars(symbol: str, interval: str, n_bars: int) -> list[dict]:
         volume = row.get("volume")
         rows.append(
             {
-                "date": opened.strftime("%Y-%m-%dT%H:%M") if interval in _INTRADAY_CHART else opened.date().isoformat(),
+                "date": machine_local_to_utc(index).isoformat(timespec="seconds") if interval in _INTRADAY_CHART else opened.date().isoformat(),
                 "open": float(row["open"]),
                 "high": float(row["high"]),
                 "low": float(row["low"]),

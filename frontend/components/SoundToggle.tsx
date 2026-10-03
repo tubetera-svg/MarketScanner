@@ -6,16 +6,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 import { getMutedUntil, getSoundSettings, setMutedUntil, subscribeSoundSettings } from "./alertSound";
+import { getDisplayTimezone, nextWallTime, useDisplayTimezone, zoneLabel } from "./time";
 
-const IST_OFFSET_MS = 5.5 * 3600_000;
-
-// Next 09:00 IST after now.
-const next9amIst = () => {
-  const istNow = Date.now() + IST_OFFSET_MS;
-  let target = Math.floor(istNow / 86400_000) * 86400_000 + 9 * 3600_000;
-  if (target <= istNow) target += 86400_000;
-  return target - IST_OFFSET_MS;
-};
+// Next 09:00 in the display timezone after now.
+const next9am = () => nextWallTime(9, 0, getDisplayTimezone());
 
 const remaining = (until: number) => {
   const minutes = Math.max(1, Math.round((until - Date.now()) / 60000));
@@ -23,6 +17,7 @@ const remaining = (until: number) => {
 };
 
 export default function SoundToggle() {
+  const displayTz = useDisplayTimezone();
   const [mutedUntil, setMuted] = useState<number | null>(null);
   const [soundsOn, setSoundsOn] = useState(true);
   const [open, setOpen] = useState(false);
@@ -72,7 +67,7 @@ export default function SoundToggle() {
           ) : null}
           <button type="button" role="menuitem" style={option} onClick={() => mute(Date.now() + 15 * 60000)}>Mute 15 min</button>
           <button type="button" role="menuitem" style={option} onClick={() => mute(Date.now() + 60 * 60000)}>Mute 1 hour</button>
-          <button type="button" role="menuitem" style={option} onClick={() => mute(next9amIst())}>Mute until 09:00 IST</button>
+          <button type="button" role="menuitem" style={option} onClick={() => mute(next9am())}>Mute until 09:00 {zoneLabel(displayTz)}</button>
         </div>
       )}
     </span>

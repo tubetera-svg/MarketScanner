@@ -19,11 +19,12 @@ import json
 import logging
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import strategy_bridge
+from market_data.timeutil import utc_now
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def preview(scanner: Any) -> dict[str, Any]:
     changes = _retag(scanner, categories, members)  # on a throwaway copy
     saved = cached_members()
     preview_id = uuid.uuid4().hex
-    now = datetime.now()
+    now = utc_now()
     with _pending_lock:
         for key in [key for key, item in _pending.items() if now - item["created"] > PREVIEW_TTL]:
             del _pending[key]
@@ -120,7 +121,7 @@ def apply(scanner: Any, preview_id: str) -> dict[str, Any]:
     """Save a previewed list locally and re-tag the watchlist."""
     with _pending_lock:
         pending = _pending.pop(preview_id, None)
-    if pending is None or datetime.now() - pending["created"] > PREVIEW_TTL:
+    if pending is None or utc_now() - pending["created"] > PREVIEW_TTL:
         raise LookupError("Preview expired or unknown - run the F&O refresh preview again")
     symbols = pending["symbols"]
     with scanner.watchlist_file_lock(str(WATCHLIST_PATH)):
@@ -129,7 +130,7 @@ def apply(scanner: Any, preview_id: str) -> dict[str, Any]:
         if any(changes.values()):
             scanner.save_watchlist_categories(categories, str(CATEGORIES_PATH))
         CACHE_PATH.write_text(
-            json.dumps({"fetched_at": datetime.now().isoformat(timespec="seconds"), "symbols": symbols}, indent=1) + "\n",
+            json.dumps({"fetched_at": utc_now().isoformat(timespec="seconds"), "symbols": symbols}, indent=1) + "\n",
             encoding="utf-8",
         )
     log.info("F&O list applied (%d symbols): -> F&O %s; -> Equity %s", len(symbols), changes["to_fno"], changes["to_equity"])

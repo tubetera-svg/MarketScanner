@@ -65,15 +65,22 @@ UTC = ZoneInfo("UTC")
 | Signal | 10:00-11:00 | `time(10,0)` to `time(11,0)` |
 | Auto-check | Every 3 min | `AUTO_CHECK_SECONDS = 180` |
 
-**Critical:** `silver_bullet._timestamp()` attaches IST to naive TV bars THEN converts to NY. This is correct because TV returns IST wall time.
+**Critical:** TradingView intraday rows are UTC instants (`tradingview_source`); `silver_bullet._timestamp()` converts them to NY. A naive value is legacy IST wall time and is localized to IST first — never to the host zone.
+
+## Time & Timezone Contract (AGENTS.md §2b)
+
+- **Market zone ≠ display zone.** Session/cut-off/"today" logic uses fixed market zones; `ui.display_timezone` (Settings) only changes how times are shown. Flag any logic that reads the display zone.
+- **Instants** are UTC ISO with offset; **trading dates** are `YYYY-MM-DD` and never converted. Flag a trading date pushed through a timezone conversion (day shift) or a naive time written anywhere.
+- **Helpers only:** backend `market_data/timeutil.py` + `service.market_today()/ist_today()`; frontend `frontend/components/time.ts`. `tests/test_time_contract.py` fails on banned patterns — run it.
 
 ## Common Bugs to Flag
 
-1. **Using `datetime.now()` without tz** — always specify `IST`, `NY`, or `UTC`
-2. **Mixing `date.today()` with timezone-aware logic** — use `datetime.now(tz).date()`
-3. **DST transitions** — NY `ZoneInfo` handles automatically; verify March/Nov boundaries
-4. **Anchor date resolution** — `resolve_previous_working_date()` must use IST for NSE; `run_scan()` in `api/strategy_bridge.py` defaults to `date.today()` (host-local) when no anchor is given
+1. **Host-local clock** — `datetime.now()` / `date.today()` / `.astimezone()` without tz; use `timeutil.utc_now()` or `service.market_today(source, symbol)`
+2. **Naive parsing** — `datetime.fromisoformat(x)` on API/TV values without `timeutil.parse_instant()` (naive must mean IST, not host)
+3. **DST transitions** — NY `ZoneInfo` handles automatically; verify March/Nov boundaries (tests at a DST edge)
+4. **Anchor date resolution** — `resolve_previous_working_date()` must use IST for NSE; `run_scan()` defaults to the IST date
 5. **Cache keys** — `_cache_period_keys()` must use same day boundaries as session logic
+6. **UI dates** — browser-local `new Date()` getters / `toLocale*` / `toISOString().slice(0,10)` instead of `time.ts` helpers
 
 ## Audit Command
 

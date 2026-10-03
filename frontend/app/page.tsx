@@ -6,6 +6,7 @@ import TradingViewChartModal, { type ChartLevel, type ChartTarget } from "../com
 import { useStatusFlash } from "../components/useStatusFlash";
 import { getSoundSettings, playAlertSound } from "../components/alertSound";
 import { fetchAppSettings } from "../components/appSettings";
+import { IST, NEW_YORK, addDays, calendarDateIn, formatDayDateTime, formatInZone, formatTime, marketToday, useDisplayTimezone, weekdayOf, zoneLabel, zoneOffsetMs } from "../components/time";
 import Navigation from "../components/Navigation";
 import { FavoriteStar, useFavorites } from "../components/Favorites";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, History, Info, Play, Plus, Radio, RefreshCw, SearchX, Settings2, Square, Timer, Zap } from "lucide-react";
@@ -134,13 +135,9 @@ const renderInfoBody = (text: string): ReactNode => (
     })}
   </>
 );
-const nyIsWeekend = () => ["Sat", "Sun"].includes(new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" }));
-const localDate = (offsetDays = 0) => {
-  // Local calendar date (not UTC): toISOString() lagged a day in IST before 05:30.
-  const value = new Date();
-  value.setDate(value.getDate() + offsetDays);
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-};
+const nyIsWeekend = () => [0, 6].includes(weekdayOf(marketToday(NEW_YORK)));
+// Scan/sync dates are NSE trading dates: today in IST, whatever the browser zone.
+const localDate = (offsetDays = 0) => addDays(marketToday(IST), offsetDays);
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const SYNC_BATCH_SIZE = 500;
@@ -256,9 +253,9 @@ const biasBadge = (bias: string | null | undefined, label: string) => {
 };
 
 // Commodity inventory reports (EIA weekly releases) shown as a "news tile" with
-// the next release date/time converted to IST and a live countdown. Times are
-// the official ET release windows; DST is handled via the America/New_York
-// timezone offset so IST (UTC+5:30) is always correct.
+// the next release date/time in the display timezone and a live countdown.
+// Times are the official ET release windows; DST is handled via the
+// America/New_York offset so the display time is always correct.
 const INVENTORY_REPORTS: {
   key: string;
   label: string;
@@ -301,33 +298,15 @@ const CALENDAR_SOURCES: Record<string, { name: string; url: string }> = {
   forexfactory: { name: "ForexFactory", url: "https://www.forexfactory.com/calendar" },
 };
 
-// Milliseconds that `timeZone` is ahead of UTC for a given instant (accounts for DST).
-const tzOffsetMs = (instant: Date, timeZone: string): number => {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instant);
-  const map: Record<string, number> = {};
-  for (const part of parts) if (part.type !== "literal") map[part.type] = Number(part.value);
-  const asUTC = Date.UTC(map.year, map.month - 1, map.day, map.hour === 24 ? 0 : map.hour, map.minute, map.second);
-  return asUTC - instant.getTime();
-};
-
 // Next UTC instant (Date) for a release that occurs at hourET:minuteET on weekdayET
 // in America/New_York, strictly after `now`.
 const nextReleaseInstantET = (now: Date, weekdayET: number, hourET: number, minuteET: number): Date => {
   for (let i = 0; i < 14; i++) {
     const candidate = new Date(now.getTime() + i * 86400000);
-    const etWall = new Date(candidate.getTime() + tzOffsetMs(candidate, "America/New_York"));
+    const etWall = new Date(candidate.getTime() + zoneOffsetMs(candidate, NEW_YORK));
     if (etWall.getUTCDay() !== weekdayET) continue;
     const wallMs = Date.UTC(etWall.getUTCFullYear(), etWall.getUTCMonth(), etWall.getUTCDate(), hourET, minuteET, 0);
-    const instant = wallMs - tzOffsetMs(new Date(wallMs), "America/New_York");
+    const instant = wallMs - zoneOffsetMs(wallMs, NEW_YORK);
     if (instant > now.getTime()) return new Date(instant);
   }
   return new Date(now.getTime() + 7 * 86400000);
@@ -347,25 +326,12 @@ const nextInventoryRelease = (now: Date, report: typeof INVENTORY_REPORTS[number
     : { instant: nextReleaseInstantET(now, report.weekdayET, report.hourET, report.minuteET), calculated: true };
 };
 
-// Compact chip time: countdown within 24h ("in 3h 12m"), else IST "Wed 20:00".
-const formatChipTime = (instant: Date, now: number): string => {
+// Compact chip time: countdown within 24h ("in 3h 12m"), else display-zone "Wed 20:00".
+const formatChipTime = (instant: Date, now: number, zone: string): string => {
   const minutes = Math.max(0, Math.round((instant.getTime() - now) / 60000));
   if (minutes < 24 * 60) return minutes >= 60 ? `in ${Math.floor(minutes / 60)}h ${minutes % 60}m` : `in ${minutes}m`;
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(instant);
+  return formatInZone(instant, zone, { weekday: "short", hour: "2-digit", minute: "2-digit" });
 };
-const formatISTParts = (instant: Date, opts: Intl.DateTimeFormatOptions): string =>
-  new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour12: false, ...opts }).format(instant);
-
-const formatIST = (instant: Date): string =>
-  new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(instant) + " IST";
 
 // Scanner setup levels handed to the chart popup (guides + "Watch setup"
 // alerts). Read-only: strategy output is never changed here.
@@ -379,6 +345,7 @@ const setupLevels = (pairs: [string, number | null | undefined][]): ChartLevel[]
 };
 
 export default function Home() {
+  const displayTz = useDisplayTimezone();
   const [watchlist, setWatchlist] = useState<WatchSymbol[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   // Testing date of a full-watchlist scan waiting on the confirm dialog (null = no dialog).
@@ -417,7 +384,7 @@ export default function Home() {
   const [strategies, setStrategies] = useState<StrategyFlag[]>([]);
   const [weeklyMasterOn, setWeeklyMasterOn] = useState(true);
   const [protectedSwingTimeframe, setProtectedSwingTimeframe] = useState("daily");
-  const [strategyAnchorDate, setStrategyAnchorDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [strategyAnchorDate, setStrategyAnchorDate] = useState(() => localDate());
   const [strategyScanning, setStrategyScanning] = useState(false);
   const [strategyGroups, setStrategyGroups] = useState<StrategyGroup[]>([]);
   const [strategyDateNote, setStrategyDateNote] = useState<string | null>(null);
@@ -810,19 +777,15 @@ export default function Home() {
 
   const shiftStrategyDate = (days: number) => {
     if (strategyScanning) return;
-    const current = new Date(strategyAnchorDate);
-    if (Number.isNaN(current.getTime())) return;
-    current.setUTCDate(current.getUTCDate() + days);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(strategyAnchorDate)) return;
+    let next = addDays(strategyAnchorDate, days);
     const hasCrypto = selected.some((sym) => {
       const item = watchlist.find((w) => w.symbol === sym);
       return item?.asset_class === "crypto";
     });
     if (!hasCrypto) {
-      while (current.getUTCDay() === 0 || current.getUTCDay() === 6) {
-        current.setUTCDate(current.getUTCDate() + (days > 0 ? 1 : -1));
-      }
+      while (weekdayOf(next) === 0 || weekdayOf(next) === 6) next = addDays(next, days > 0 ? 1 : -1);
     }
-    const next = current.toISOString().slice(0, 10);
     if (next > localDate()) return;
     setDateTransition(true);
     window.setTimeout(() => setDateTransition(false), 520);
@@ -938,12 +901,12 @@ export default function Home() {
     : [];
   const nextNews = nextNewsGroup.length ? {
     label: `${nextNewsGroup[0].currency} ${nextNewsGroup[0].title}${nextNewsGroup.length > 1 ? ` +${nextNewsGroup.length - 1}` : ""}`,
-    time: formatChipTime(nextNewsGroup[0].instant, inventoryNow),
+    time: formatChipTime(nextNewsGroup[0].instant, inventoryNow, displayTz),
     soon: nextNewsGroup[0].instant.getTime() - inventoryNow <= 24 * 3600 * 1000,
-    tooltip: nextNewsGroup.map((e) => `${formatIST(e.instant)}  ${e.currency}  ${e.title}`).join("\n"),
+    tooltip: nextNewsGroup.map((e) => `${formatDayDateTime(e.instant, displayTz)} ${zoneLabel(displayTz, e.instant)}  ${e.currency}  ${e.title}`).join("\n"),
   } : null;
   const newsByDay = upcomingNews.reduce<{ day: string; events: typeof upcomingNews }[]>((days, event) => {
-    const day = formatISTParts(event.instant, { weekday: "short", day: "2-digit", month: "short" });
+    const day = formatInZone(event.instant, displayTz, { weekday: "short", day: "2-digit", month: "short" });
     const last = days[days.length - 1];
     if (last && last.day === day) last.events.push(event); else days.push({ day, events: [event] });
     return days;
@@ -978,9 +941,9 @@ export default function Home() {
     const seconds = Math.max(0, Math.round((instant.getTime() - inventoryNow) / 1000));
     // Highlight when the release is within 24h so it grabs attention.
     const soon = seconds <= 24 * 3600;
-    const sameDay = instant.toDateString() === new Date(inventoryNow).toDateString();
-    return { ...report, ist: formatIST(instant), time: formatChipTime(instant, inventoryNow), soon, sameDay, warning };
-  }), [inventoryNow, newsFeed]); // eslint-disable-line react-hooks/exhaustive-deps
+    const sameDay = calendarDateIn(instant, displayTz) === calendarDateIn(inventoryNow, displayTz);
+    return { ...report, when: `${formatDayDateTime(instant, displayTz)} ${zoneLabel(displayTz, instant)}`, time: formatChipTime(instant, inventoryNow, displayTz), soon, sameDay, warning };
+  }), [inventoryNow, newsFeed, displayTz]); // eslint-disable-line react-hooks/exhaustive-deps
   const calendarSource = CALENDAR_SOURCES[newsFeed?.source ?? ""] ?? CALENDAR_SOURCES.tradingview;
 
   useEffect(() => {
@@ -1059,10 +1022,9 @@ export default function Home() {
     // valid_until is a market session date (ltf_confirmation.session_date):
     // NSE = IST calendar day; forex/commodities = NY day rolling at 17:00.
     const now = Date.now();
-    const isoDay = (ms: number, timeZone: string) => new Intl.DateTimeFormat("en-CA", { timeZone }).format(ms);
     const sessionToday: Record<string, string> = {
-      NSE: isoDay(now, "Asia/Kolkata"),
-      FOREX: isoDay(now + 7 * 3600_000, "America/New_York"),
+      NSE: marketToday(IST, now),
+      FOREX: marketToday(NEW_YORK, now + 7 * 3600_000),
     };
     const windowOpen = (setup: LtfSetup) => setup.valid_until >= (sessionToday[setup.market] ?? sessionToday.FOREX);
     const byTrigger = (a: LtfSetup, b: LtfSetup) => (b.triggered_at ?? "").localeCompare(a.triggered_at ?? "");
@@ -1324,7 +1286,7 @@ export default function Home() {
                   target="_blank"
                   rel="noreferrer"
                   className={`inventory-chip${report.soon ? " soon" : ""}`}
-                  title={`${report.label} — ${report.ist} IST${report.warning ? `
+                  title={`${report.label} — ${report.when}${report.warning ? `
 ⚠ ${report.warning}` : ""}`}
                 >
                   {report.warning && <AlertTriangle size={10} className="inventory-warn" aria-label="Calculated time" />}
@@ -1366,7 +1328,7 @@ export default function Home() {
                     <div className="news-day-label">{day}</div>
                     {events.map((event) => (
                       <div key={`${event.currency}-${event.time_utc}-${event.title}`} className="news-row">
-                        <span className="news-time">{formatISTParts(event.instant, { hour: "2-digit", minute: "2-digit" })}</span>
+                        <span className="news-time">{formatTime(event.instant, displayTz)}</span>
                         <span className="news-ccy">{event.currency}</span>
                         <span className="news-title" title={event.title}>{event.title}</span>
                         {(event.forecast || event.previous) && <span className="news-fp">{event.forecast || "–"} / {event.previous || "–"}</span>}
@@ -1375,7 +1337,7 @@ export default function Home() {
                   </div>
                 ))}
                 <div className="news-popover-foot">
-                  <span>{newsFeed?.fetched_at ? `Fetched ${formatIST(new Date(newsFeed.fetched_at))} IST` : "Not fetched"}{newsFeed?.stale ? ` · stale (${newsFeed.error ?? "cached"})` : ""}</span>
+                  <span>{newsFeed?.fetched_at ? `Fetched ${formatDayDateTime(newsFeed.fetched_at, displayTz)} ${zoneLabel(displayTz, newsFeed.fetched_at)}` : "Not fetched"}{newsFeed?.stale ? ` · stale (${newsFeed.error ?? "cached"})` : ""}</span>
                   <span className="news-links">
                     {Object.values(CALENDAR_SOURCES).map((source) => (
                       <a key={source.name} href={source.url} target="_blank" rel="noreferrer">{source.name} ↗</a>
@@ -1463,7 +1425,7 @@ export default function Home() {
                       >
                         {signal.direction === "bullish" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                         <strong>{signal.symbol}</strong>
-                        <small>Trigger={signal.entry} — Time={new Date(signal.signal_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} NY</small>
+                        <small>Trigger={signal.entry} — Time={formatTime(signal.signal_time, displayTz)} {zoneLabel(displayTz, signal.signal_time)}</small>
                       </button>
                     ))}
                   </div>
@@ -1478,7 +1440,7 @@ export default function Home() {
                   <span>Intraday confirmations</span>
                   <small>
                     {ltf.running ? `watching ${ltf.armed_count} armed · ${ltf.timeframe} CISD` : "watcher off (Settings)"}
-                    {ltf.last_check_at ? ` · checked ${new Date(ltf.last_check_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                    {ltf.last_check_at ? ` · checked ${formatTime(ltf.last_check_at, displayTz)}` : ""}
                   </small>
                   <button className="test-button button-secondary" type="button" onClick={checkLtfNow} disabled={ltfChecking}>
                     {ltfChecking ? <RefreshCw size={12} className="spin" /> : <RefreshCw size={12} />} Check now

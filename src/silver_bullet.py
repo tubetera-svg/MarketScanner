@@ -45,8 +45,9 @@ def _timestamp(value: object) -> pd.Timestamp | None:
     if pd.isna(parsed):
         return None
     if parsed.tzinfo is None:
-        # The market-data layer stores TradingView bars as naive IST wall time.
-        # Attach IST before converting so the NY session window stays correct.
+        # TradingView rows carry UTC instants; a naive value is the legacy IST
+        # wall-time convention. Attach IST before converting so the NY session
+        # window stays correct either way.
         parsed = parsed.tz_localize(INDIA)
     return parsed.tz_convert(NEW_YORK)
 

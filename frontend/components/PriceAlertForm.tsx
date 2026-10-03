@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { snapPrice } from "./OhlcChart";
+import { formatDateTime, getDisplayTimezone, useDisplayTimezone } from "./time";
 import {
   CONDITION_LABEL,
   TRIGGER_LABEL,
@@ -35,7 +36,7 @@ export type AlertPayload = {
 };
 
 const priceText = (value: number | null | undefined, tick?: number | null) => (value == null ? "" : String(snapPrice(value, tick)));
-const shortDate = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+const shortDate = (iso: string) => formatDateTime(iso, getDisplayTimezone());
 
 /**
  * Alert fields as one form, used to create alerts (chart popup) and to edit
@@ -63,6 +64,7 @@ export default function PriceAlertForm({
   onSubmit: (payload: AlertPayload) => Promise<string | null>;
   onCancel?: () => void;
 }) {
+  useDisplayTimezone(); // re-render when the display zone changes
   const editing = Boolean(initial);
   const [level, setLevel] = useState(initial ? priceText(initial.level) : priceText(lastPrice, tick));
   const [level2, setLevel2] = useState(initial ? priceText(initial.level2) : "");

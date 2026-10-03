@@ -12,6 +12,7 @@ import {
   type PriceAlertStatus,
 } from "./priceAlertShared";
 import PriceAlertForm, { type AlertPayload } from "./PriceAlertForm";
+import { formatDateTime, formatTime, getDisplayTimezone, useDisplayTimezone } from "./time";
 import { saveAlert } from "./PriceAlertPanel";
 import { refreshPriceAlerts, subscribePriceAlerts } from "./priceAlertFeed";
 
@@ -39,8 +40,9 @@ const firesLabel = (alert: PriceAlert) =>
 
 // Levels keep the precision they were set with (e.g. 552.694 from Alt+click).
 const levelText = (value: number) => value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-const dateTime = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+// Display-zone formatting; components call useDisplayTimezone() so they re-render on change.
+const time = (iso: string) => formatTime(iso, getDisplayTimezone());
+const dateTime = (iso: string) => formatDateTime(iso, getDisplayTimezone());
 const snoozed = (alert: PriceAlert) => Boolean(alert.snoozed_until && Date.parse(alert.snoozed_until) > Date.now());
 
 const OUTCOME_KEYS: ["15m" | "1h" | "eod", string][] = [["15m", "+15m"], ["1h", "+1h"], ["eod", "EOD"]];
@@ -62,6 +64,7 @@ function OutcomeChip({ label, outcome }: { label: string; outcome: AlertOutcome 
  * is components/PriceAlertNotifier.
  */
 export default function PriceAlertList({ onOpenChart }: { onOpenChart: (symbol: string, interval?: "5m") => void }) {
+  useDisplayTimezone();
   const [status, setStatus] = useState<PriceAlertStatus | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);

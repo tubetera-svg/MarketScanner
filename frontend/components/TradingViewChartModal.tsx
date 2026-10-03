@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { addDays, formatDateTime, formatInZone, useDisplayTimezone, wallLabel, zoneLabel } from "./time";
 import OhlcChart, {
   EMA_COLORS,
   VWAP_COLOR,
@@ -95,11 +96,7 @@ const readPrefs = (): Prefs => {
   }
 };
 
-const shiftIso = (iso: string, days: number) => {
-  const date = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-};
+const shiftIso = (iso: string, days: number) => addDays(iso, days);
 
 const detailText = (payload: unknown): string | null => {
   const detail = (payload as { detail?: unknown } | null)?.detail;
@@ -142,10 +139,12 @@ const EMPTY_STATE: ChartState = {
   updatedAt: null,
 };
 
-const toBars = (rows: Bar[] | undefined): Bar[] =>
+// Intraday rows carry UTC open instants; the chart axis shows them as wall
+// time in the display zone. Daily rows ("YYYY-MM-DD" trading days) are kept as is.
+const toBars = (rows: Bar[] | undefined, zone: string): Bar[] =>
   (rows ?? [])
     .map((row) => ({
-      date: String(row.date),
+      date: String(row.date).includes("T") ? wallLabel(String(row.date), zone) : String(row.date),
       open: Number(row.open),
       high: Number(row.high),
       low: Number(row.low),
@@ -198,6 +197,7 @@ export default function TradingViewChartModal({
   const [intervalOverride, setIntervalOverride] = useState<Interval | null>(chart?.interval ?? null);
   const interval = intervalOverride ?? prefs.interval;
   const intraday = INTRADAY.has(interval);
+  const displayTz = useDisplayTimezone();
 
   // "Open" link target: provider link, preset, or the symbol the backend
   // actually charted (e.g. BSE listing for an NSE app symbol).
@@ -245,7 +245,7 @@ export default function TradingViewChartModal({
           return;
         }
         const body = (payload ?? {}) as ChartPayload;
-        let bars = toBars(body.rows);
+        let bars = toBars(body.rows, displayTz);
         // Local fallback serves daily bars; roll them up for 1W/1M.
         if (body.interval_served === "1d" && (interval === "1w" || interval === "1M")) {
           bars = aggregate(bars, interval === "1w" ? "W" : "M");
@@ -274,7 +274,7 @@ export default function TradingViewChartModal({
     return () => {
       live = false;
     };
-  }, [symbol, interval, reloadNonce]);
+  }, [symbol, interval, reloadNonce, displayTz]);
 
   // Live auto-refresh for intraday TradingView candles.
   useEffect(() => {
@@ -380,9 +380,9 @@ export default function TradingViewChartModal({
       id: event.id,
       ts: event.ts,
       price: event.price ?? event.level,
-      label: `${describeAlert(event)} — ${new Date(event.ts).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`,
+      label: `${describeAlert(event)} — ${formatDateTime(event.ts, displayTz)}`,
     })),
-    [symbolEvents],
+    [symbolEvents, displayTz],
   );
   const setupLevels = useMemo(() => chart?.levels ?? [], [chart?.levels]);
   const guideLines = useMemo(
@@ -399,7 +399,7 @@ export default function TradingViewChartModal({
     const closes = bars.map((bar) => bar.close);
     const out: ChartLevel[] = [{ label: "Last close", price: closes[closes.length - 1] }];
     if (intraday) {
-      // Previous session high/low from the intraday bars (IST dates).
+      // Previous session high/low from the intraday bars (display-zone dates).
       const lastDay = bars[bars.length - 1].date.slice(0, 10);
       const prevDay = [...bars].reverse().find((bar) => bar.date.slice(0, 10) < lastDay)?.date.slice(0, 10);
       const prev = prevDay ? bars.filter((bar) => bar.date.startsWith(prevDay)) : [];
@@ -586,12 +586,12 @@ export default function TradingViewChartModal({
                 <span className="chart-stat" title={data.notes.join(" ") || undefined}>
                   <em>Source</em>
                   {data.source}
-                  {data.updatedAt ? <span className="muted"> · {data.updatedAt.toLocaleTimeString("en-IN", { hour12: false })}</span> : null}
+                  {data.updatedAt ? <span className="muted"> · {formatInZone(data.updatedAt, displayTz, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
                 </span>
                 <span className="chart-stat">
                   <em>Last bar</em>
                   {stats.last.date.replace("T", " ")}
-                  {intraday ? <span className="muted"> IST</span> : null}
+                  {intraday ? <span className="muted"> {zoneLabel(displayTz)}</span> : null}
                 </span>
                 <span className="chart-stat">
                   <em>{intraday ? "Day range" : "52W range"}</em>
@@ -682,7 +682,7 @@ export default function TradingViewChartModal({
               </div>
             ) : null}
             <div className="chart-footnote muted">
-              Candles via backend (TradingView feed, local DB fallback) · times IST · scroll to zoom · drag to pan · drag an alert line to move it · Alt+drag draws a zone · right-click for quick alerts · ←/→ keys · double-click resets
+              Candles via backend (TradingView feed, local DB fallback) · times {zoneLabel(displayTz)} (Settings) · scroll to zoom · drag to pan · drag an alert line to move it · Alt+drag draws a zone · right-click for quick alerts · ←/→ keys · double-click resets
             </div>
         </>
       </section>

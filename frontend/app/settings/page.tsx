@@ -10,6 +10,7 @@ import Navigation from "../../components/Navigation";
 import { useCallback, useEffect, useState } from "react";
 import { previewSound, setSoundSettings, soundLabel, type AlertSoundKind, type SoundSettings } from "../../components/alertSound";
 import { fetchAppSettings } from "../../components/appSettings";
+import { formatDateTime, formatDayDateTime, setDisplayTimezone, useDisplayTimezone, zoneLabel } from "../../components/time";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
@@ -23,7 +24,7 @@ type Automation = {
 };
 type StrategyParams = { ltf_timeframe: string; propulsion_mean_threshold: string };
 type DataCutoffs = { nse: string; commodities: string; crypto: string; gift_nifty: string };
-type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; news: { currencies: string[] }; ui: { hidden_strategies: string[]; hidden_pages: string[] }; sounds: SoundSettings };
+type Settings = { automation: Automation; strategy: StrategyParams; data_cutoffs: DataCutoffs; news: { currencies: string[] }; ui: { hidden_strategies: string[]; hidden_pages: string[]; display_timezone: string }; sounds: SoundSettings };
 
 const SOUND_ROWS: { kind: AlertSoundKind; title: string; hint: string }[] = [
   { kind: "ltf", title: "LTF trigger", hint: "An intraday confirmation setup triggers" },
@@ -46,6 +47,7 @@ type Payload = {
   strategy_choices: Record<keyof StrategyParams, string[]>;
   news_currencies: string[];
   sound_choices: string[];
+  display_timezones: { value: string; label: string }[];
   status: {
     silver_bullet: { auto_armed: boolean; last_push_error?: string | null };
     ipo_scanner: { running: boolean; last_ran_at: string | null; last_error: string | null };
@@ -138,12 +140,14 @@ function VolumeField({ value, onCommit }: { value: number; onCommit: (next: numb
 }
 
 export default function SettingsPage() {
+  const displayTz = useDisplayTimezone();
   const [data, setData] = useState<Payload | null>(null);
   const [message, setMessage] = useState("Loading…");
 
   const apply = (payload: Payload, note: string) => {
     setData(payload);
     setSoundSettings(payload.settings.sounds); // alerts on this page pick it up at once
+    setDisplayTimezone(payload.settings.ui.display_timezone); // every page re-renders its times
     setMessage(note);
   };
 
@@ -189,7 +193,7 @@ export default function SettingsPage() {
   const auto = data?.settings.automation;
   const status = data?.status;
   const stateNote = (running: boolean | undefined, last: string | null | undefined, err: string | null | undefined) =>
-    `${running ? "running" : "stopped"}${last ? ` · last ${new Date(last).toLocaleString()}` : ""}${err ? ` · error: ${err}` : ""}`;
+    `${running ? "running" : "stopped"}${last ? ` · last ${formatDateTime(last, displayTz)} ${zoneLabel(displayTz, last)}` : ""}${err ? ` · error: ${err}` : ""}`;
   const groups = data ? Array.from(new Set(data.strategies.map((item) => item.group))) : [];
 
   return (
@@ -348,11 +352,21 @@ export default function SettingsPage() {
                 </Row>
               );
             })}
-            <Row title="Quiet hours" hint="No alert sounds in this IST window (may cross midnight, e.g. 23:00 → 07:00).">
+            <Row title="Quiet hours" hint={`No alert sounds in this ${zoneLabel(displayTz)} window (display timezone; may cross midnight, e.g. 23:00 → 07:00).`}>
               <TimeField label="Quiet hours start" value={data.settings.sounds.quiet_hours.start} onCommit={(v) => save({ sounds: { quiet_hours: { start: v } } })} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>to</span>
               <TimeField label="Quiet hours end" value={data.settings.sounds.quiet_hours.end} onCommit={(v) => save({ sounds: { quiet_hours: { end: v } } })} />
               <Switch label="Quiet hours" on={data.settings.sounds.quiet_hours.enabled} onChange={(v) => save({ sounds: { quiet_hours: { enabled: v } } })} />
+            </Row>
+          </section>
+
+          <section className="panel" style={{ padding: 16 }}>
+            <div className="panel-heading"><span>Display</span><small>applies to every page and push message</small></div>
+            <Row title="Display timezone" hint={`All times shown in the app and in Telegram/ntfy messages. Market sessions and daily cut-offs keep their own zones. Now: ${formatDayDateTime(Date.now(), displayTz)} ${zoneLabel(displayTz)}`}>
+              <select aria-label="Display timezone" value={data.settings.ui.display_timezone} onChange={(e) => save({ ui: { display_timezone: e.target.value } })}
+                style={{ height: 26, border: "1px solid var(--line)", borderRadius: 4, padding: "0 6px", font: "12px 'DM Mono', monospace", background: "var(--bg, transparent)", color: "inherit" }}>
+                {data.display_timezones.map((zone) => <option key={zone.value} value={zone.value}>{zone.label}</option>)}
+              </select>
             </Row>
           </section>
 
